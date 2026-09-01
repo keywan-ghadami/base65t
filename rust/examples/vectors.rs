@@ -112,7 +112,7 @@ fn main() {
     let profiles: [(&str, Profile); 3] = [("U", Profile::U), ("T", Profile::T), ("B", Profile::B)];
 
     println!("{{");
-    println!("  \"spec\": \"base65t v0.1 with the errata in docs/errata-v0.1.de.md\",");
+    println!("  \"spec\": \"base65t v0.2, docs/spec-v0.2.de.md\",");
     println!(
         "  \"note\": \"Every entry is: encode(input, preset, profile) is exactly stream, and \
          decode(stream, profile) is exactly input. Bytes are hex. A second implementation that \

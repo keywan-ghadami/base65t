@@ -2,27 +2,22 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! `encode_canonical`, §11.1 — and the one place where this implementation
-//! has to read the specification rather than follow it.
+//! `encode_canonical`, §11.1: the shortest encoding, and among the shortest
+//! the smallest under the order `B < L < S`.
 //!
-//! §11.1 says two things that are not the same thing:
+//! The order is what makes `canonical` a function: `Key(S) = (|output(S)|,
+//! c(S))`, and the forward pass takes at every position the smallest symbol
+//! that still admits a length-optimal completion — `B` where a base64 segment
+//! can optimally open, otherwise `L` while the literal can optimally carry on,
+//! otherwise `S`.
 //!
-//! * the **Ordnung**: `encode_canonical` is the minimum of
-//!   `Key(S) = (|output(S)|, c(S))`, lexicographic with `B < L < S`;
-//! * the **Berechnung**: take `B` where it is length-optimal, otherwise the
-//!   *longest* admissible literal — "und das Ergebnis ist per Konstruktion das
-//!   Minimum von `Key`".
-//!
-//! It is not. Ending a literal early and letting base64 cover the last bytes
-//! is sometimes exactly as long, and then `B < L` decides for the shorter
-//! literal while the Berechnung takes the longer one. The smallest input where
-//! they differ is ten bytes, one above the `n <= 9` the verification in §11.1
-//! reports; `divergence_from_the_berechnung_paragraph` below is that input,
-//! and FINDINGS.md is the write-up.
-//!
-//! The exported function follows the **Ordnung**, because that is the
-//! definition and the Berechnung only claims to compute it. The other rule
-//! stays reachable here so the difference can be tested rather than argued.
+//! v0.1 described that computation as "otherwise the **longest** admissible
+//! literal" and claimed it was the minimum of `Key`. It is not: ending a
+//! literal early can align the base64 run behind it so that a later literal
+//! becomes length-optimal too, and `B < L` then decides for the shorter one.
+//! The correction is E1 of the errata and TV13 of §15; `LiteralEnd::Longest`
+//! below is v0.1's rule, kept unexported so the difference stays testable
+//! rather than remembered.
 
 use crate::alphabet::Profile;
 use crate::encode::{costs, emit, segment_with, LiteralEnd, Rules};

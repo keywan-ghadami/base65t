@@ -2,15 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §15, one test per vector.
+//! §15 of v0.2, one test per vector.
 //!
-//! Three of them do not hold as written, and each says so where it stands
-//! rather than being quietly weakened: TV2 names a stream that is one of three
-//! equally dense ones, TV5a's `legible` body is longer than the base64 the
-//! same encoder would pick, and TV11's last line admits two error codes where
-//! the order of checks in §10.3 allows only one. FINDINGS.md has the
-//! reasoning; the assertions below hold to what the specification actually
-//! determines and pin the rest.
+//! Three of these were wrong in v0.1 and are now assertions rather than
+//! narrated discrepancies: TV2 named one of three equally dense streams
+//! without a rule that picked it, TV5a's `legible` body was longer than the
+//! base64 the same encoder writes, and TV11's last line admitted two error
+//! codes where §10.3's order of checks allows one. FINDINGS.md records how
+//! they were found, `docs/errata-v0.1.de.md` what was decided.
 
 use base65t::*;
 
@@ -33,30 +32,27 @@ fn tv1_literal_beats_base64() {
     assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
 }
 
-/// TV2 gives `3q2-7w~Ssession-eu-central`: four binary bytes as base64, then
-/// the whole text as one literal. It is 26 characters and so is what this
-/// encoder writes — but they are not the same 26 characters, and neither is
-/// wrong. Absorbing one or two text bytes into the base64 segment costs
-/// nothing: `ceil(4k/3) + (22-k) + 2` is 26 for k = 4, 5 and 6 alike. `dense`
-/// has no tie-break in §9.3, so all three are `dense` outputs; only
-/// `canonical` picks one, and it picks k = 6, because `B < S` at index 4.
+/// Absorbing one or two text bytes into the base64 segment costs nothing:
+/// `ceil(4k/3) + (22-k) + 2` is 26 for k = 4, 5 and 6 alike. §9.0 decides
+/// between them — `B < S` at index 4 picks k = 6 — which is what makes this a
+/// byte assertion rather than a length assertion. v0.1 named the k = 4 variant
+/// without a rule that picked it; it is still a valid stream.
 #[test]
 fn tv2_binary_prefix_then_text() {
     let input = [b"\xde\xad\xbe\xef".as_slice(), b"session-eu-central"].concat();
-    let spec = b"3q2-7w~Ssession-eu-central".to_vec();
     let ours = dense(&input);
-
-    assert_eq!(spec.len(), 26);
+    assert_eq!(ours, b"3q2-73Nl~Qssion-eu-central");
     assert_eq!(ours.len(), 26);
     assert_eq!(base64_len(input.len()), 30);
-    assert_eq!(ours, b"3q2-73Nl~Qssion-eu-central");
 
-    // Both are streams of the same format and decode to the same bytes.
-    for s in [&spec, &ours] {
-        assert_eq!(decode(s, Profile::U).unwrap().bytes, input);
-    }
-    // And the tie is exact, not approximate.
+    // One rule for the whole format (§9.0): the presets that reach the same
+    // length reach the same bytes.
     assert_eq!(encode_canonical(&input, Profile::U), ours);
+
+    // The variant v0.1 named decodes to the same bytes and is legal to read.
+    let v01 = b"3q2-7w~Ssession-eu-central";
+    assert_eq!(v01.len(), 26);
+    assert_eq!(decode(v01, Profile::U).unwrap().bytes, input);
 }
 
 #[test]
@@ -94,11 +90,11 @@ fn tv4_extended_length_header() {
 /// TV5a says the dense encoder does not bother — plain base64 is shorter than
 /// the forced mode switch. That part holds exactly.
 ///
-/// TV5a's `legible` body, `~Fhellofg~FAlice`, does not: it is 16 characters
-/// where the same encoder can write 15. A preset is a threshold and a mode
-/// (§9.3), and the objective is still the length in §9.0, so no conforming
-/// encoder writes the longer one. It is a legal stream and decodes correctly;
-/// it is just not what `legible` produces.
+/// v0.1 gave `legible` the 16-character body `~Fhellofg~FAlice` here. No
+/// conforming encoder writes it: `legible` minimises the length first (§9.3)
+/// and 15 is shorter than 16 — the passthrough share only decides between
+/// segmentations of *equal* length. It is a legal stream and decodes
+/// correctly; it is not an encoder's output.
 #[test]
 fn tv5a_dense_declines_the_forced_mode_switch() {
     let input = b"hello~Alice";
@@ -107,16 +103,16 @@ fn tv5a_dense_declines_the_forced_mode_switch() {
     assert_eq!(body, b"aGVsbG9-QWxpY2U");
     assert_eq!(body.len(), 15);
 
-    let legible_body = b"~Fhellofg~FAlice";
-    assert_eq!(legible_body.len(), 16);
-    assert!(
-        legible_body.len() > body.len(),
-        "the spec's legible body is longer"
-    );
+    // Plain mode has no F1/F2 to enforce, so there the literal wins outright.
+    assert_eq!(encode_legible(input, Profile::U), b"~Lhello~Alice");
+
+    let v01_legible = b"~Fhellofg~FAlice";
+    assert_eq!(v01_legible.len(), 16);
+    assert!(v01_legible.len() > body.len());
     assert_eq!(
-        decode_plain(legible_body, Profile::U).unwrap().bytes,
+        decode_plain(v01_legible, Profile::U).unwrap().bytes,
         input,
-        "and is nevertheless a valid stream"
+        "a valid stream, just not one an encoder writes"
     );
 }
 
@@ -280,7 +276,7 @@ fn tv11_framing_detection() {
 
 /// The same stream, two entry points, two errors — the point of Rule F.
 ///
-/// TV11 writes the framed answer as "`E_TRUNCATED` / `E_FRAME_SYNC`". Only the
+/// v0.1 wrote the framed answer as "`E_TRUNCATED` / `E_FRAME_SYNC`". Only the
 /// first is reachable: §10.3 checks the marker, then the length, and `abc` is
 /// a well-formed 18-bit length of 108252 that the stream cannot satisfy.
 #[test]
@@ -301,4 +297,66 @@ fn tv12_error_cases() {
     // `YWxpY2V` is `alice` plus a set bit in the last quantum: canonical
     // base64 would have written `YWxpY2U`.
     assert_eq!(decode(b"YWxpY2V", Profile::U), Err(Error::NonzeroTail));
+}
+
+// --- TV13-TV15: what v0.2 decides that v0.1 left open ---------------------
+
+/// The tie-break of §9.0 and §11.1, on the smallest input where it decides
+/// anything: nine bytes the profile admits, then one it does not.
+///
+/// Both segmentations are thirteen characters. At index 7 the choice is `B`
+/// against `L`, and `B < L` takes the shorter literal — ending it early aligns
+/// the base64 run so that the remaining three bytes cost two characters
+/// instead of four. The second stream is what v0.1's *Berechnung* produced.
+#[test]
+fn tv13_the_tie_break_decides() {
+    let input = b"aaaaaaaaa ";
+    let ours = encode_canonical(input, Profile::U);
+    assert_eq!(ours, b"~HaaaaaaaYWEg");
+    assert_eq!(ours.len(), 13);
+
+    let v01 = b"~JaaaaaaaaaIA";
+    assert_eq!(
+        v01.len(),
+        13,
+        "the same length, which is why a rule is needed"
+    );
+    assert_ne!(ours, v01.to_vec());
+    for s in [ours.as_slice(), v01.as_slice()] {
+        assert_eq!(decode(s, Profile::U).unwrap().bytes, input);
+    }
+}
+
+/// `legible` against `dense` on one input: same length, different bytes.
+///
+/// `dense` needs eleven bytes before it takes a literal (§9.1) and this run is
+/// seven, so it writes base64 throughout. `legible` has no threshold and takes
+/// the literal at equal length. That is the whole difference between the two
+/// presets — readability at no cost, not readability against size.
+#[test]
+fn tv14_legible_against_dense() {
+    let input = [b"\xde\xad\xbe\xef".as_slice(), b"abcdefg"].concat();
+    let d = encode_dense(&input, Profile::U);
+    let l = encode_legible(&input, Profile::U);
+    assert_eq!(d, b"3q2-72FiY2RlZmc");
+    assert_eq!(l, b"3q2-7w~Habcdefg");
+    assert_eq!(d.len(), l.len());
+    assert_eq!(d.len(), base64_len(input.len()));
+    for s in [&d, &l] {
+        assert_eq!(decode(s, Profile::U).unwrap().bytes, input);
+    }
+}
+
+/// Padding does not reach into a frame body (§5.3). The same base64 text, once
+/// as a stream and once as a body, gets two different answers — and that is
+/// the point: inside a frame `=` is a character without a value at an alphabet
+/// position, because no producer of ordinary base64 emits frames.
+#[test]
+fn tv15_padding_stops_at_the_stream() {
+    let d = decode(b"YWxpY2U=", Profile::U).expect("plain, at the end of the stream");
+    assert_eq!(d.bytes, b"alice");
+    assert!(d.padding_seen);
+
+    assert_eq!(decode(b"~AAAIYWxpY2U=", Profile::U), Err(Error::Charset));
+    assert_eq!(decode(b"~AAAHYWxpY2U", Profile::U).unwrap().bytes, b"alice");
 }

@@ -23,8 +23,11 @@ path follows from that.
 
 ## What is here
 
-* **`docs/spec-v0.1.de.md`** — the specification, v0.1 final, in German. The
-  normative document; everything else is downstream of it.
+* **`docs/spec-v0.2.de.md`** — the specification, v0.2 final, in German. The
+  normative document; everything else is downstream of it. v0.2 changed no bit
+  of the wire format: every v0.1 stream is a v0.2 stream and the other way
+  round. What it settled is what an encoder must *choose* where v0.1 left the
+  choice open, and two things a decoder must reject.
 * **`rust/`** — the reference implementation. No dependencies, no unsafe, and
   written to be read against the specification rather than to be fast: the
   section numbers are in the comments and the two places where the code has to
@@ -34,10 +37,10 @@ path follows from that.
   two implementations to agree, each with the test that holds it in place. One
   of them is a contradiction inside §11.1 that makes `canonical` two different
   functions; the others are ambiguities.
-* **`docs/errata-v0.1.de.md`** — what holds instead. All nine are decided; the
-  specification itself is unchanged, and the errata is the changelog a v0.2
-  would be built from. `PREREGISTRATION.md` is the measurement rule for the two
-  that needed one, written before the run.
+* **`docs/spec-v0.1.de.md`** and **`docs/errata-v0.1.de.md`** — the previous
+  version and the decisions taken against it, kept because they carry the
+  reasoning v0.2 only states. `PREREGISTRATION.md` is the measurement rule for
+  the two decisions that needed one, written before the run.
 * **`docs/vectors.json`** — 456 vectors over every preset and profile, as input
   and expected stream in hex, so a second implementation can discharge §16.3
   without reading any of this code.
@@ -59,12 +62,22 @@ stream, while the profile is a statement about the container the stream is
 going into and cannot be derived from it.
 
 **Five presets**, all the same format and all read by the same decoder:
-`dense` (the default, and never longer than base64), `legible` (readability at
-no cost in size: the shortest encoding, and among the shortest the one that
-leaves the most bytes readable — about five points more of them than `dense`'s
-rule, for nothing), `canonical` (deterministic, for cache keys), `opaque`
-(never a literal, byte-identical to unpadded base64url, for tokens that carry a
-secret) and `framed` (fixed-size frames, for random access).
+`dense` (the default, encoded in blocks so that memory is constant), `legible`
+(readability at no cost in size: the shortest encoding, and among the shortest
+the one that leaves the most bytes readable), `canonical` (for cache keys),
+`opaque` (never a literal, byte-identical to unpadded base64url, for tokens
+that carry a secret) and `framed` (fixed-size frames, for random access).
+
+All five are deterministic — the output of a preset is a function of input,
+preset and profile (§9.0). What separates them is whether that function carries
+parameters: `dense` and `framed` do (`L ≥ 11`, block and frame size), and §9.5
+may still move them; `canonical`, `legible` and `opaque` do not and are frozen.
+That is why cache keys belong to `canonical` and not to `dense`.
+
+**Four of the five are never longer than base64** — per input, not on average
+(§9.4). `framed` is the exception, at five characters per frame. And on
+high-entropy input `dense` does not merely match base64's length: it writes the
+same bytes.
 
 **Three profiles** decide what a literal may carry: `U` is RFC 3986
 *unreserved*, which goes into a URL query and a cookie value as it stands; `T`

@@ -1,8 +1,11 @@
 # Base65t v0.1 — Errata
 
+**Eingearbeitet in `spec-v0.2.de.md`.** Dieses Dokument bleibt liegen, weil es
+die Begründungen und die Messungen trägt, die v0.2 nur noch als Ergebnis
+ausspricht.
+
 `spec-v0.1.de.md` ist final und bleibt Wort für Wort, wie es ist. Dieses
-Dokument sagt, was daran nicht trägt, und was stattdessen gilt. Es ist zugleich
-das Änderungsprotokoll für ein späteres v0.2.
+Dokument sagt, was daran nicht trägt, und was stattdessen gilt.
 
 Grundlage: `FINDINGS.md` (was die Referenzimplementierung gefunden hat),
 `PREREGISTRATION.md` (die Messregel, festgelegt vor der Messung) und der

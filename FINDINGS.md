@@ -7,8 +7,9 @@ or does not say enough for two implementations to agree. Each one names the
 test that holds it in place, so that whichever way it is decided, the decision
 is visible.
 
-**All nine are now decided.** `docs/errata-v0.1.de.md` says what holds instead,
-entry by entry; this file stays as the record of how each one was found. Six of
+**All nine are decided and folded into `docs/spec-v0.2.de.md`.**
+`docs/errata-v0.1.de.md` says what holds instead, entry by entry; this file
+stays as the record of how each one was found. Six of
 the nine needed no measurement at all — the specification's own ranking of its
 goals settled them. The two that did, and the run that decided them, are in
 `PREREGISTRATION.md` and the appendix of the errata.

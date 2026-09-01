@@ -140,11 +140,11 @@ impl Decoder {
     /// §10.1.
     ///
     /// `padding` is Rule P's reach. A frame body is a plain-mode stream by the
-    /// grammar of §8.1, but it is not *the* stream, and Rule P is written
-    /// about the stream — see the errata for §5.3. Padding exists so that a
-    /// producer of ordinary base64 needs no changes (§1.1), and no such
-    /// producer emits frames, so inside one it would be a parser-differential
-    /// surface bought for nothing.
+    /// grammar of §8.1, but it is not *the* stream, and §5.3 says the stream is
+    /// always the whole octet stream. Padding exists so that a producer of
+    /// ordinary base64 needs no changes (§1.1), and no such producer emits
+    /// frames, so inside one it would be a parser-differential surface bought
+    /// for nothing (TV15).
     fn plain(&mut self, stream: &[u8], padding: Padding) -> Result<(), Error> {
         let len = stream.len();
         let mut pos = 0;
