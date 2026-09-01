@@ -125,6 +125,14 @@ at `n = 10`, and it happened here while writing the document that points it
 out. A bound on a search is a claim about where the answer lives, and it
 belongs next to the result rather than in the method section.
 
+Which bound, though, is worth knowing for §16.8's fuzzing corpus. A second,
+independent implementation of both rules found nothing over an exhaustive
+sweep of a four-symbol alphabet to eleven bytes, and a reversal in one run in
+four over random inputs of 50 to 400 bytes. Enumerating a richer alphabet
+bought nothing here; length was the whole axis. A corpus built by widening the
+alphabet and keeping the samples short would have missed this, and it is the
+shape a generated corpus tends to take.
+
 **What the fix would be** — for whoever decides, not decided here:
 
 * *Keep the Ordnung, drop "längste" from the Berechnung.* The correct rule is
