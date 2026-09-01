@@ -112,3 +112,24 @@ Rules 4 and 5 guarantee a decision even if the data says nothing.
   against the longest rule's 3.34 %, and uses 7.6 segments per kB against 6.2.
   The λ dimension is new; the λ = 0 column is not, and rule 3's threshold was
   set knowing it.
+
+---
+
+## Afterwards
+
+The run is in the appendix of `docs/errata-v0.1.de.md`; nothing above was
+changed for it. Two things are worth recording here.
+
+**The rule decided.** Rule 1 rejected every bonus — `S ≤ 100 %` per file fails
+on 35 of 87 decision files under profile U, 14 of 87 under T, and 2 of 12 on
+the hold-out — so rule 4 applied and the answer is a bonus of zero, with ties
+broken towards readability. `dense` reached no margin at all and inherits the
+order of §11.1.
+
+**Where this document was not complete.** It fixes the segment ceiling as
+`G(λ) ≤ 1.5·G(0)` without saying under which profile. The chosen rule holds it
+under T (1.24×), on silesia (1.06×) and over the axis sweep (1.15×), and
+exceeds it under profile U on the corpus (1.67×). Resolved through §0.1, which
+pairs `legible` with profile T and with "Lesbarkeit vor Größe" — what comes
+before size comes before a non-goal. The gap is named rather than closed after
+the fact.

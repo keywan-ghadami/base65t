@@ -7,6 +7,12 @@ or does not say enough for two implementations to agree. Each one names the
 test that holds it in place, so that whichever way it is decided, the decision
 is visible.
 
+**All nine are now decided.** `docs/errata-v0.1.de.md` says what holds instead,
+entry by entry; this file stays as the record of how each one was found. Six of
+the nine needed no measurement at all — the specification's own ranking of its
+goals settled them. The two that did, and the run that decided them, are in
+`PREREGISTRATION.md` and the appendix of the errata.
+
 Nothing here is a bug in the format. Seven of the nine are cases where two
 readings are both defensible; the eighth is a proof obligation that is only
 half discharged; the first is an outright contradiction inside one section.

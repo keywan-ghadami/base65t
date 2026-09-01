@@ -34,6 +34,13 @@ path follows from that.
   two implementations to agree, each with the test that holds it in place. One
   of them is a contradiction inside §11.1 that makes `canonical` two different
   functions; the others are ambiguities.
+* **`docs/errata-v0.1.de.md`** — what holds instead. All nine are decided; the
+  specification itself is unchanged, and the errata is the changelog a v0.2
+  would be built from. `PREREGISTRATION.md` is the measurement rule for the two
+  that needed one, written before the run.
+* **`docs/vectors.json`** — 456 vectors over every preset and profile, as input
+  and expected stream in hex, so a second implementation can discharge §16.3
+  without reading any of this code.
 
 ## Using it
 
@@ -52,8 +59,10 @@ stream, while the profile is a statement about the container the stream is
 going into and cannot be derived from it.
 
 **Five presets**, all the same format and all read by the same decoder:
-`dense` (the default, and never longer than base64), `legible`, `canonical`
-(deterministic, for cache keys — read FINDINGS.md item 1 first), `opaque`
+`dense` (the default, and never longer than base64), `legible` (readability at
+no cost in size: the shortest encoding, and among the shortest the one that
+leaves the most bytes readable — about five points more of them than `dense`'s
+rule, for nothing), `canonical` (deterministic, for cache keys), `opaque`
 (never a literal, byte-identical to unpadded base64url, for tokens that carry a
 secret) and `framed` (fixed-size frames, for random access).
 
