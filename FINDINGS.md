@@ -66,6 +66,65 @@ rule is implemented too, as `LiteralEnd::Longest`, and is not exported: it
 exists so that `divergence_from_the_berechnung_paragraph` can hold the two
 apart. Change either and that test fails, which is the point of it.
 
+### What a measurement can and cannot settle here
+
+The obvious next move is to measure the two rules against each other and let
+the numbers decide. They do not, and it is worth writing down why, because the
+reason is not "the effect was too small".
+
+**What is fixed without data.** Both rules are always the *same length* — both
+minimise it and only the tie-break differs (`both_rules_are_always_the_same_
+length`). So size cannot decide this, and any measurement has to be of
+something else. The two candidates are the share of input bytes that stay
+readable in the output, and the number of segments, which is what §9.5 ties
+throughput to.
+
+**Neither metric hands over a winner.** Measured with
+`cargo run --release --example tiebreak` over the 88-sample binary2textbench
+corpus:
+
+| profile, `L_min` | passthrough, Ordnung | passthrough, Berechnung | segments/kB, Ordnung | segments/kB, Berechnung |
+|---|---|---|---|---|
+| U, 1 (`canonical`) | **3.75 %** | 3.34 % | 7.6 | **6.2** |
+| U, 11 (`dense`) | 1.82 % | **1.84 %** | 2.5 | 2.5 |
+| T, 1 | **11.68 %** | 11.36 % | 11.5 | **10.5** |
+| T, 11 | 10.55 % | **10.56 %** | 8.5 | 8.5 |
+
+At `canonical`'s threshold the two metrics point in **opposite directions**:
+the Ordnung keeps more bytes readable, the Berechnung uses fewer segments. So
+a measurement selects a rule only after somebody has already chosen which
+metric matters — which is the decision, not evidence for it.
+
+**The passthrough result is the counter-intuitive one and it is real.** The
+longest literal ought to keep the most bytes in the clear. It does not, because
+ending a literal early can realign the base64 run behind it so that a *later*
+literal becomes length-optimal as well, and two literals of seven beat one of
+eight. Smallest input where it happens, seventeen bytes:
+
+```
+"aaaaaaaa  aaaaaaa"    Ordnung     SLLLLLLBBBSLLLLLL   14 bytes readable
+                       Berechnung  SLLLLLLLBBBBBBBBB    8 bytes readable
+```
+
+Over random inputs at `L_min = 1`, the Berechnung loses passthrough in 59 % of
+the cases where the two differ (13096 of 22207). At `L_min = 11` it loses in
+0.3 % — the threshold is what makes the intuition nearly true, and `canonical`
+is the one preset that does not have it.
+
+**On segments the direction did hold** across everything looked at: exhaustive
+to 24 bytes and 240 000 random inputs over both profiles and three thresholds,
+without a single reversal. That is an observation, not a theorem, and the
+paragraph below is why it is phrased that way.
+
+**A note on where a search space ends.** The first version of
+`neither_rule_dominates_on_passthrough` asserted the opposite — that the
+Berechnung never loses passthrough — and passed, exhaustively, up to sixteen
+bytes. The smallest counterexample is seventeen. That is the same failure mode
+as §11.1's own verification stopping at `n <= 9` when the first divergence is
+at `n = 10`, and it happened here while writing the document that points it
+out. A bound on a search is a claim about where the answer lives, and it
+belongs next to the result rather than in the method section.
+
 **What the fix would be** — for whoever decides, not decided here:
 
 * *Keep the Ordnung, drop "längste" from the Berechnung.* The correct rule is

@@ -81,7 +81,6 @@ pub enum Seg {
 
 /// The three-symbol vector of §11.1. Not needed to encode; needed to say what
 /// `canonical` means and to test it.
-#[cfg(test)]
 pub fn c_vector(segs: &[Seg]) -> String {
     let mut v = String::new();
     for seg in segs {
@@ -271,7 +270,6 @@ pub enum LiteralEnd {
     KeyOrder,
     /// The longest optimal literal, which is what §11.1's *Berechnung*
     /// paragraph asks for. The two differ; see FINDINGS.md.
-    #[cfg(test)]
     Longest,
 }
 
@@ -344,7 +342,6 @@ fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) 
     );
 
     match end {
-        #[cfg(test)]
         LiteralEnd::Longest => *cands.last().expect("non-empty"),
         LiteralEnd::KeyOrder => {
             // Ending at `t` writes `B` at `t` when a base64 segment opens

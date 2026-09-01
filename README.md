@@ -94,7 +94,13 @@ cd rust
 cargo test --release
 cargo clippy --all-targets --release -- -D warnings
 cargo run --release --example density
+cargo run --release --example tiebreak -- --profile=U --lmin=1 <file>...
 ```
+
+`tiebreak` is the instrument for the open question in FINDINGS.md item 1: it
+runs both readings of §11.1 over the same files and reports what separates
+them, per file rather than as one average. Both are the same length by
+construction, and it asserts that rather than assuming it.
 
 The suite is organised by what it proves, not by what it covers:
 `tests/vectors.rs` is §15 vector by vector, `tests/roundtrip.rs` and

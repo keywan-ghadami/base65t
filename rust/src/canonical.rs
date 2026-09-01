@@ -58,7 +58,7 @@ fn encode_canonical_longest_literal(data: &[u8], profile: Profile) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::{c_vector, segment_with as seg};
+    use crate::encode::{c_vector, emit, segment_with as seg};
 
     fn cvec(data: &[u8], end: LiteralEnd) -> String {
         let r = rules(Profile::U);
@@ -146,6 +146,100 @@ mod tests {
             (3.0..12.0).contains(&percent),
             "{percent:.1} % is outside the band this was written against"
         );
+    }
+
+    /// The one thing that is true of both rules whatever the input: they are
+    /// the same length. Both minimise it; only the tie-break differs. If this
+    /// ever fails, the disagreement in §11.1 is not a tie-break question at
+    /// all and everything written about it is wrong.
+    #[test]
+    fn both_rules_are_always_the_same_length() {
+        let mut s: u32 = 0x2545_f491;
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            s as usize
+        };
+        for _ in 0..4000 {
+            let n = 1 + next() % 400;
+            let data: Vec<u8> = (0..n).map(|_| b"aabbc.-_ ,;\n\x00"[next() % 13]).collect();
+            for profile in [Profile::U, Profile::T, Profile::B] {
+                for lmin in [1usize, 4, 11] {
+                    let r = Rules {
+                        profile,
+                        min_literal: Some(lmin),
+                        framed: false,
+                    };
+                    let c = costs(&data, r);
+                    let by_order = emit(&data, &seg(&data, r, &c, LiteralEnd::KeyOrder));
+                    let by_longest = emit(&data, &seg(&data, r, &c, LiteralEnd::Longest));
+                    assert_eq!(
+                        by_order.len(),
+                        by_longest.len(),
+                        "{data:?} {profile:?} {lmin}"
+                    );
+                    assert_eq!(by_order.len(), c.r_l[0]);
+                }
+            }
+        }
+    }
+
+    /// Neither rule dominates the other on passthrough — the share of input
+    /// bytes that stay readable in the output.
+    ///
+    /// This is worth a test because the opposite is the obvious guess: the
+    /// longest literal keeps the most bytes in the clear, surely. It does not.
+    /// Ending a literal early can realign the base64 run that follows so that
+    /// a *later* literal becomes length-optimal too, and two literals of seven
+    /// beat one of eight.
+    ///
+    /// The smallest input where it happens is seventeen bytes — which is one
+    /// byte past where the first version of this test looked, and the same
+    /// mistake §11.1's own verification makes at `n <= 9`. A search space is
+    /// a claim about where the answer lives, and it is worth stating: below,
+    /// exhaustive to sixteen bytes finds nothing.
+    #[test]
+    fn neither_rule_dominates_on_passthrough() {
+        fn passthrough(c: &str) -> usize {
+            c.chars().filter(|&x| x != 'B').count()
+        }
+        // Two literals of seven against one of eight, at equal length.
+        let data = b"aaaaaaaa  aaaaaaa";
+        assert_eq!(data.len(), 17);
+        let r = Rules {
+            profile: Profile::U,
+            min_literal: Some(1),
+            framed: false,
+        };
+        let c = costs(data, r);
+        let by_order = c_vector(&seg(data, r, &c, LiteralEnd::KeyOrder));
+        let by_longest = c_vector(&seg(data, r, &c, LiteralEnd::Longest));
+        assert_eq!(by_order, "SLLLLLLBBBSLLLLLL");
+        assert_eq!(by_longest, "SLLLLLLLBBBBBBBBB");
+        assert_eq!(passthrough(&by_order), 14);
+        assert_eq!(passthrough(&by_longest), 8);
+
+        // And nothing shorter does it: every arrangement of an admitted and a
+        // non-admitted byte up to sixteen long, at every threshold.
+        for n in 1..=16usize {
+            for bits in 0u32..(1 << n) {
+                let d: Vec<u8> = (0..n)
+                    .map(|i| if bits >> i & 1 == 1 { b'a' } else { b' ' })
+                    .collect();
+                for lmin in [1usize, 4, 11] {
+                    let r = Rules {
+                        profile: Profile::U,
+                        min_literal: Some(lmin),
+                        framed: false,
+                    };
+                    let c = costs(&d, r);
+                    let k = c_vector(&seg(&d, r, &c, LiteralEnd::KeyOrder));
+                    let l = c_vector(&seg(&d, r, &c, LiteralEnd::Longest));
+                    assert!(passthrough(&l) >= passthrough(&k), "{d:?} at n = {n}");
+                }
+            }
+        }
     }
 
     /// `canonical` has no `L_min`, and §11.1 says what that buys: a seven-byte

@@ -43,6 +43,20 @@ mod decode;
 mod encode;
 
 pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL};
+
+/// Not the format's API, and not stable: the pieces §11.1's two readings have
+/// to be compared through.
+///
+/// `canonical` is defined twice in §11.1 and the two definitions disagree
+/// (FINDINGS.md, item 1). Deciding which one the format keeps is a judgement
+/// about streams neither the encoder nor a caller ever needs to see, so the
+/// comparison needs the segmentation itself rather than the bytes — and it
+/// needs both rules reachable from outside the crate. `examples/tiebreak.rs`
+/// is what this exists for. Nothing else should use it.
+#[doc(hidden)]
+pub mod internals {
+    pub use crate::encode::{c_vector, costs, segment_with, LiteralEnd, Rules, Seg};
+}
 pub use canonical::encode_canonical;
 pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
 pub use encode::FRAME_BYTES;
