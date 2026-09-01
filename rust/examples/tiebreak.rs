@@ -58,11 +58,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let rules = Rules {
-        profile,
-        min_literal: Some(min_literal),
-        framed: false,
-    };
+    let rules = Rules::preset(profile, Some(min_literal), false);
 
     println!("profile {profile:?}, L_min {min_literal}\n");
     println!(

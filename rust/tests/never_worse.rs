@@ -141,3 +141,68 @@ fn high_entropy_input_encodes_at_the_base64_ratio() {
     assert_eq!(out.len(), base64_len(data.len()));
     assert_eq!(out, encode_opaque(&data));
 }
+
+/// Bytes a reader can see without decoding: the payloads of the literal
+/// segments. Walked out of the stream rather than taken from the encoder, so
+/// that what is checked is the stream and not a number beside it.
+fn passthrough(stream: &[u8]) -> usize {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let value = |c: u8| A.iter().position(|&x| x == c).expect("alphabet");
+    let mut total = 0;
+    let mut pos = 0;
+    while pos < stream.len() {
+        if stream[pos] == b'~' {
+            let l1 = value(stream[pos + 1]);
+            let (len, header) = if l1 == 63 {
+                (
+                    63 + (value(stream[pos + 2]) << 6) + value(stream[pos + 3]),
+                    4,
+                )
+            } else {
+                (l1, 2)
+            };
+            total += len;
+            pos += header + len;
+        } else {
+            pos += 1;
+        }
+    }
+    total
+}
+
+/// What `legible` is, after the errata: the shortest encoding, and among the
+/// shortest the one that leaves the most bytes readable (E4). Both halves are
+/// normative now, so both are checked — the second one against the rule
+/// `dense` and `canonical` use, which is what it has to beat to be worth a
+/// preset of its own.
+#[test]
+fn legible_is_readability_at_no_cost_in_size() {
+    let mut ahead = 0usize;
+    let mut inputs = 0usize;
+    for (name, data) in corpus() {
+        if data.is_empty() {
+            continue;
+        }
+        for profile in [Profile::U, Profile::T] {
+            let legible = encode_legible(&data, profile);
+            let dense = encode_dense(&data, profile);
+            let canonical = encode_canonical(&data, profile);
+
+            // Never longer than base64 — §9.4 now covers `legible` too.
+            assert!(legible.len() <= base64_len(data.len()), "{name}");
+            // And never longer than the length-optimal encoding without a
+            // threshold, because it *is* one of those.
+            assert_eq!(legible.len(), canonical.len(), "{name}, {profile:?}");
+            assert!(legible.len() <= dense.len(), "{name}, {profile:?}");
+
+            inputs += 1;
+            if passthrough(&legible) < passthrough(&canonical) {
+                ahead += 1;
+            }
+        }
+    }
+    // The passthrough claim is a property of the objective, not of the corpus:
+    // maximising it among equal-length segmentations cannot come out behind on
+    // any single input.
+    assert_eq!(ahead, 0, "{ahead} of {inputs} inputs were less readable");
+}

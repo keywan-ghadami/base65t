@@ -55,7 +55,7 @@ pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL};
 /// is what this exists for. Nothing else should use it.
 #[doc(hidden)]
 pub mod internals {
-    pub use crate::encode::{c_vector, costs, segment_with, LiteralEnd, Rules, Seg};
+    pub use crate::encode::{c_vector, costs, emit, segment_with, LiteralEnd, Rules, Seg};
 }
 pub use canonical::encode_canonical;
 pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
@@ -185,39 +185,33 @@ pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
 
 /// Literals from eleven bytes up, where §9.1 shows they can never cost.
 pub fn encode_dense(data: &[u8], profile: Profile) -> Vec<u8> {
-    encode::encode_rules(
-        data,
-        Rules {
-            profile,
-            min_literal: Some(11),
-            framed: false,
-        },
-    )
+    encode::encode_rules(data, Rules::preset(profile, Some(11), false))
 }
 
-/// Literals from four bytes up (§9.3). Can be longer than base64.
+/// Readability at no cost in size: the shortest encoding, and among the
+/// shortest the one that leaves the most bytes readable.
+///
+/// §9.3 defines `legible` as a threshold — literals from four bytes up — and a
+/// threshold cannot make output more readable: the objective is still the
+/// length (§9.0), so a literal that costs anything is never chosen and
+/// `legible` collapses into `dense`. The errata gives it the objective it was
+/// missing, and the measurement in PREREGISTRATION.md is why this and not a
+/// budget over `dense`: every bonus large enough to buy a literal that costs
+/// something broke §9.4 on 44 of 96 corpus files, while breaking ties towards
+/// readability costs nothing at all and is worth about two points of
+/// passthrough.
+///
+/// So §9.4 covers `legible` too, and its exemption there is struck.
 pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
-    encode::encode_rules(
-        data,
-        Rules {
-            profile,
-            min_literal: Some(4),
-            framed: false,
-        },
-    )
+    let mut rules = Rules::preset(profile, Some(1), false);
+    rules.prefer_passthrough = true;
+    encode::encode_rules(data, rules)
 }
 
 /// Base64URL and nothing else. The profile does not enter into it: there are
 /// no literals for it to constrain.
 pub fn encode_opaque(data: &[u8]) -> Vec<u8> {
-    encode::encode_rules(
-        data,
-        Rules {
-            profile: P::U,
-            min_literal: None,
-            framed: false,
-        },
-    )
+    encode::encode_rules(data, Rules::preset(P::U, None, false))
 }
 
 /// Frames of [`FRAME_BYTES`] decoded bytes each, `dense` inside (§8.1).

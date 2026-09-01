@@ -30,11 +30,7 @@ use crate::encode::{costs, emit, segment_with, LiteralEnd, Rules};
 /// §11.1: plain mode, URL alphabet, no padding, and no `L_min` — a literal is
 /// taken wherever it is shorter, down to seven bytes at a fortunate alignment.
 fn rules(profile: Profile) -> Rules {
-    Rules {
-        profile,
-        min_literal: Some(1),
-        framed: false,
-    }
+    Rules::preset(profile, Some(1), false)
 }
 
 /// The minimum of `Key` over the segmentations the profile admits.
@@ -166,11 +162,7 @@ mod tests {
             let data: Vec<u8> = (0..n).map(|_| b"aabbc.-_ ,;\n\x00"[next() % 13]).collect();
             for profile in [Profile::U, Profile::T, Profile::B] {
                 for lmin in [1usize, 4, 11] {
-                    let r = Rules {
-                        profile,
-                        min_literal: Some(lmin),
-                        framed: false,
-                    };
+                    let r = Rules::preset(profile, Some(lmin), false);
                     let c = costs(&data, r);
                     let by_order = emit(&data, &seg(&data, r, &c, LiteralEnd::KeyOrder));
                     let by_longest = emit(&data, &seg(&data, r, &c, LiteralEnd::Longest));
@@ -179,7 +171,7 @@ mod tests {
                         by_longest.len(),
                         "{data:?} {profile:?} {lmin}"
                     );
-                    assert_eq!(by_order.len(), c.r_l[0]);
+                    assert_eq!(3 * by_order.len() as i64, c.r_l[0].0);
                 }
             }
         }
@@ -207,11 +199,7 @@ mod tests {
         // Two literals of seven against one of eight, at equal length.
         let data = b"aaaaaaaa  aaaaaaa";
         assert_eq!(data.len(), 17);
-        let r = Rules {
-            profile: Profile::U,
-            min_literal: Some(1),
-            framed: false,
-        };
+        let r = Rules::preset(Profile::U, Some(1), false);
         let c = costs(data, r);
         let by_order = c_vector(&seg(data, r, &c, LiteralEnd::KeyOrder));
         let by_longest = c_vector(&seg(data, r, &c, LiteralEnd::Longest));
@@ -228,11 +216,7 @@ mod tests {
                     .map(|i| if bits >> i & 1 == 1 { b'a' } else { b' ' })
                     .collect();
                 for lmin in [1usize, 4, 11] {
-                    let r = Rules {
-                        profile: Profile::U,
-                        min_literal: Some(lmin),
-                        framed: false,
-                    };
+                    let r = Rules::preset(Profile::U, Some(lmin), false);
                     let c = costs(&d, r);
                     let k = c_vector(&seg(&d, r, &c, LiteralEnd::KeyOrder));
                     let l = c_vector(&seg(&d, r, &c, LiteralEnd::Longest));

@@ -26,7 +26,31 @@ use std::collections::VecDeque;
 
 use crate::alphabet::{Profile, ALPHABET, MAX_FRAME_BODY, MAX_LITERAL, TILDE};
 
-const INF: usize = usize::MAX / 4;
+/// What an encoding costs, as the pair the objective compares.
+///
+/// The first component is characters **in thirds**, so that a readability
+/// bonus of a third of a character — what base64 wastes on a byte it could
+/// have passed through — stays integral. The second is negated passthrough
+/// bytes, and is held at zero unless the rules ask for readability; a
+/// lexicographic minimum over the pair is then "shortest, and among those the
+/// most readable".
+pub type Cost = (i64, i64);
+
+const INF: Cost = (i64::MAX / 4, 0);
+
+#[inline]
+fn is_inf(c: Cost) -> bool {
+    c.0 >= INF.0
+}
+
+#[inline]
+fn add(a: Cost, b: Cost) -> Cost {
+    if is_inf(a) || is_inf(b) {
+        INF
+    } else {
+        (a.0 + b.0, a.1 + b.1)
+    }
+}
 
 /// Bytes per frame body in `encode_framed`, before encoding (§8.1): a fixed
 /// decoded size is what makes offset-to-frame O(1) without a trailer.
@@ -50,15 +74,12 @@ fn b64_chars(k: usize) -> usize {
     (4 * k).div_ceil(3)
 }
 
-/// Characters the byte at quantum offset `p` costs: 2 for the first of a
-/// quantum, 1 for the others — four per three bytes (§9.2).
+/// Thirds of a character the byte at quantum offset `p` costs: two characters
+/// for the first of a quantum, one for the others — four per three bytes
+/// (§9.2), which is twelve thirds per three bytes.
 #[inline]
-fn inc(p: usize) -> usize {
-    if p == 0 {
-        2
-    } else {
-        1
-    }
+fn inc(p: usize) -> Cost {
+    (if p == 0 { 6 } else { 3 }, 0)
 }
 
 /// What the encoder is allowed to do, which is all a preset is (§9.0, §9.3).
@@ -70,6 +91,38 @@ pub struct Rules {
     pub min_literal: Option<usize>,
     /// F1 and F2 in force, for a stream that will be carried in frames (§8.2).
     pub framed: bool,
+    /// λ: thirds of a character a passthrough byte is worth, subtracted from
+    /// what a literal costs. Zero is the pure length optimum, which is what
+    /// every preset in §9.3 uses; the specification has no other value yet,
+    /// and PREREGISTRATION.md is the measurement that picks one for `legible`.
+    pub bonus: i64,
+    /// Whether ties in length are broken towards readability rather than left
+    /// to the reconstruction rule. This is the second component of `Cost`.
+    pub prefer_passthrough: bool,
+}
+
+impl Rules {
+    /// A preset as §9.3 defines one: length only, no bonus.
+    pub fn preset(profile: Profile, min_literal: Option<usize>, framed: bool) -> Self {
+        Rules {
+            profile,
+            min_literal,
+            framed,
+            bonus: 0,
+            prefer_passthrough: false,
+        }
+    }
+
+    /// Thirds of a character a literal of `m` bytes costs under these rules,
+    /// and the passthrough it buys.
+    #[inline]
+    fn literal_edge(&self, m: usize) -> Cost {
+        let m = m as i64;
+        (
+            (3 - self.bonus) * m + 3 * h(m as usize) as i64,
+            if self.prefer_passthrough { -m } else { 0 },
+        )
+    }
 }
 
 /// One segment of a segmentation, as `[start, end)` over the input bytes.
@@ -104,17 +157,17 @@ pub fn c_vector(segs: &[Seg]) -> String {
 /// * `g[j][p]` — cheapest finish from inside a base64 segment with `p` bytes
 ///   already in the open quantum.
 pub struct Costs {
-    pub r_l: Vec<usize>,
-    pub r_b: Vec<usize>,
-    g: Vec<[usize; 3]>,
+    pub r_l: Vec<Cost>,
+    pub r_b: Vec<Cost>,
+    g: Vec<[Cost; 3]>,
 }
 
 impl Costs {
     /// Cost of opening a base64 segment at `j`, or `INF` at the end of input.
     #[inline]
-    fn open_b64(&self, j: usize) -> usize {
+    fn open_b64(&self, j: usize) -> Cost {
         match self.g.get(j + 1) {
-            Some(g) => 2 + g[1],
+            Some(g) => add(inc(0), g[1]),
             // At the end of the input there is no byte for a segment to open
             // on.
             None => INF,
@@ -128,25 +181,31 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     let mut r_l = vec![INF; n + 1];
     let mut r_b = vec![INF; n + 1];
     let mut g = vec![[INF; 3]; n + 1];
-    r_l[n] = 0;
-    r_b[n] = 0;
-    g[n] = [0; 3];
+    r_l[n] = (0, 0);
+    r_b[n] = (0, 0);
+    g[n] = [(0, 0); 3];
 
-    // Deques over candidate end positions `t`, keyed by `t + r_l[t]`: a
-    // literal edge [j, t) costs `(t - j) + h + r_l[t]`, so the `j` falls out
-    // of the minimisation. Band 1 is `h = 2` and `m <= 62`, band 2 is `h = 4`
-    // and `63 <= m <= MAX_LITERAL`.
+    // Deques over candidate end positions `t`. A literal edge [j, t) costs
+    // `(3 − λ)(t − j) + 3h + r_l[t]` in thirds, and buys `t − j` passthrough
+    // bytes, so both components split into a part that depends only on `t` and
+    // a part that depends only on `j` — and the `j` part falls out of the
+    // minimisation. Band 1 is `h = 2` and `m <= 62`, band 2 is `h = 4` and
+    // `63 <= m <= MAX_LITERAL`.
     //
     // Going backwards, candidates enter at the near end and expire at the far
     // end, which is the mirror image of the usual sliding-window minimum: pop
     // the back on insertion, pop the front against the window's far end.
     let mut band1: VecDeque<usize> = VecDeque::new();
     let mut band2: VecDeque<usize> = VecDeque::new();
-    let key = |t: usize, r_l: &[usize]| -> usize {
-        if r_l[t] >= INF {
+    let pw: i64 = if rules.prefer_passthrough { 1 } else { 0 };
+    let key = |t: usize, r_l: &[Cost]| -> Cost {
+        if is_inf(r_l[t]) {
             INF
         } else {
-            t + r_l[t]
+            (
+                (3 - rules.bonus) * t as i64 + r_l[t].0,
+                r_l[t].1 - pw * t as i64,
+            )
         }
     };
 
@@ -169,7 +228,7 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
             // A literal ending at `t` is barred outright when its last byte is
             // a tilde (F2) — a property of `t`, so such a `t` never enters a
             // deque at all.
-            let admit = |t: usize, dq: &mut VecDeque<usize>, r_l: &[usize]| {
+            let admit = |t: usize, dq: &mut VecDeque<usize>, r_l: &[Cost]| {
                 if t > n {
                     return;
                 }
@@ -217,32 +276,28 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
                 }
             }
 
+            // Put the `j` parts back on: the same constant for every candidate
+            // in a band, so it cannot change which one won.
             let mut best = INF;
-            if let Some(&t) = band1.front() {
-                let k = key(t, &r_l);
-                if k < INF {
-                    best = best.min(k + 2 - j);
-                }
-            }
-            if let Some(&t) = band2.front() {
-                let k = key(t, &r_l);
-                if k < INF {
-                    best = best.min(k + 4 - j);
+            for (dq, header) in [(&band1, 2i64), (&band2, 4i64)] {
+                if let Some(&t) = dq.front() {
+                    let k = key(t, &r_l);
+                    if !is_inf(k) {
+                        let c = (
+                            k.0 + 3 * header - (3 - rules.bonus) * j as i64,
+                            k.1 + pw * j as i64,
+                        );
+                        best = best.min(c);
+                    }
                 }
             }
             r_b[j] = best;
         }
 
         for p in 0..3 {
-            let cont = g[j + 1][(p + 1) % 3];
-            g[j][p] = r_b[j].min(if cont >= INF { INF } else { inc(p) + cont });
+            g[j][p] = r_b[j].min(add(inc(p), g[j + 1][(p + 1) % 3]));
         }
-        let open = if g[j + 1][1] >= INF {
-            INF
-        } else {
-            2 + g[j + 1][1]
-        };
-        r_l[j] = r_b[j].min(open);
+        r_l[j] = r_b[j].min(add(inc(0), g[j + 1][1]));
     }
 
     Costs { r_l, r_b, g }
@@ -285,7 +340,7 @@ pub fn segment_with(data: &[u8], rules: Rules, c: &Costs, end: LiteralEnd) -> Ve
             let mut t = pos + 1;
             let mut p = 1usize;
             loop {
-                let extend = t < n && c.g[t][p] == inc(p) + c.g[t + 1][(p + 1) % 3];
+                let extend = t < n && c.g[t][p] == add(inc(p), c.g[t + 1][(p + 1) % 3]);
                 if !extend {
                     break;
                 }
@@ -316,7 +371,7 @@ fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) 
     let n = data.len();
     let lmin = rules.min_literal.expect("a literal was chosen");
     let best = c.r_b[i];
-    debug_assert!(best < INF);
+    debug_assert!(!is_inf(best));
 
     // Candidate ends, in increasing order. The walk starts at the first byte
     // rather than at `i + L_min`, because the run has to be admissible over
@@ -331,7 +386,7 @@ fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) 
             break;
         }
         let barred_f2 = rules.framed && data[t - 1] == TILDE;
-        if t - i >= lmin && !barred_f2 && c.r_l[t] < INF && (t - i) + h(t - i) + c.r_l[t] == best {
+        if t - i >= lmin && !barred_f2 && add(rules.literal_edge(t - i), c.r_l[t]) == best {
             cands.push(t);
         }
         t += 1;
@@ -350,7 +405,7 @@ fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) 
             // outright, and when none does, carrying on beats starting a new
             // literal — which is the *longest* optimal end, not the earliest.
             for &t in &cands {
-                if t < n && (t - i) + h(t - i) + c.open_b64(t) == best {
+                if t < n && add(rules.literal_edge(t - i), c.open_b64(t)) == best {
                     return t;
                 }
             }
@@ -421,11 +476,7 @@ pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
 /// trailer. F1 and F2 hold inside each body, so `~A` occurs only where a frame
 /// starts (§8.2).
 pub fn encode_framed(data: &[u8], profile: Profile, min_literal: usize) -> Vec<u8> {
-    let rules = Rules {
-        profile,
-        min_literal: Some(min_literal),
-        framed: true,
-    };
+    let rules = Rules::preset(profile, Some(min_literal), true);
     let mut out = Vec::new();
     for chunk in data.chunks(FRAME_BYTES) {
         let body = encode_rules(chunk, rules);
@@ -449,11 +500,7 @@ mod tests {
     use super::*;
 
     fn rules(min_literal: Option<usize>) -> Rules {
-        Rules {
-            profile: Profile::U,
-            min_literal,
-            framed: false,
-        }
+        Rules::preset(Profile::U, min_literal, false)
     }
 
     /// The cost table has to agree with the string the emitter actually
@@ -474,7 +521,11 @@ mod tests {
                 let c = costs(data, r);
                 let segs = segment(data, r, &c);
                 let out = emit(data, &segs);
-                assert_eq!(out.len(), c.r_l[0], "{data:?} at L_min {lmin:?}");
+                assert_eq!(
+                    3 * out.len() as i64,
+                    c.r_l[0].0,
+                    "{data:?} at L_min {lmin:?}"
+                );
             }
         }
     }
