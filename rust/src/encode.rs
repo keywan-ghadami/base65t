@@ -56,6 +56,31 @@ fn add(a: Cost, b: Cost) -> Cost {
 /// decoded size is what makes offset-to-frame O(1) without a trailer.
 pub const FRAME_BYTES: usize = 65536;
 
+/// Bytes per block in `dense` (§9.2), and why it is not a power of two.
+///
+/// Without a greedy encoder the exact dynamic programme is the only conforming
+/// one, and its backpointers are O(n) — which for a gigabyte object is the
+/// difference between running and not. So `dense` runs the programme over
+/// independent blocks: O(1) memory, streamable, and still byte-exact, which a
+/// greedy encoder could never be.
+///
+/// **The size has to be divisible by three.** Base64 of `b` bytes is
+/// `ceil(4b/3)` characters; for `b` not a multiple of three every block rounds
+/// up on its own and `k` blocks cost up to `k − 1` characters more than the
+/// same stream in one piece. At 65536 that would be one character per 64 KiB —
+/// and `len ≤ ceil(4n/3)` would be broken, which is the guarantee the whole
+/// case for the format rests on (§9.4). At 65535 = 3 · 21845 every block
+/// boundary is a quantum boundary: encoding blockwise as pure base64 is
+/// **byte-identical** to encoding the whole stream, so the all-base64
+/// candidate is untouched and so is the guarantee.
+///
+/// The cost is that a literal cannot span a block boundary — at most one extra
+/// header per boundary, under 0.01 %.
+///
+/// `FRAME_BYTES` stays a power of two for the opposite reason: there the point
+/// is offset arithmetic (§8.1), and `framed` is exempt from §9.4 anyway.
+pub const BLOCK_BYTES: usize = 65535;
+
 /// Header cost of a literal of `m` bytes (§6.1): two bands, and no third one,
 /// because a run longer than `MAX_LITERAL` is several edges.
 #[inline]
@@ -465,11 +490,28 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// One plain-mode stream under the given rules.
+/// One plain-mode stream under the given rules, over the whole input.
 pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
     let c = costs(data, rules);
     let segs = segment(data, rules, &c);
     emit(data, &segs)
+}
+
+/// The same, in independent blocks of `block` bytes (§9.2).
+///
+/// A block is simply its own input: the dynamic programme is untouched, and
+/// what bounds the memory is that nothing has to be remembered across a
+/// boundary. `block` MUST be a multiple of three — see `BLOCK_BYTES`.
+pub fn encode_blocked(data: &[u8], rules: Rules, block: usize) -> Vec<u8> {
+    assert_eq!(block % 3, 0, "a block boundary must be a quantum boundary");
+    if data.len() <= block {
+        return encode_rules(data, rules);
+    }
+    let mut out = Vec::with_capacity(data.len() + data.len() / 3 + 8);
+    for chunk in data.chunks(block) {
+        out.extend_from_slice(&encode_rules(chunk, rules));
+    }
+    out
 }
 
 /// §8: fixed-size frames, so that a byte offset names a frame without a

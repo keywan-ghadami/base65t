@@ -4,9 +4,10 @@
 
 //! Base65t — Base64URL plus a 65th character.
 //!
-//! The reference implementation of `docs/spec-v0.1.de.md`. Section numbers in
-//! the comments are that document's; where the code departs from it, the
-//! comment says so and `FINDINGS.md` says why.
+//! The reference implementation of `docs/spec-v0.2.de.md`. Section numbers in
+//! the comments are that document's. v0.2 changed no bit of the wire format;
+//! it settled what an encoder must choose where v0.1 left the choice open, and
+//! `docs/errata-v0.1.de.md` records each decision with its reasoning.
 //!
 //! ```
 //! use base65t::{decode, encode, Profile};
@@ -59,7 +60,7 @@ pub mod internals {
 }
 pub use canonical::encode_canonical;
 pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
-pub use encode::FRAME_BYTES;
+pub use encode::{BLOCK_BYTES, FRAME_BYTES};
 
 use alphabet::Profile as P;
 use encode::Rules;
@@ -184,24 +185,28 @@ pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
 }
 
 /// Literals from eleven bytes up, where §9.1 shows they can never cost.
+///
+/// Encoded in independent blocks of [`BLOCK_BYTES`], so that a stream of any
+/// size needs constant memory (§9.2). The block size is a multiple of three,
+/// which is what keeps §9.4 exact across boundaries and keeps the output on
+/// high-entropy input byte-identical to base64url.
 pub fn encode_dense(data: &[u8], profile: Profile) -> Vec<u8> {
-    encode::encode_rules(data, Rules::preset(profile, Some(11), false))
+    encode::encode_blocked(data, Rules::preset(profile, Some(11), false), BLOCK_BYTES)
 }
 
 /// Readability at no cost in size: the shortest encoding, and among the
 /// shortest the one that leaves the most bytes readable.
 ///
-/// §9.3 defines `legible` as a threshold — literals from four bytes up — and a
+/// v0.1 defined `legible` by a threshold — literals from four bytes up — and a
 /// threshold cannot make output more readable: the objective is still the
 /// length (§9.0), so a literal that costs anything is never chosen and
-/// `legible` collapses into `dense`. The errata gives it the objective it was
-/// missing, and the measurement in PREREGISTRATION.md is why this and not a
-/// budget over `dense`: every bonus large enough to buy a literal that costs
-/// something broke §9.4 on 44 of 96 corpus files, while breaking ties towards
-/// readability costs nothing at all and is worth about two points of
-/// passthrough.
+/// `legible` collapses into `dense`. §9.3 now gives it an objective instead.
 ///
-/// So §9.4 covers `legible` too, and its exemption there is struck.
+/// The measurement in PREREGISTRATION.md is why this and not a budget over
+/// `dense`: every bonus large enough to buy a literal that costs something
+/// broke §9.4 on 35 of 87 corpus files, while breaking ties towards
+/// readability costs nothing at all and is worth about five points of
+/// passthrough. So §9.4 covers `legible` too (TV14).
 pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
     let mut rules = Rules::preset(profile, Some(1), false);
     rules.prefer_passthrough = true;

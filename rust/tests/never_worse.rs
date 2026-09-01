@@ -85,6 +85,133 @@ fn dense_is_never_longer_than_base64() {
     }
 }
 
+/// §9.4 in v0.2 is a statement about the format, not about one preset: four of
+/// the five presets are never longer than base64, per input rather than on
+/// average. That is the whole of the case for switching, so it is checked for
+/// each of them rather than argued from the one that was measured.
+#[test]
+fn the_guarantee_covers_four_of_the_five_presets() {
+    for (name, data) in corpus() {
+        for profile in [Profile::U, Profile::T, Profile::B] {
+            for (preset, out) in [
+                ("dense", encode_dense(&data, profile)),
+                ("legible", encode_legible(&data, profile)),
+                ("canonical", encode_canonical(&data, profile)),
+                ("opaque", encode_opaque(&data)),
+            ] {
+                assert!(
+                    out.len() <= base64_len(data.len()),
+                    "{name}, {preset}, {profile:?}"
+                );
+            }
+        }
+    }
+}
+
+/// The fifth is `framed`, and its exemption is quantified rather than left as
+/// "does not hold": five characters per frame, and the base64 each frame body
+/// would have cost on its own.
+///
+/// It is an exemption, not a penalty — on data a literal can carry, `framed`
+/// is far shorter than base64 despite the headers. What it cannot do is
+/// *promise* to be shorter, and `framing_can_be_worse_than_base64` in
+/// tests/framed.rs is the case where it is not.
+#[test]
+fn only_framed_is_exempt_and_by_how_much() {
+    for n in [1usize, 100, 10_000, FRAME_BYTES + 1] {
+        for profile in [Profile::U, Profile::B] {
+            let data: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+            let frames = n.div_ceil(FRAME_BYTES);
+            let bound: usize = data
+                .chunks(FRAME_BYTES)
+                .map(|c| base64_len(c.len()))
+                .sum::<usize>()
+                + 5 * frames;
+            let framed = encode_framed(&data, profile);
+            assert!(
+                framed.len() <= bound,
+                "n = {n}, {profile:?}: {} > {bound}",
+                framed.len()
+            );
+        }
+    }
+}
+
+/// `dense` encodes in blocks so that memory is constant (§9.2), and the block
+/// size is a multiple of three so that this costs nothing at the boundary.
+///
+/// Both halves are checked, because the second is the one that is easy to get
+/// wrong: at 65536 rather than 65535 each block would round up on its own, the
+/// guarantee above would fail by a character per 64 KiB, and the output on
+/// high-entropy input would stop being base64url byte for byte.
+#[test]
+fn blocking_costs_neither_the_guarantee_nor_the_base64_identity() {
+    assert_eq!(BLOCK_BYTES % 3, 0);
+    let mut s: u32 = 0x1234_9e37;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s
+    };
+    // Lengths either side of one, two and three boundaries, and one that ends
+    // exactly on one.
+    for n in [
+        BLOCK_BYTES - 1,
+        BLOCK_BYTES,
+        BLOCK_BYTES + 1,
+        2 * BLOCK_BYTES,
+        2 * BLOCK_BYTES + 7,
+        3 * BLOCK_BYTES + 4159,
+    ] {
+        let noise: Vec<u8> = (0..n).map(|_| (next() & 0xff) as u8).collect();
+        let text: Vec<u8> = (0..n).map(|i| b"abcdefghij"[i % 10]).collect();
+        for (what, data) in [("noise", &noise), ("text", &text)] {
+            for profile in [Profile::U, Profile::B] {
+                let out = encode_dense(data, profile);
+                assert!(out.len() <= base64_len(n), "{what} {n} {profile:?}");
+                assert_eq!(
+                    decode(&out, profile).expect("decodes").bytes,
+                    *data,
+                    "{what} {n} {profile:?}"
+                );
+            }
+        }
+        // High entropy under profile U leaves no literal worth taking, so the
+        // stream must be base64url exactly -- across block boundaries too.
+        assert_eq!(
+            encode_dense(&noise, Profile::U),
+            encode_opaque(&noise),
+            "n = {n}"
+        );
+    }
+}
+
+/// What blocking does cost: a literal cannot span a boundary, so at most one
+/// extra header per boundary. Measured against the same encoder run over the
+/// whole input in one piece.
+#[test]
+fn blocking_costs_less_than_a_hundredth_of_a_percent() {
+    use base65t::internals::{costs, emit, segment_with, LiteralEnd, Rules};
+    let n = 3 * BLOCK_BYTES + 1000;
+    let data: Vec<u8> = (0..n)
+        .map(|i| {
+            if i % 97 == 0 {
+                b' '
+            } else {
+                b"abcdefghij"[i % 10]
+            }
+        })
+        .collect();
+    let rules = Rules::preset(Profile::U, Some(11), false);
+    let c = costs(&data, rules);
+    let whole = emit(&data, &segment_with(&data, rules, &c, LiteralEnd::KeyOrder));
+    let blocked = encode_dense(&data, Profile::U);
+    assert!(blocked.len() >= whole.len());
+    let overhead = (blocked.len() - whole.len()) as f64 / whole.len() as f64;
+    assert!(overhead < 0.0001, "blocking cost {:.4} %", 100.0 * overhead);
+}
+
 /// §9.4 does not extend the guarantee to `legible`, but under §9.0's objective
 /// — the shortest of the valid segmentations — `legible` cannot exceed it
 /// either: pure base64 is always a candidate. The exemption is only needed by
