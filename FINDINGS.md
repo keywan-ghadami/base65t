@@ -335,9 +335,14 @@ profiles and every input up to twelve bytes over adversarial alphabets. It
 shares no code with the encoder and it disagreed with it while finding item 1
 above, which is the useful property.
 
-It is still one person's reading of one document in one language. §16.3 asks
-for two, and it asks for a reason: the ambiguity in item 1 is precisely the
-kind that a second implementation finds and a second test does not.
+**Since then there is a second implementation.** `python/base65t.py` is written
+from v0.2 rather than from the Rust, with a quadratic dynamic programme instead
+of the sliding windows and no shared code; the two agree over all 456 vectors
+and all three profiles, 870 pairs, plus fifteen error cases. That discharges
+most of point 3. What it does not discharge is the part the section is really
+after: both were written by the same person, from the same reading. A third
+implementation by somebody else checks itself against `docs/vectors.json`
+without reading either.
 
 ---
 
@@ -376,10 +381,13 @@ absence of a check.
 
 ## What was not done
 
-* **§16.5** — the density and throughput measurements, `L_min`/`B_min`, and the
-  acceptance criteria of §13.2. That is binary2textbench's job and needs the
-  codec wired into it.
-* **§16.6** — the container test with real URL, cookie, header and log parsers.
+* **§16.5** — the throughput measurements and the `L_min`/`B_min` surface. That
+  is binary2textbench's job and needs the codec wired into it. Since v0.2 it is
+  no longer binding on anything: §13.2 has no acceptance gate to fail, and §9.5
+  lets a result add a preset but never change one.
+* **§16.6** — done for Python's parsers (`python/test_containers.py`), which is
+  where the profile-T whitespace caveat in §7 came from. Browsers, proxies and
+  frameworks are still unchecked.
 * **§16.8** — the vector set is 17 tests over §15's twelve vectors, not the 200
   the section asks for.
 * **The SIMD decoder of §13.1.** This implementation is scalar and is meant to

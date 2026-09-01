@@ -30,8 +30,15 @@ path follows from that.
   choice open, and two things a decoder must reject.
 * **`rust/`** — the reference implementation. No dependencies, no unsafe, and
   written to be read against the specification rather than to be fast: the
-  section numbers are in the comments and the two places where the code has to
-  interpret rather than follow are marked.
+  section numbers are in the comments.
+* **`python/base65t.py`** — the second implementation §16.3 asks for, written
+  from the specification rather than from the Rust: a plain quadratic dynamic
+  programme instead of the sliding windows of §9.2, no shared code, no shared
+  tables. The two agree byte for byte over all 456 vectors, all five presets
+  and all three profiles — 870 pairs — and over fifteen error cases, which
+  counts as much: agreeing about valid streams and not about invalid ones is
+  not agreeing about the format. The gap that stays open is that both have the
+  same author.
 * **`FINDINGS.md`** — what implementing it turned up. Nine places where the
   specification says something the code cannot do or does not say enough for
   two implementations to agree, each with the test that holds it in place. One
@@ -131,6 +138,11 @@ The suite is organised by what it proves, not by what it covers:
 `tests/framed.rs` is point 4, and `tests/errors.rs` raises each of the twelve
 error codes of §10.4 on purpose. `tests/against_the_system.rs` needs
 `base64(1)` and Python and skips itself where they are missing.
+
+```sh
+python3 python/test_vectors.py       # the two implementations against each other
+python3 python/test_containers.py    # §16.6, against Python's own parsers
+```
 
 ## Licence
 

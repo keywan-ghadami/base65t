@@ -32,7 +32,10 @@ deren Anhang und in `PREREGISTRATION.md`.
 | 11, 11.1 | Der Encoder ist jetzt eine Funktion. Die *Berechnung* in §11.1 war falsch und ist korrigiert; ihre O(n)-Zusage gilt der Kostentabelle |
 | 12 | Die Binärzeile ist eine Aussage über Profil U und T |
 | 15 | TV2, TV5a und TV11 korrigiert; TV13–TV15 neu |
-| 16 | Nachweis 3 verweist auf den veröffentlichten Vektorsatz |
+| 16 | Nachweis 3 und 6 sind erbracht, mit benannten Lücken; 5 ist nicht mehr bindend |
+| 7 | Profil T enthält das Leerzeichen — der Zusatz, den der Container-Test hervorgebracht hat |
+| 9.5 | Als Formatfrage geschlossen: eine Messung darf ein Preset nie ändern, nur eines hinzufügen |
+| 13.2 | Die erfundenen Durchsatz-Schwellwerte sind gestrichen, nicht vertagt |
 
 ---
 
@@ -329,7 +332,11 @@ Profilwidrige Payload → `E_PROFILE`. Ein profilwidriges Byte ist kein Sonderfa
 landet im Base64-Segment.
 
 **Profil T** ist JSON-String-sicher, **nicht** CSV-struktursicher und **nicht**
-URL-sicher: `,` `;` `?` `&` `=` `+` `/` `#` sind erlaubt.
+URL-sicher: `,` `;` `?` `&` `=` `+` `/` `#` sind erlaubt. **Und es enthält das
+Leerzeichen** (0x20): eine whitespace-getrennte Logzeile muss einen T-Wert also
+quoten, ein `key=value`-Format nicht. Wer eine Logzeile an Leerzeichen
+zerlegt, nimmt Profil U — dessen Alphabet enthält keines. Gefunden vom
+Container-Test aus §16.6, nicht aus der Tabelle abgelesen.
 
 **Profil B** verlässt die ASCII-Eigenschaft und DARF NICHT in URLs, Cookies, Headern
 oder Textcontainern verwendet werden.
@@ -356,9 +363,11 @@ Das Alphabet von Profil U — 62 Alphanumerische plus `-` (0x2D), `.` (0x2E),
 Alle 66 Zeichen geprüft, keine Ausnahme. Die Aussage folgt aus der ABNF und ist
 damit **beweisbar, nicht empirisch**.
 
-**[OFFEN — davon getrennt]** bleibt die schwächere, empirische Frage, ob reale
-Cookie-Parser (Browser, Proxies, Frameworks) sich an die ABNF halten. Das ist
-Gegenstand des Container-Tests (§16.6) und **kein** Beleg für die Aussage oben.
+**Teilweise beantwortet, davon getrennt** bleibt die schwächere, empirische
+Frage, ob reale Cookie-Parser sich an die ABNF halten. Pythons `http.cookies`
+tut es (§16.6): ein Profil-U-Wert wird weder gequotet noch verändert. Browser,
+Proxies und Frameworks sind damit **nicht** geprüft, und keine dieser Messungen
+ist ein Beleg für die Aussage oben — die folgt aus der ABNF und braucht keinen.
 
 ### 7.2 Warum das Profil Parameter bleibt
 
@@ -612,7 +621,7 @@ Oktetten, nicht auf Transport- oder Container-Overhead. Prozent-Encoding,
 Header-Faltung, Cookie-Attribute oder das Framing eines übergeordneten Protokolls
 sind nicht eingerechnet.
 
-### 9.5 Segmentwechselrate **[OFFEN]**
+### 9.5 Segmentwechselrate **[OFFEN als Messung, geschlossen als Formatfrage]**
 
 Der Durchsatz hängt an datenabhängigen Verzweigungen, also an Segmentwechseln.
 
@@ -655,11 +664,25 @@ Zeichen) greift der Schwellwert und alles wird ein einziges Base64-Segment.
 
 Ergebnis ist die Fläche `(L_min, B_min) → (Dichte, Durchsatz)` über den Korpus.
 
-**Wichtig:** `L_min` und `B_min` dürfen `canonical` und `legible` **nicht**
-beeinflussen (§11.1, §9.3) — sonst änderte eine spätere Messung rückwirkend alle
-Cache-Keys. Beide sind parameterfrei und bleiben es. Bewegen dürfte eine Messung
-nur `dense` und `framed`, und genau deshalb steht in §9.3, dass deren
-Determinismus an ihren Parametern hängt.
+### Was die Messung ändern darf (normativ)
+
+> Eine Messung DARF **kein bestehendes Preset ändern**. Ergibt sie, dass ein
+> anderes `L_min` oder ein `B_min > 1` den Durchsatz lohnend verbessert, wird
+> daraus ein **neues** Preset (etwa `dense-fast`), nie eine neue Fassung von
+> `dense`.
+
+Damit ist §9.5 als Formatfrage geschlossen, ohne dass die Messung ihren Wert
+verliert. Der Grund ist nicht Bequemlichkeit: `docs/vectors.json` führt 456
+byte-exakte Vektoren, und Cache-Keys, Dedup-Keys und Content-Adressen hängen an
+genau diesen Bytes. Ein Preset, das sich später bewegt, bricht sie still.
+
+Für `dense` heißt das konkret: `L_min` bleibt bei **11**, hergeleitet in §9.1
+und nicht gemessen, und `B_min` bleibt **aus**. Ein `B_min > 1` erkauft
+Durchsatz — ein Nicht-Ziel nach §2 — mit Größe, die in §9.4 normativ ist; wer
+diesen Tausch will, muss ihn belegen, und das Ergebnis ist dann ein eigenes
+Preset. Damit sind **alle fünf Presets eingefroren**, und die Spalte in §9.3
+sagt nur noch, ob die Definition Parameter *enthält*, nicht ob sie sich noch
+bewegen kann.
 
 ## 10. Dekoder
 
@@ -935,14 +958,18 @@ zwei unabhängige Implementierungen, und es gibt eine.
 
 ## 12. Dichte
 
-**[OFFEN: alle nicht als exakt markierten Werte sind Schätzungen.]**
+Die beiden mittleren Zeilen sind exakt, die beiden unteren gemessen auf
+erzeugten Eingaben der angegebenen Form (`cargo run --release --example
+density`, 1 MiB je Zeile, Profil U). Erzeugte Eingaben sind kein Korpus: die
+Zahl hängt daran, wie gemischt wird, und deshalb verlangt §16.5 dafür
+binary2textbench.
 
 | Eingabe | Base64 | **Base65t** | Z85 | basE91 |
 |---------|--------|-------------|-----|--------|
 | Rein binär (Profil U, T) | 1,333 | **1,333** *(exakt)* | 1,250 | 1,231 |
 | Rein profil-legaler Text | 1,333 | **≤ 1,00096** *(exakt, langer Literalbereich)* | 1,250 | 1,231 |
-| 70 % Text / 30 % binär | 1,333 | *≈ 1,10 (geschätzt)* | 1,250 | 1,231 |
-| 30 % Text / 70 % binär | 1,333 | *≈ 1,23 (geschätzt)* | 1,250 | 1,231 |
+| 70 % Text / 30 % binär | 1,333 | *1,113 (gemessen)* | 1,250 | 1,231 |
+| 30 % Text / 70 % binär | 1,333 | *1,244 (gemessen)* | 1,250 | 1,231 |
 
 Zur ersten Zeile: sie gilt für Profil U und T. Unter Profil B ist jedes Byte
 literalfähig, der Encoder schreibt ein einziges Literalsegment, und die Dichte
@@ -1003,12 +1030,25 @@ ausgerichtet; am Segmentende schließt `base64_decode_tail` das angebrochene Qua
 Wer den Shuffle über die Grenze laufen lässt, produziert stillschweigend falsche
 Bytes — kein Fehlercode fängt das ab.
 
-### 13.2 Akzeptanzkriterien **[OFFEN — Werte vor der Messung festzulegen]**
+### 13.2 Es gibt kein Durchsatz-Kriterium
 
-* Dekode hochentropes Binär: höchstens *X* % langsamer als Base64.
-* Dekode lange Literalläufe: mindestens Parität.
-* Enkode: höchstens *Y* % langsamer.
-* Worst Case nach §9.5: höchstens *Z* % langsamer.
+v0.1 sah hier vier Schwellwerte *X*, *Y*, *Z* vor, „vor der Messung
+festzulegen". Sie sind gestrichen, und zwar nicht vertagt: eine Zahl wäre
+erfunden. Durchsatz ist nach §2 ein **Nicht-Ziel**, und ein Kriterium, das man
+aus keinem Ziel herleiten kann, ist eine Behauptung mit Prozentzeichen.
+
+Was stattdessen gilt, folgt aus §9.4 und ist prüfbar:
+
+* **Auf hochentropen Daten schreibt `dense` dieselben Bytes wie Base64URL.**
+  Dort ist Parität keine Zusage, sondern Identität — es ist derselbe Strom.
+* **Für alles andere berichtet die Bench.** Die Segmentwechselrate ist exakt
+  und deterministisch (§9.5) und sagt dasselbe genauer als eine gemittelte
+  Durchsatzzahl von einem geteilten Runner.
+* **Ein Durchsatzergebnis rechtfertigt ein neues Preset, keinen Umbau eines
+  bestehenden** (§9.5).
+
+Ein Encoder oder Dekoder ist also nicht deshalb unkonform, weil er langsamer
+ist als Base64. Er ist es, wenn er die falschen Bytes schreibt.
 
 ## 14. Sicherheit
 
@@ -1260,22 +1300,35 @@ belegt:
    (`E_NONZERO_TAIL`, §1.1) gehören als solche in den Korpus.
 3. **`encode_canonical(x)` byte-identisch über zwei unabhängige Implementierungen**,
    über den gesamten Vektorsatz. Ohne diesen Test ist §11.1 eine Behauptung.
-   Die übertragbare Hälfte liegt vor: `docs/vectors.json` enthält Eingabe und
-   erwarteten Strom je Preset und Profil, sodass eine zweite Implementierung
-   sich dagegen prüfen kann, ohne die erste zu lesen. Der Nachweis selbst
-   bleibt offen, solange es nur eine gibt.
+   **Erbracht, mit einer benannten Lücke.** Zwei Implementierungen liegen bei:
+   `rust/` und `python/base65t.py`, die zweite aus diesem Dokument geschrieben,
+   mit einem quadratischen DP statt der Schiebefenster aus §9.2 und ohne eine
+   Zeile gemeinsamen Code. Sie stimmen über alle 456 Vektoren, alle fünf
+   Presets und alle drei Profile byteweise überein — 870 Paare — und über
+   fünfzehn Fehlerfälle dazu, was ebenso zählt: wer sich über gültige Ströme
+   einig ist und über ungültige nicht, ist sich über das Format nicht einig.
+   Die Lücke: derselbe Autor. Eine dritte Implementierung von jemand anderem
+   prüft sich gegen `docs/vectors.json`, ohne eine der beiden zu lesen.
 4. **Keine Fehlsynchronisation auf `~A` im Framed Mode**, auch bei adversarialen
    Literalbytes — gezielt gegen F1/F2/F′ gefuzzt, mit TV9a/9b als Startpunkt.
 
 Ergänzende Arbeiten, nicht normativ:
 
-5. Messen (§12, §13): `L_min`/`B_min`-Fläche, Korpusdichte, Akzeptanzkriterien.
-6. Container-Test mit echten Parsern (URL-Query, Cookie, Header, Dateiname,
-   Log-Zeile), Profil U und T — als Prüfung der *Parser*, nicht der ABNF-Aussage
-   aus §7.1.
+5. Messen (§12, §13): `L_min`/`B_min`-Fläche und Korpusdichte über
+   binary2textbench. Akzeptanzkriterien gibt es nach §13.2 keine, und ein
+   Ergebnis kann nach §9.5 nur ein neues Preset begründen — die Messung ist
+   damit nützlich, aber für kein bestehendes Preset mehr bindend.
+6. Container-Test mit echten Parsern — **erledigt für Pythons Parser**,
+   `python/test_containers.py`: URL-Query gegen `urllib.parse`, Cookie gegen
+   `http.cookies`, JSON gegen `json`, dazu Dateiname und Logzeile. Profil U
+   geht durch alle unverändert; Profil T braucht in einer URL Prozent-Encoding
+   und enthält das Leerzeichen — beides Negativkontrollen, und die zweite hat
+   den Zusatz in §7 hervorgebracht. Ein Parser-Satz, nicht alle: Browser,
+   Proxies und Frameworks bleiben offen.
 7. API-Form je Zielsprache: `encode` / `decode` analog zum dortigen `base64`;
    zusätzlich `decode_url_strict`, `decode_plain`, `decode_framed`,
    `encode_canonical`, `encode_opaque`, `encode_legible`, `encode_framed`.
+   Rust und Python liegen bei und exportieren beide genau diese Menge.
 8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 456
    Vektoren über alle fünf Presets und alle drei Profile, jeder als Eingabe und
    erwarteter Strom in Hex. Der Fuzzing-Korpus für alle zwölf Fehlercodes

@@ -42,9 +42,30 @@ jobs:
         working-directory: rust
         run: cargo fmt --check
 
-      # §12's estimated rows, recomputed. Not asserted here -- the exact bounds
+      # §12's measured rows, recomputed. Not asserted here -- the exact bounds
       # are asserted in tests/never_worse.rs -- but printed, so a change in the
       # encoder's judgement shows up in the log of the run that made it.
       - name: Density
         working-directory: rust
         run: cargo run --release --example density
+
+  # Conformance point 3 of §16 wants two implementations that agree, so the
+  # second one runs here rather than beside the first: it is written from the
+  # specification, shares no code with the Rust crate, and checks itself
+  # against the published vectors the Rust crate writes. Point 6 is the
+  # container test, against Python's own URL, cookie and JSON parsers.
+  second-implementation:
+    name: The second implementation, and the containers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: It agrees with the published vectors
+        run: python3 python/test_vectors.py
+
+      - name: Real parsers take what profile U writes
+        run: python3 python/test_containers.py
