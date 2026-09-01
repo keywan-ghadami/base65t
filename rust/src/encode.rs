@@ -466,15 +466,18 @@ pub fn emit(data: &[u8], segs: &[Seg]) -> Vec<u8> {
 }
 
 fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
-    let mut chunks = bytes.chunks_exact(3);
-    for c in &mut chunks {
+    // `as_chunks` rather than `chunks_exact`: the group size is a constant, so
+    // it belongs in the type where the compiler can see it rather than in a
+    // runtime length the indexing below has to be trusted against.
+    let (groups, remainder) = bytes.as_chunks::<3>();
+    for c in groups {
         let n = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
         out.push(ALPHABET[(n >> 18) as usize & 63]);
         out.push(ALPHABET[(n >> 12) as usize & 63]);
         out.push(ALPHABET[(n >> 6) as usize & 63]);
         out.push(ALPHABET[n as usize & 63]);
     }
-    match chunks.remainder() {
+    match remainder {
         [a] => {
             let n = (*a as u32) << 16;
             out.push(ALPHABET[(n >> 18) as usize & 63]);
