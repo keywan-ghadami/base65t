@@ -180,22 +180,28 @@ fn framing_can_be_worse_than_base64() {
     assert!(encode_dense(data, Profile::U).len() < (4 * data.len()).div_ceil(3));
 }
 
-/// Two questions the specification does not answer, pinned to what this
-/// decoder does — see FINDINGS.md, "What a frame body is a stream of".
+/// §8.1 calls a frame body "<Plain-Mode-Stream>" and §10.3 hands it to
+/// `decode_plain`, for which the body *is* the stream. Rule P (§5.3) and Rule
+/// A (§5.4) are written about "the stream", and inside a framed stream those
+/// are two different objects. The errata settles it the same way for both:
+/// **the stream is the whole octet stream**.
 ///
-/// §8.1 calls a frame body "<Plain-Mode-Stream>", and §10.3 hands it to
-/// `decode_plain`, for which the body *is* the stream. But Rule P (§5.3) and
-/// Rule A (§5.4) are both written about "the stream", and the two readings
-/// pull apart exactly here: padding is a question about the end of a stream,
-/// and mixing alphabets is a question about the whole of one.
+/// So padding is not padding inside a frame. It exists so that a producer of
+/// ordinary base64 needs no changes (§1.1), and no such producer emits frames;
+/// inside one it would be a parser-differential surface (§14) bought for
+/// nothing. A `=` there is what §10.4 already calls it outside the end of the
+/// stream: not an alphabet character.
 #[test]
-fn padding_is_recognised_at_the_end_of_a_frame_body() {
+fn padding_does_not_reach_into_a_frame_body() {
     // `YWxpY2U=` is eight characters, so the frame length is 'A','A','I'.
-    let d = decode(b"~AAAIYWxpY2U=", Profile::U).expect("the body ends where it ends");
-    assert_eq!(d.bytes, b"alice");
+    assert_eq!(decode(b"~AAAIYWxpY2U=", Profile::U), Err(Error::Charset));
+    // The same body without the padding is fine, and so is the same stream in
+    // plain mode, where the end of the body is the end of the stream.
+    assert_eq!(decode(b"~AAAHYWxpY2U", Profile::U).unwrap().bytes, b"alice");
+    let d = decode_plain(b"YWxpY2U=", Profile::U).expect("plain mode takes it");
     assert!(d.padding_seen);
-    // The encoder never writes this: padding is validated, never produced
-    // (§5.1, §14).
+    // The encoder never writes padding anywhere: it is validated, never
+    // produced (§5.1, §14).
     assert!(!encode_framed(b"alice", Profile::U).contains(&b'='));
 }
 

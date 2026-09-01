@@ -72,7 +72,7 @@ fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Resu
         out: Vec::with_capacity(stream.len()),
     };
     match mode {
-        Framing::Plain => d.plain(stream)?,
+        Framing::Plain => d.plain(stream, Padding::Allowed)?,
         Framing::Framed => d.framed(stream)?,
     }
     Ok(Decoded {
@@ -81,6 +81,14 @@ fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Resu
         padding_seen: d.padding_seen,
         framing_seen: mode,
     })
+}
+
+/// Whether Rule P (§5.3) reaches the end of this byte range: only the end of
+/// the whole stream is the end of the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Padding {
+    Allowed,
+    Forbidden,
 }
 
 /// The three fields §5.5 requires in the result, carried while they are being
@@ -130,7 +138,14 @@ impl Decoder {
     }
 
     /// §10.1.
-    fn plain(&mut self, stream: &[u8]) -> Result<(), Error> {
+    ///
+    /// `padding` is Rule P's reach. A frame body is a plain-mode stream by the
+    /// grammar of §8.1, but it is not *the* stream, and Rule P is written
+    /// about the stream — see the errata for §5.3. Padding exists so that a
+    /// producer of ordinary base64 needs no changes (§1.1), and no such
+    /// producer emits frames, so inside one it would be a parser-differential
+    /// surface bought for nothing.
+    fn plain(&mut self, stream: &[u8], padding: Padding) -> Result<(), Error> {
         let len = stream.len();
         let mut pos = 0;
         while pos < len {
@@ -172,7 +187,8 @@ impl Decoder {
                     pos += 1;
                 }
                 let seg = &stream[start..pos];
-                self.base64_segment(seg, pos == len)?;
+                let at_end = pos == len && padding == Padding::Allowed;
+                self.base64_segment(seg, at_end)?;
             }
         }
         Ok(())
@@ -270,7 +286,7 @@ impl Decoder {
             if body.windows(2).any(|w| w == b"~A") {
                 return Err(Error::FrameRule);
             }
-            self.plain(body)?;
+            self.plain(body, Padding::Forbidden)?;
             pos += 5 + frame_len;
         }
         Ok(())
