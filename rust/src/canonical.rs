@@ -1,0 +1,161 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! `encode_canonical`, §11.1 — and the one place where this implementation
+//! has to read the specification rather than follow it.
+//!
+//! §11.1 says two things that are not the same thing:
+//!
+//! * the **Ordnung**: `encode_canonical` is the minimum of
+//!   `Key(S) = (|output(S)|, c(S))`, lexicographic with `B < L < S`;
+//! * the **Berechnung**: take `B` where it is length-optimal, otherwise the
+//!   *longest* admissible literal — "und das Ergebnis ist per Konstruktion das
+//!   Minimum von `Key`".
+//!
+//! It is not. Ending a literal early and letting base64 cover the last bytes
+//! is sometimes exactly as long, and then `B < L` decides for the shorter
+//! literal while the Berechnung takes the longer one. The smallest input where
+//! they differ is ten bytes, one above the `n <= 9` the verification in §11.1
+//! reports; `divergence_from_the_berechnung_paragraph` below is that input,
+//! and FINDINGS.md is the write-up.
+//!
+//! The exported function follows the **Ordnung**, because that is the
+//! definition and the Berechnung only claims to compute it. The other rule
+//! stays reachable here so the difference can be tested rather than argued.
+
+use crate::alphabet::Profile;
+use crate::encode::{costs, emit, segment_with, LiteralEnd, Rules};
+
+/// §11.1: plain mode, URL alphabet, no padding, and no `L_min` — a literal is
+/// taken wherever it is shorter, down to seven bytes at a fortunate alignment.
+fn rules(profile: Profile) -> Rules {
+    Rules {
+        profile,
+        min_literal: Some(1),
+        framed: false,
+    }
+}
+
+/// The minimum of `Key` over the segmentations the profile admits.
+pub fn encode_canonical(data: &[u8], profile: Profile) -> Vec<u8> {
+    let r = rules(profile);
+    let c = costs(data, r);
+    emit(data, &segment_with(data, r, &c, LiteralEnd::KeyOrder))
+}
+
+/// The same length, under the rule §11.1's *Berechnung* paragraph gives.
+///
+/// Not exported from the crate: it is not a second canonical form, it is the
+/// evidence that there would be two if the paragraph were followed.
+#[cfg(test)]
+fn encode_canonical_longest_literal(data: &[u8], profile: Profile) -> Vec<u8> {
+    let r = rules(profile);
+    let c = costs(data, r);
+    emit(data, &segment_with(data, r, &c, LiteralEnd::Longest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encode::{c_vector, segment_with as seg};
+
+    fn cvec(data: &[u8], end: LiteralEnd) -> String {
+        let r = rules(Profile::U);
+        let c = costs(data, r);
+        c_vector(&seg(data, r, &c, end))
+    }
+
+    /// The two readings of §11.1, on the shortest input that tells them apart.
+    ///
+    /// Nine profile-legal bytes and one that is not. Both segmentations are 13
+    /// characters, so `Key`'s first component is a tie and the vector decides:
+    /// `B < L` at index 7. This test is a pin, not a preference — if either
+    /// rule is ever changed, it should be changed knowingly.
+    #[test]
+    fn divergence_from_the_berechnung_paragraph() {
+        let data = b"aaaaaaaaa ";
+        assert_eq!(cvec(data, LiteralEnd::KeyOrder), "SLLLLLLBBB");
+        assert_eq!(cvec(data, LiteralEnd::Longest), "SLLLLLLLLB");
+
+        let by_order = encode_canonical(data, Profile::U);
+        let by_construction = encode_canonical_longest_literal(data, Profile::U);
+        assert_eq!(by_order.len(), by_construction.len(), "a length tie");
+        assert_ne!(by_order, by_construction, "and two different streams");
+        assert_eq!(by_order, b"~HaaaaaaaYWEg".to_vec());
+        assert_eq!(by_construction, b"~JaaaaaaaaaIA".to_vec());
+
+        // Both decode to the input, which is why this is a canonicity bug and
+        // not a correctness one.
+        for s in [&by_order, &by_construction] {
+            assert_eq!(
+                crate::decode(s, Profile::U).expect("decodes").bytes,
+                data.to_vec()
+            );
+        }
+    }
+
+    /// Nothing shorter than ten bytes separates the two rules, which is why
+    /// the verification quoted in §11.1 — exhaustive to `n <= 9` — reports no
+    /// deviation.
+    #[test]
+    fn ten_bytes_is_the_shortest_disagreement() {
+        // Two byte values are enough: one the profile admits, one it does not.
+        for n in 1..10usize {
+            for bits in 0..(1u32 << n) {
+                let data: Vec<u8> = (0..n)
+                    .map(|i| if bits >> i & 1 == 1 { b'a' } else { b' ' })
+                    .collect();
+                assert_eq!(
+                    cvec(&data, LiteralEnd::KeyOrder),
+                    cvec(&data, LiteralEnd::Longest),
+                    "{data:?}"
+                );
+            }
+        }
+    }
+
+    /// How often it matters, over a corpus that can be regenerated: a seeded
+    /// stream of inputs up to sixteen bytes over an alphabet of admitted and
+    /// non-admitted bytes. The assertion is a band rather than a number so
+    /// that it says "often enough to care" without pinning a digit nobody
+    /// would maintain; the exact count is printed with `--nocapture` and is
+    /// quoted in FINDINGS.md.
+    #[test]
+    fn how_often_the_two_rules_disagree() {
+        let alphabet = b"ab.~ -_9";
+        let mut s: u32 = 0x5eed_9a31;
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            s as usize
+        };
+        let (mut differ, mut total) = (0usize, 0usize);
+        for _ in 0..4000 {
+            let n = 1 + next() % 16;
+            let data: Vec<u8> = (0..n).map(|_| alphabet[next() % alphabet.len()]).collect();
+            total += 1;
+            if cvec(&data, LiteralEnd::KeyOrder) != cvec(&data, LiteralEnd::Longest) {
+                differ += 1;
+            }
+        }
+        let percent = 100.0 * differ as f64 / total as f64;
+        println!("{differ}/{total} inputs differ ({percent:.1} %)");
+        assert!(
+            (3.0..12.0).contains(&percent),
+            "{percent:.1} % is outside the band this was written against"
+        );
+    }
+
+    /// `canonical` has no `L_min`, and §11.1 says what that buys: a seven-byte
+    /// literal where the alignment is right — nine characters against ten.
+    #[test]
+    fn literals_reach_down_to_seven_bytes() {
+        let data = b"abcdefg";
+        let out = encode_canonical(data, Profile::U);
+        assert_eq!(out, b"~Habcdefg".to_vec());
+        assert_eq!(out.len(), 9);
+        assert_eq!((4 * data.len()).div_ceil(3), 10, "base64 would be longer");
+    }
+}

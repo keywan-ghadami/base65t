@@ -1,0 +1,212 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+//! Base65t — Base64URL plus a 65th character.
+//!
+//! The reference implementation of `docs/spec-v0.1.de.md`. Section numbers in
+//! the comments are that document's; where the code departs from it, the
+//! comment says so and `FINDINGS.md` says why.
+//!
+//! ```
+//! use base65t::{decode, encode, Profile};
+//!
+//! let out = encode(b"alice.jones");
+//! assert_eq!(out, b"~Lalice.jones");
+//! assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
+//! ```
+//!
+//! # Octets, not text
+//!
+//! Encoding produces an octet stream (§3). Under profiles U and T every octet
+//! of it is printable ASCII, but under profile B it is not, so the interface
+//! is `[u8]` in both directions and the caller converts where a container
+//! guarantees more.
+//!
+//! # One decoder
+//!
+//! `decode` takes a stream and a profile and needs nothing else (§0.3):
+//! alphabet variant, padding and framing come out of the stream and are
+//! reported back in [`Decoded`]. What the stream chose is worth checking —
+//! an attacker who controls the stream controls all three (§14) — so
+//! [`decode_plain`], [`decode_framed`] and [`decode_url_strict`] fix the
+//! choice instead.
+
+// §14 makes memory safety the payment for parsing attacker-controlled lengths.
+// Paying it and then reaching for `unsafe` for a lookup table would be the
+// worst of both.
+#![forbid(unsafe_code)]
+
+mod alphabet;
+mod canonical;
+mod decode;
+mod encode;
+
+pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL};
+pub use canonical::encode_canonical;
+pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
+pub use encode::FRAME_BYTES;
+
+use alphabet::Profile as P;
+use encode::Rules;
+
+/// How a stream carries its segments (§5.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    /// Segments back to back; decoding is sequential from the start.
+    Plain,
+    /// Length-prefixed frames, so a byte offset can be reached without
+    /// decoding what precedes it (§8).
+    Framed,
+}
+
+/// What `decode` found while decoding, which §5.5 makes part of the result
+/// rather than an option: permissiveness that cannot be inspected is
+/// permissiveness that cannot be validated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Decoded {
+    pub bytes: Vec<u8>,
+    /// `None` when no character of value 62 or 63 occurred at an alphabet
+    /// position — the stream then reads identically under both variants.
+    pub alphabet_seen: AlphabetSeen,
+    pub padding_seen: bool,
+    pub framing_seen: Framing,
+}
+
+/// The twelve error codes of §10.4, under their names there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// The stream ends in `~`, or in a header that is cut short.
+    TrailingTilde,
+    /// Length character 0 in plain mode. In framed mode this is a frame
+    /// header, which is what Rule F rests on (§5.6).
+    ReservedLen,
+    /// A payload or a frame reaches past the end of the stream.
+    Truncated,
+    /// A literal byte the profile does not admit.
+    Profile,
+    /// A base64 segment of length `1 mod 4`, which no number of bytes
+    /// produces.
+    Align,
+    /// Unused bits of the last quantum are not zero — a stream some permissive
+    /// base64 libraries accept, and this one deliberately does not (§1.1).
+    NonzeroTail,
+    /// A character with no value where the grammar requires one: `~`, `=`
+    /// anywhere but the very end, a header position that is not an alphabet
+    /// character.
+    Charset,
+    /// Rule P: padding that `n mod 4` does not call for (§5.3).
+    Padding,
+    /// Rule A: both alphabet variants at alphabet positions (§5.4).
+    MixedAlphabet,
+    /// `+` or `/` under [`decode_url_strict`] (§5.5).
+    NonUrlAlphabet,
+    /// Invariant F′: `~A` inside a frame body (§8.2).
+    FrameRule,
+    /// A frame header was expected and is not there.
+    FrameSync,
+}
+
+impl Error {
+    /// The code as §10.4 writes it.
+    pub fn code(self) -> &'static str {
+        match self {
+            Error::TrailingTilde => "E_TRAILING_TILDE",
+            Error::ReservedLen => "E_RESERVED_LEN",
+            Error::Truncated => "E_TRUNCATED",
+            Error::Profile => "E_PROFILE",
+            Error::Align => "E_ALIGN",
+            Error::NonzeroTail => "E_NONZERO_TAIL",
+            Error::Charset => "E_CHARSET",
+            Error::Padding => "E_PADDING",
+            Error::MixedAlphabet => "E_MIXED_ALPHABET",
+            Error::NonUrlAlphabet => "E_NON_URL_ALPHABET",
+            Error::FrameRule => "E_FRAME_RULE",
+            Error::FrameSync => "E_FRAME_SYNC",
+        }
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// The five presets of §9.3. They differ in what the encoder is allowed to do,
+/// never in what a decoder has to understand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preset {
+    /// Smallest output, and never larger than base64 (§9.4). The default.
+    Dense,
+    /// Literals from four bytes up: readable in a log at some cost in size.
+    Legible,
+    /// The deterministic one (§11.1). For cache keys, not for signatures.
+    Canonical,
+    /// Never a literal, so nothing of the input shows through. Byte-identical
+    /// to unpadded Base64URL.
+    Opaque,
+    /// Fixed-size frames for random access (§8). The guarantee in §9.4 does
+    /// not cover it.
+    Framed,
+}
+
+/// `dense`, profile U — the parameterless call §9.3 requires.
+pub fn encode(data: &[u8]) -> Vec<u8> {
+    encode_dense(data, P::U)
+}
+
+/// Any preset, any profile.
+pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
+    match preset {
+        Preset::Dense => encode_dense(data, profile),
+        Preset::Legible => encode_legible(data, profile),
+        Preset::Canonical => encode_canonical(data, profile),
+        Preset::Opaque => encode_opaque(data),
+        Preset::Framed => encode_framed(data, profile),
+    }
+}
+
+/// Literals from eleven bytes up, where §9.1 shows they can never cost.
+pub fn encode_dense(data: &[u8], profile: Profile) -> Vec<u8> {
+    encode::encode_rules(
+        data,
+        Rules {
+            profile,
+            min_literal: Some(11),
+            framed: false,
+        },
+    )
+}
+
+/// Literals from four bytes up (§9.3). Can be longer than base64.
+pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
+    encode::encode_rules(
+        data,
+        Rules {
+            profile,
+            min_literal: Some(4),
+            framed: false,
+        },
+    )
+}
+
+/// Base64URL and nothing else. The profile does not enter into it: there are
+/// no literals for it to constrain.
+pub fn encode_opaque(data: &[u8]) -> Vec<u8> {
+    encode::encode_rules(
+        data,
+        Rules {
+            profile: P::U,
+            min_literal: None,
+            framed: false,
+        },
+    )
+}
+
+/// Frames of [`FRAME_BYTES`] decoded bytes each, `dense` inside (§8.1).
+pub fn encode_framed(data: &[u8], profile: Profile) -> Vec<u8> {
+    encode::encode_framed(data, profile, 11)
+}

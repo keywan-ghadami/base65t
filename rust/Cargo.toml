@@ -1,0 +1,21 @@
+[package]
+name = "base65t"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Base65t: Base64URL plus a 65th character introducing length-prefixed literal segments."
+license = "MPL-2.0"
+repository = "https://github.com/keywan-ghadami/base65t"
+publish = false
+
+[lib]
+name = "base65t"
+path = "src/lib.rs"
+
+# No dependencies, and none in the tests either. The differential checks the
+# specification asks for in §16.2 run against `base64(1)` and Python, the way
+# binary2textbench checks its own baseline: a crate would only tell us that two
+# Rust crates agree.
+
+[profile.release]
+opt-level = 3
