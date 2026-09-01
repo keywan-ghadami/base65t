@@ -113,8 +113,10 @@ darüber. Das ist die eine Stelle, an der die Prä-Registrierung nicht
 vollständig war: sie hat die Grenze nicht je Profil festgelegt. Aufgelöst wird
 sie mit §0.1, wo `legible` mit Profil T und mit „Lesbarkeit **vor** Größe"
 geführt wird — was vor der Größe steht, steht erst recht vor einem Nicht-Ziel
-(§2). Wer `legible` unter Profil U einsetzt, bekommt eine Segmentrate außerhalb
-des Gemessenen; die Zahl steht im Anhang.
+(§2). Wer `legible` unter Profil U einsetzt, zahlt rund 70 % mehr Segmente — auf dem
+Korpus 1,67×, auf dem Hold-out 1,74×. Das ist gemessen und reproduziert sich,
+es ist also keine Unsicherheit, sondern ein Preis: unter U ist `legible` eine
+Entscheidung für Lesbarkeit gegen Durchsatz, unter T ist sie fast umsonst.
 
 **TV5a wird damit:**
 
@@ -239,8 +241,8 @@ Der Schwellwert aus §9.1 schluckt den Regler vollständig. Keine Regel gewinnt
 nach der vorregistrierten Schranke (1 Punkt Klartext oder 5 % Segmente), also
 erbt `dense` die Ordnung aus §11.1 — E3.
 
-**Tabelle 4 — Hold-out: Silesia, 202 MiB, Profil T.** Einmal angefasst, nach
-der Wahl.
+**Tabelle 4 — Hold-out: Silesia, 202 MiB.** Einmal angefasst, nach der Wahl.
+Profil T:
 
 | Regler | Klartext | Größe | schlechteste | über Base64 | Segmente/kB |
 |---|---|---|---|---|---|
@@ -251,9 +253,27 @@ der Wahl.
 | λ=2 | 61,61 % | 89,6 % | 105,2 % | 3 von 12 | 48,7 |
 | λ=3 | 63,32 % | 90,8 % | 112,2 % | 4 von 12 | 67,3 |
 
+Profil U:
+
+| Regler | Klartext | Größe | schlechteste | über Base64 | Segmente/kB |
+|---|---|---|---|---|---|
+| λ=0, Ordnung §11.1 | 12,44 % | 98,5 % | 100,0 % | 0 von 12 | 21,6 |
+| λ=0, längstes Literal | 11,46 % | 98,5 % | 100,0 % | 0 von 12 | 18,3 |
+| **λ=0, Klartext-Vorrang** | **18,52 %** | **98,5 %** | **100,0 %** | **0 von 12** | 37,6 |
+| λ=1, Klartext-Vorrang | 28,47 % | 100,0 % | 104,5 % | **7 von 12** | 81,8 |
+| λ=2 | 32,57 % | 101,8 % | 109,6 % | 9 von 12 | 109,9 |
+| λ=3, λ=4 | 36,57 % | 104,8 % | 119,4 % | 10 von 12 | 152,6 |
+
 Die Grenze, die λ ≥ 1 verwirft, reproduziert sich auf Daten, die Fremde 2003
-für einen fremden Zweck zusammengestellt haben. Das ist die Bestätigung, die
-Regel 5 verlangt.
+für einen fremden Zweck zusammengestellt haben — unter beiden Profilen, 2 von
+12 Dateien unter T und 7 von 12 unter U. Das ist die Bestätigung, die Regel 5
+verlangt.
+
+Die Segmentgrenze reproduziert sich ebenfalls, und zwar auf der Seite, die
+nicht ins Bild passt: unter Profil U liegt der Klartext-Vorrang auf dem
+Hold-out bei 1,74× und damit ebenso über der vorregistrierten Grenze wie auf
+dem Korpus (1,67×). Der Nachtrag unten steht also nicht wegen einer
+Unsicherheit, sondern wegen eines Preises, der unter U real ist.
 
 **Tabelle 5 — Achsen-Sweep**, 40 × 64 KiB, Anteil profilwidriger Bytes 0–100 %
 über Lauflängen 4/16/64/256 — die Achse, die der Korpus nicht abfährt.
@@ -276,6 +296,7 @@ ist. Bei `dense` erreicht keine Regel die Schranke, also bleibt es bei §11.1.
 **Nachtrag zur Prä-Registrierung.** Sie legt die Segmentgrenze `G(λ) ≤ 1,5·G(0)`
 fest, ohne ein Profil zu nennen. Der Klartext-Vorrang hält sie unter T (1,24×),
 auf Silesia (1,06×) und über den Achsen-Sweep (1,15×), nicht aber unter Profil
-U auf dem Korpus (1,67×). Aufgelöst über §0.1, wo `legible` mit Profil T und
+U — dort 1,67× auf dem Korpus und 1,74× auf dem Hold-out, also durchgängig.
+Aufgelöst über §0.1, wo `legible` mit Profil T und
 „Lesbarkeit vor Größe" geführt wird. Die Lücke wird hier benannt statt
 nachträglich geschlossen.
