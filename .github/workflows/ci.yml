@@ -1,0 +1,50 @@
+# The reference implementation, checked. Everything here is fast; there is no
+# benchmark in this repository, because a number measured on a shared runner
+# belongs where the other codecs' numbers are taken.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: The reference implementation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # The test names say what they prove: §15 vector by vector, the four
+      # conformance points of §16, and each of the twelve error codes of §10.4.
+      # `against_the_system` needs base64(1) and Python, which the runner has;
+      # it skips rather than fails where they are missing.
+      - name: Test
+        working-directory: rust
+        run: cargo test --release -- --nocapture
+
+      - name: Warnings are errors
+        working-directory: rust
+        run: cargo clippy --all-targets --release -- -D warnings
+
+      - name: Formatting
+        working-directory: rust
+        run: cargo fmt --check
+
+      # §12's estimated rows, recomputed. Not asserted here -- the exact bounds
+      # are asserted in tests/never_worse.rs -- but printed, so a change in the
+      # encoder's judgement shows up in the log of the run that made it.
+      - name: Density
+        working-directory: rust
+        run: cargo run --release --example density
