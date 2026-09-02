@@ -1223,30 +1223,42 @@ nicht gemacht: §0.1 nennt URL-Query, Cookie-Wert, HTTP-Header und Cache-Key,
 und keiner davon ist acht Megabyte groß.
 
 Dieselben 55 kurzen Proben, die `binary2textbench` als `short/` führt, Profil
-U, Base64 = 100 %:
+U. Die Größenspalte steht gegen `ceil(4n/3)` — das ist, was §9.4 zusichert und
+was eine URL wirklich trägt; die Zeitspalten stehen gegen die Base64 des
+Benches, die paddet, was auf so kurzen Werten für die *Größe* ein Viertel
+ausmachen kann und für die *Zeit* nichts:
 
 | Probe | Bytes | §9.2.4 | Größe | Kodieren | Dekodieren |
 |---|--:|---|--:|--:|--:|
-| JWT, drei Segmente | 155 | ja | 77 % | **43 %** | **69 %** |
-| SHA-512-Digest, hex | 128 | ja | 77 % | **37 %** | **74 %** |
-| zwei UUIDs | 73 | ja | 79 % | **46 %** | **75 %** |
-| SHA-256-Digest, hex | 64 | ja | 78 % | **54 %** | **87 %** |
-| AES-256-Schlüssel, hex | 64 | ja | 78 % | **53 %** | **87 %** |
-| Session-ID, 40 alnum | 40 | ja | 78 % | **56 %** | **77 %** |
-| UUID v4 | 36 | ja | 79 % | **62 %** | **82 %** |
-| ULID, Crockford | 26 | ja | 78 % | **68 %** | **80 %** |
-| Kreditkartennummer | 16 | ja | 75 % | **75 %** | **86 %** |
-| IPv6-Adresse | 28 | nein | 95 % | 782 % | 123 % |
-| Logzeile | 93 | nein | 95 % | 997 % | 142 % |
-| SQL-Statement | 118 | nein | 98 % | 948 % | 129 % |
-| Vor- und Nachname | 12 | nein | 100 % | 735 % | 120 % |
+| SHA-512-Digest, hex | 128 | ja | 77 % | **38 %** | **73 %** |
+| JWT, drei Segmente | 155 | ja | 77 % | **45 %** | **69 %** |
+| zwei ULIDs | 52 | ja | 77 % | **56 %** | **74 %** |
+| SHA-256-Digest, hex | 64 | ja | 78 % | **53 %** | **92 %** |
+| AES-256-Schlüssel, hex | 64 | ja | 78 % | **52 %** | **87 %** |
+| Session-ID, 40 alnum | 40 | ja | 78 % | **58 %** | **77 %** |
+| UUID v4 | 36 | ja | 79 % | **64 %** | **77 %** |
+| ULID, Crockford | 26 | ja | 80 % | **71 %** | **79 %** |
+| Kreditkartennummer | 16 | ja | 82 % | **77 %** | **86 %** |
+| IPv4-Adresse | 11 | ja | 87 % | **92 %** | **90 %** |
+| Vor- und Nachname | 12 | nein | 100 % | 598 % | 129 % |
+| IPv6-Adresse | 28 | nein | 100 % | 693 % | 120 % |
+| Logzeile | 93 | nein | 95 % | 816 % | 143 % |
+| SQL-Statement | 118 | nein | 98 % | 830 % | 132 % |
+| zufällige 64 Bytes | 64 | nein | 100 % | 722 % | 114 % |
+| **alle 55 Proben, als Zeit** | | | | **355 %** | **103 %** |
 
 **Die Spalte §9.2.4 erklärt die ganze Tabelle.** Wo jedes Byte profil-legal
 ist, steht die Antwort ohne Programm fest, und der Encoder ist schneller als
 Base64 — weil er weniger schreibt. Wo ein Leerzeichen, ein Doppelpunkt oder ein
-`=` dazwischensteht, läuft das Programm, und die Zeile kostet das Acht- bis
-Zehnfache. Dass das genau die Zeilen sind, in denen die Größe bei 95 bis 100 %
+`=` dazwischensteht, läuft das Programm, und die Zeile kostet das Sechs- bis
+Achtfache. Dass das genau die Zeilen sind, in denen die Größe bei 95 bis 100 %
 liegt, ist kein Zufall: es ist dieselbe Eigenschaft, von zwei Seiten gesehen.
+
+Die Summenzeile ist nach Zeit gewichtet und wird deshalb von der unteren Hälfte
+bestimmt: 355 % über alle 55 Proben. Sie steht hier, weil sie die ehrliche Zahl
+ist, aber sie beschreibt keine der beiden Populationen. Wer kurze Werte kodiert,
+die schon Text sind, liest die obere Hälfte; wer gemischten Text kodiert, liest
+die untere und §13.3 dazu.
 
 **Der Durchsatzvorteil *ist* der Dichtevorteil.** Base64 liest ein Byte,
 schlägt vier Zeichen nach und schreibt vier — je drei Bytes. Ein Literal liest

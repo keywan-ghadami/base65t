@@ -133,24 +133,30 @@ attacker-controlled lengths, and base64's does not.
 ## Speed
 
 On the values the format is for — the 55 samples the benchmark keeps as
-`short/`, profile U, base64 = 100 %:
+`short/`, profile U. Size is against `ceil(4n/3)`, which is what §9.4 promises
+and what a URL query carries; the timings are against the benchmark's own
+base64, which pads:
 
 | sample | bytes | size | encode | decode |
 |---|--:|--:|--:|--:|
-| JWT, three segments | 155 | 77 % | **43 %** | **69 %** |
-| SHA-512 digest, hex | 128 | 77 % | **37 %** | **74 %** |
-| SHA-256 digest, hex | 64 | 78 % | **54 %** | **87 %** |
-| session id, 40 alnum | 40 | 78 % | **56 %** | **77 %** |
-| UUID v4 | 36 | 79 % | **62 %** | **82 %** |
-| an IPv6 address | 28 | 95 % | 782 % | 123 % |
-| a log line | 93 | 95 % | 997 % | 142 % |
+| SHA-512 digest, hex | 128 | 77 % | **38 %** | **73 %** |
+| JWT, three segments | 155 | 77 % | **45 %** | **69 %** |
+| SHA-256 digest, hex | 64 | 78 % | **53 %** | **92 %** |
+| session id, 40 alnum | 40 | 78 % | **58 %** | **77 %** |
+| UUID v4 | 36 | 79 % | **64 %** | **77 %** |
+| a credit card number | 16 | 82 % | **77 %** | **86 %** |
+| an IPv6 address | 28 | 100 % | 693 % | 120 % |
+| a log line | 93 | 95 % | 816 % | 143 % |
+| 64 random bytes | 64 | 100 % | 722 % | 114 % |
 
 The split is not a gradient, and one property explains both halves: where
 *every* byte of the input is one the profile admits, the segmentation the
 programme would compute can be written down instead (§9.2.4) and the encoder
 never runs a dynamic programme at all. Where one space or one `=` interrupts,
-it does, and that costs eight to ten times base64's encode time — on exactly
+it does, and that costs six to eight times base64's encode time — on exactly
 the rows where the size is 95 to 100 % and there was nothing to win anyway.
+Summed by time over all 55 the figure is 355 %, which is the honest number and
+describes neither population.
 
 The same rows in **profile T** are all in the first half: a log line, a SQL
 statement and an IPv6 address are entirely printable ASCII.
