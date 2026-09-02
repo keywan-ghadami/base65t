@@ -440,8 +440,8 @@ Folgesegment mit `A` beginnt. Ein F2-Verstoß, der F′ wahrt, MUSS akzeptiert w
 
 ### 9.0 Grundprinzip (normativ)
 
-> Der Encoder optimiert über die Menge der **im jeweiligen Modus gültigen**
-> Segmentierungen — nicht über alle denkbaren.
+> Wo ein Preset optimiert, optimiert es über die Menge der **im jeweiligen
+> Modus gültigen** Segmentierungen — nicht über alle denkbaren.
 
 **Jedes Preset ist eine Funktion (normativ).**
 
@@ -460,8 +460,8 @@ Es gibt zwei Wege dahin, und Base65t geht beide:
 > nach der Ordnung aus §11.1 kleinste wählen. Ausgenommen ist `legible`, das
 > nach §9.3 eine eigene Zielfunktion hat.
 
-Damit kann ein Testvektor Bytes prüfen statt nur Längen — was §16.8 braucht,
-wenn der Vektorsatz auf 200 wächst.
+Damit kann ein Testvektor Bytes prüfen statt nur Längen — was §16.8 braucht und
+was `docs/vectors.json` über 456 Vektoren tut.
 
 ### 9.1 Schwellwert
 
@@ -1394,6 +1394,11 @@ entscheidet für das kürzere Literal — ein Literal früh zu beenden richtet d
 Base64-Lauf so aus, dass die restlichen drei Bytes zusammen zwei Zeichen
 sparen. Die zweite Zeile ist, was die *Berechnung* in v0.1 lieferte; sie ist
 hier der Negativvektor.
+
+`dense` schreibt hier `YWFhYWFhYWFhIA` (14 chars, reines Base64): der Lauf ist
+neun Bytes lang und erreicht die Schwelle aus §9.1 nicht. Das ist genau der
+Unterschied, den §9.3 beziffert — und die Grenze aus §9.4 hält auch hier,
+`ceil(40/3) = 14`.
 
 ### TV14 — `legible` gegen `dense` (§9.3)
 
