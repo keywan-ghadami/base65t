@@ -19,7 +19,7 @@ fn bench(n: usize, mut f: impl FnMut()) -> f64 {
         f();
         let t = Instant::now();
         for _ in 0..reps {
-            std::hint::black_box(f());
+            f();
         }
         let r = (n * reps) as f64 / t.elapsed().as_secs_f64() / (1 << 20) as f64;
         if r > best {

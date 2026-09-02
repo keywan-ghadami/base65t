@@ -42,6 +42,8 @@ jobs:
         working-directory: rust
         run: cargo test --release --features simd
 
+      # `--all-targets`, so this covers the examples too. It has caught a
+      # lint in one of them that the test run does not compile.
       - name: Warnings are errors
         working-directory: rust
         run: |
