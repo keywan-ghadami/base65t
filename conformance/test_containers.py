@@ -45,8 +45,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
-    u = base65t.encode_dense(SAMPLE_U, "U").decode("ascii")
-    t = base65t.encode_dense(SAMPLE_T, "T").decode("ascii")
+    u = base65t.encode_with(SAMPLE_U, "U").decode("ascii")
+    t = base65t.encode_with(SAMPLE_T, "T").decode("ascii")
     print(f"profile U: {u}\nprofile T: {t}\n")
     assert any(c in t for c in " /?=,;"), "the T sample must exercise T"
 

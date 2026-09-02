@@ -19,14 +19,14 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 
-use base65t::{Error, Framing, Preset, Profile};
+use base65t::{Error, Profile};
 
 create_exception!(
     base65t,
     Base65tDecodeError,
     PyValueError,
     "Raised by decode() on malformed input.\n\n\
-     `code` is one of the twelve conditions of specification section 10.4, as\n\
+     `code` is one of the ten conditions of specification section 10.4, as\n\
      the string the shared test vectors use."
 );
 
@@ -38,9 +38,10 @@ fn decode_error(py: Python<'_>, err: Error) -> PyErr {
     e
 }
 
-/// `bytes` or `bytearray` in, a copy out. A `str` is accepted where the stream
-/// is text, which it is under profiles U and T; profile B is octets and §3
-/// says so, which is why nothing here returns a `str`.
+/// `bytes` or `bytearray` in, a copy out. A `str` is accepted because the
+/// stream is printable ASCII under both profiles; nothing here *returns* a
+/// `str`, because §3 calls the output an octet stream and a decoded payload is
+/// arbitrary bytes.
 fn byte_argument(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<u8>> {
     // Matched by type rather than by extraction, so that a sequence that
     // merely happens to hold small integers -- a list, a tuple -- is a
@@ -61,22 +62,8 @@ fn profile_of(name: &str) -> PyResult<Profile> {
     match name {
         "U" => Ok(Profile::U),
         "T" => Ok(Profile::T),
-        "B" => Ok(Profile::B),
         other => Err(PyValueError::new_err(format!(
-            "profile is 'U', 'T' or 'B', not {other:?}"
-        ))),
-    }
-}
-
-fn preset_of(name: &str) -> PyResult<Preset> {
-    match name {
-        "dense" => Ok(Preset::Dense),
-        "dense-fast" => Ok(Preset::DenseFast),
-        "canonical" => Ok(Preset::Canonical),
-        "opaque" => Ok(Preset::Opaque),
-        "framed" => Ok(Preset::Framed),
-        other => Err(PyValueError::new_err(format!(
-            "preset is one of dense, dense-fast, canonical, opaque, framed, not {other:?}"
+            "profile is 'U' or 'T', not {other:?}"
         ))),
     }
 }
@@ -93,19 +80,16 @@ struct Decoded {
     /// Whether any base64 segment carried `=` (§5.3). An encoder never writes
     /// it.
     padding_seen: bool,
-    /// `"plain"` or `"framed"`, decided by the stream itself (Rule F, §5.6).
-    framing_seen: String,
 }
 
 #[pymethods]
 impl Decoded {
     fn __repr__(&self, py: Python<'_>) -> String {
         format!(
-            "Decoded(bytes={} bytes, alphabet_seen={:?}, padding_seen={}, framing_seen={:?})",
+            "Decoded(bytes={} bytes, alphabet_seen={:?}, padding_seen={})",
             self.bytes.bind(py).as_bytes().len(),
             self.alphabet_seen,
-            self.padding_seen,
-            self.framing_seen
+            self.padding_seen
         )
     }
 }
@@ -120,57 +104,76 @@ fn wrap(py: Python<'_>, d: base65t::Decoded) -> Decoded {
         }
         .to_string(),
         padding_seen: d.padding_seen,
-        framing_seen: match d.framing_seen {
-            Framing::Plain => "plain",
-            Framing::Framed => "framed",
-        }
-        .to_string(),
     }
 }
 
 /// Encode bytes. Returns the octet stream of section 3 as `bytes`.
 ///
 /// Accepts `bytes`, `bytearray` or `str`, and always succeeds: every byte
-/// sequence has an encoding, including the empty one. `preset` and `profile`
-/// default to what a call without arguments must give (§9.3): `dense` and
-/// profile U.
+/// sequence has an encoding, including the empty one.
 ///
-/// `bytes` and not `str` on the way out, at every preset: under profiles U and
-/// T every octet is printable ASCII and `.decode("ascii")` is free, but under
-/// profile B it is not text at all, and an API that pretended otherwise would
-/// be lying at exactly one of its three settings.
+/// There is no mode to pick and no preset to name, which is the design and not
+/// an omission (§0.1): a caller who has to choose between a dense encoder and
+/// a fast one has to know what those words mean before encoding a byte, and a
+/// caller who is unsure writes base64. The encoder decides for itself (§9.6).
 ///
-/// `threads` is a performance knob and nothing else: every value produces the
-/// same stream, because §9.2.1 is a rule about local bytes and the parallel
-/// encoder cuts where no segment spans the cut. `0` asks for one worker per
-/// available core. It applies to `dense` only -- the other presets optimise
-/// over the whole input by definition -- and inputs below a megabyte encode on
-/// the calling thread whatever it says.
+/// `profile` is not such a choice: it is a statement about the container the
+/// stream has to survive, and it cannot be derived from the stream (§7.2).
+///
+/// `bytes` and not `str` on the way out, although both profiles produce
+/// printable ASCII: the return type says what the format guarantees, and §3
+/// guarantees octets.
 #[pyfunction]
-#[pyo3(signature = (data, /, preset = "dense", profile = "U", threads = 1))]
-#[pyo3(text_signature = "(data, /, preset='dense', profile='U', threads=1)")]
+#[pyo3(signature = (data, /, profile = "U"))]
+#[pyo3(text_signature = "(data, /, profile='U')")]
 fn encode<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyAny>,
-    preset: &str,
     profile: &str,
-    threads: usize,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode() expects bytes, bytearray or str")?;
-    let preset_name = preset;
-    let preset = preset_of(preset)?;
     let profile = profile_of(profile)?;
     // The encoder touches no Python object, so other threads may run while it
-    // works -- and so the workers it starts are free of the GIL too. That
-    // matters: this is the call a caller makes on a whole file.
-    let out = py.detach(|| {
-        if threads != 1 && preset_name == "dense" {
-            base65t::encode_parallel(&data, profile, threads)
-        } else {
-            base65t::encode_with(&data, preset, profile)
-        }
-    });
+    // works. That matters: this is the call a caller makes on a whole file.
+    let out = py.detach(|| base65t::encode_with(&data, profile));
     Ok(PyBytes::new(py, &out))
+}
+
+/// Base64URL and nothing else, whatever the input looks like (§9.3, §14).
+///
+/// Not a mode of the format but the way out of it: for a caller carrying a
+/// secret who wants no part of it left in the clear, and for one talking to
+/// something that only speaks base64url. The output is ordinary unpadded
+/// base64url and any base64 decoder reads it. `profile` is accepted and
+/// ignored, because there are no literals for it to constrain.
+#[pyfunction]
+#[pyo3(signature = (data, /, profile = "U"))]
+#[pyo3(text_signature = "(data, /, profile='U')")]
+fn encode_base64url<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyAny>,
+    profile: &str,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let data = byte_argument(data, "encode_base64url() expects bytes, bytearray or str")?;
+    profile_of(profile)?;
+    let out = py.detach(|| base65t::encode_base64url(&data));
+    Ok(PyBytes::new(py, &out))
+}
+
+/// Which branch of §9.6 this input takes: `"base64"` or `"exact"`.
+///
+/// Exposed because it is the one decision the encoder makes that a caller
+/// might want to see, and because conformance point 4 of §16 asks two
+/// implementations to agree about it.
+#[pyfunction]
+#[pyo3(signature = (data, /))]
+#[pyo3(text_signature = "(data, /)")]
+fn classify(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+    let data = byte_argument(data, "classify() expects bytes, bytearray or str")?;
+    Ok(match py.detach(|| base65t::classify(&data)) {
+        base65t::Mode::Base64 => "base64",
+        base65t::Mode::Exact => "exact",
+    })
 }
 
 macro_rules! decoder {
@@ -193,24 +196,11 @@ macro_rules! decoder {
 decoder!(
     decode,
     base65t::decode,
-    "Decode a stream, letting it say whether it is framed (Rule F, §5.6).\n\n\
-     The profile is the only parameter: alphabet variant, padding and framing \
-     come out of the stream and are reported back on the result. An attacker \
-     who controls the stream controls all three (§14), so where the mode is \
-     fixed, use `decode_plain` or `decode_framed` instead."
-);
-decoder!(
-    decode_plain,
-    base65t::decode_plain,
-    "Decode as plain mode whatever the stream looks like. A framed stream \
-     reaches `E_RESERVED_LEN` here, which is the right answer for this entry \
-     point (§10.2)."
-);
-decoder!(
-    decode_framed,
-    base65t::decode_framed,
-    "Decode as framed mode whatever the stream looks like. A plain stream \
-     reaches `E_FRAME_SYNC` here."
+    "Decode a stream.\n\n\
+     The profile is the only parameter: the alphabet variant and the padding \
+     come out of the stream and are reported back on the result (§0.3). An \
+     attacker who controls the stream controls both (§14), so where the \
+     alphabet is fixed, use `decode_url_strict`."
 );
 decoder!(
     decode_url_strict,
@@ -223,48 +213,41 @@ decoder!(
 #[pyo3(name = "base65t")]
 fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode, m)?)?;
+    m.add_function(wrap_pyfunction!(encode_base64url, m)?)?;
+    m.add_function(wrap_pyfunction!(classify, m)?)?;
     m.add_function(wrap_pyfunction!(decode, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_plain, m)?)?;
-    m.add_function(wrap_pyfunction!(decode_framed, m)?)?;
     m.add_function(wrap_pyfunction!(decode_url_strict, m)?)?;
     m.add_class::<Decoded>()?;
     m.add("Base65tDecodeError", m.py().get_type::<Base65tDecodeError>())?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
-    m.add("SPEC_VERSION", "0.2")?;
+    m.add("SPEC_VERSION", "0.4")?;
 
     // The constants the specification fixes, so that tooling has one source
     // for them rather than a transcribed copy.
     m.add("MAX_LITERAL", base65t::MAX_LITERAL)?;
-    m.add("MAX_FRAME_BODY", base65t::MAX_FRAME_BODY)?;
     m.add("MIN_LITERAL", base65t::MIN_LITERAL)?;
-    m.add("FAST_WINDOW", base65t::FAST_WINDOW)?;
-    m.add("FAST_SAMPLE", base65t::FAST_SAMPLE)?;
-    m.add("FRAME_BYTES", base65t::FRAME_BYTES)?;
-    m.add(
-        "PRESETS",
-        vec!["dense", "dense-fast", "canonical", "opaque", "framed"],
-    )?;
-    m.add("PROFILES", vec!["U", "T", "B"])?;
+    m.add("WINDOW_BYTES", base65t::WINDOW_BYTES)?;
+    m.add("SAMPLE_BYTES", base65t::SAMPLE_BYTES)?;
+    m.add("ENTROPY_LIMIT_MILLIBITS", base65t::ENTROPY_LIMIT_MILLIBITS)?;
+    m.add("PROFILES", vec!["U", "T"])?;
 
     m.add(
         "__all__",
         vec![
             "encode",
+            "encode_base64url",
+            "classify",
             "decode",
-            "decode_plain",
-            "decode_framed",
             "decode_url_strict",
             "Decoded",
             "Base65tDecodeError",
-            "PRESETS",
             "PROFILES",
             "MAX_LITERAL",
-            "MAX_FRAME_BODY",
             "MIN_LITERAL",
-            "FAST_WINDOW",
-            "FAST_SAMPLE",
-            "FRAME_BYTES",
+            "WINDOW_BYTES",
+            "SAMPLE_BYTES",
+            "ENTROPY_LIMIT_MILLIBITS",
             "SPEC_VERSION",
             "__version__",
         ],

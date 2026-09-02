@@ -13,11 +13,15 @@ needs is above that: many boundaries, and no vector watching them. One
 implementation encodes the input, this one encodes it again and decodes what
 the other wrote, and the three have to agree.
 
-Encoding both ways is affordable because §9.2.1 is linear. It was not, when
-`dense` still ran the programme of §9.2.2 over blocks -- and the mistake that
-lived here then was a block whose last base64 run left a partial quantum for
-the next block's run to continue, so that the seam decoded to what neither
-block meant. There are no blocks now, and no seams.
+The seam is the thing to watch. §9.2.1 runs the programme per 64 KiB window,
+so a stream past that length has boundaries in it, and a window whose last
+base64 run leaves a partial quantum is continued by the next window's run --
+two adjacent base64 segments are one segment to a decoder (§4). Both
+implementations join them; if only one did, this is where it would show, and
+nowhere else. Keep the input above 64 KiB or the test proves nothing.
+
+The Python encoder is quadratic, so a quarter of a megabyte is about the
+practical limit here. That is enough: it is four window boundaries.
 """
 
 import hashlib
@@ -43,9 +47,11 @@ def main(argv) -> int:
     if got.bytes != data:
         print(f"FAIL decoded {len(got.bytes)} bytes, expected {len(data)}")
         return 1
-    if got.padding_seen or got.framing_seen != "plain":
-        print(f"FAIL unexpected {got.padding_seen=} {got.framing_seen=}")
+    if got.padding_seen:
+        print("FAIL an encoder wrote padding, which §5.3 forbids")
         return 1
+    if len(data) <= base65t.WINDOW_BYTES:
+        print(f"WARN {len(data)} bytes is inside one window; no seam is tested")
     if len(stream) > -(-4 * len(data) // 3):
         print(f"FAIL {len(stream)} chars is longer than base64 would be")
         return 1

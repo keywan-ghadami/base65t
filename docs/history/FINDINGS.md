@@ -1,5 +1,10 @@
 # What the reference implementation found
 
+> **Historie.** Der aktuelle Stand ist `docs/spec-v0.4.de.md`. Dieses Dokument
+> ist nicht normativ; es liegt hier, weil es trägt, wie es dazu kam.
+> `docs/history/README.md` sagt, was zwischen den Fassungen gestrichen wurde
+> und warum.
+
 The specification in `docs/spec-v0.1.de.md` is v0.1 final and unchanged. This
 file is what came out of implementing it and running the conformance work of
 §16 against it: nine places where the text says something the code cannot do,

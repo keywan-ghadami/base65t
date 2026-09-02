@@ -2,17 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""The published vectors through the binding.
+"""The published vectors, through the binding.
 
-This does **not** check the format: the binding wraps the same Rust the
-vectors were written from, so agreement here is agreement with itself. What it
-does check is that every preset and profile name reaches the argument it is
-supposed to reach — a binding that silently encoded everything as `dense`
-would pass every test in test_bindings.py that does not compare bytes, and fail
-here on the first `canonical` vector.
-
-The check that means something about the format is ../conformance, which runs
-an implementation written from the specification instead.
+This is not a second implementation and cannot discharge §16.3 -- it calls the
+same Rust the vectors were written from, so it can only agree. What it does
+check is that every entry point and profile name reaches the argument it is
+supposed to, which is the one thing a binding can get wrong on its own.
 """
 
 import json
@@ -22,15 +17,27 @@ import pytest
 
 import base65t
 
-VECTORS = json.loads(
-    (pathlib.Path(__file__).resolve().parents[2] / "docs" / "vectors.json").read_text()
-)["vectors"]
+VECTORS = pathlib.Path(__file__).resolve().parents[2] / "docs" / "vectors.json"
+
+KINDS = {
+    "encode": base65t.encode,
+    "base64url": base65t.encode_base64url,
+}
 
 
-@pytest.mark.parametrize("v", VECTORS, ids=lambda v: v["name"])
-def test_vector(v):
-    data = bytes.fromhex(v["input"])
-    want = bytes.fromhex(v["stream"])
-    for profile in v["profiles"]:
-        assert base65t.encode(data, v["preset"], profile) == want
-        assert base65t.decode(want, profile).bytes == data
+def load():
+    if not VECTORS.exists():
+        pytest.skip("docs/vectors.json is not in this tree")
+    return json.loads(VECTORS.read_text())["vectors"]
+
+
+def test_every_vector_encodes_and_decodes():
+    checked = 0
+    for v in load():
+        data = bytes.fromhex(v["input"])
+        want = bytes.fromhex(v["stream"])
+        for profile in v["profiles"]:
+            assert KINDS[v["kind"]](data, profile) == want, v["name"]
+            assert base65t.decode(want, profile).bytes == data, v["name"]
+            checked += 1
+    assert checked >= 200, f"only {checked} vector/profile pairs"

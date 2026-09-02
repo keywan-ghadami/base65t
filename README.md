@@ -21,111 +21,66 @@ does not work the other way: `~` is not in base64's alphabet, and a base64
 decoder will reject it. The compatibility is one-directional and the migration
 path follows from that.
 
-## What is here
-
-* **`docs/spec-v0.2.de.md`** — the specification, v0.2 final, in German. The
-  normative document; everything else is downstream of it. v0.2 changed no bit
-  of the wire format: every v0.1 stream is a v0.2 stream and the other way
-  round. What it settled is what an encoder must *choose* where v0.1 left the
-  choice open, and two things a decoder must reject.
-* **`rust/`** — the reference implementation. No dependencies and no unsafe in
-  the default build, and written to be read against the specification rather
-  than to be fast: the section numbers are in the comments. `--features simd`
-  is the one exception and is off by default; it takes a vectorised base64
-  kernel as a dependency, which has unsafe inside it.
-* **`python/`** — the Python distribution: a PyO3 extension over the same
-  crate, packaged with maturin, so what Python runs is byte for byte what a
-  Rust caller gets. There is no Python implementation of the format in it, and
-  its tests are about what a binding can get wrong on its own — argument types,
-  the preset and profile names, the fields of the result, the error code.
-* **`conformance/reference.py`** — the second implementation §16.3 asks for,
-  which is a different thing from a binding: written from the specification
-  rather than from the Rust, a plain quadratic dynamic programme instead of the
-  sliding windows of §9.2, no shared code and no shared tables. The two agree
-  byte for byte over all 449 vectors, all five presets and all three profiles —
-  870 pairs — and over fifteen error cases, which counts as much: agreeing
-  about valid streams and not about invalid ones is not agreeing about the
-  format. The gap that stays open is that both have the same author.
-* **`FINDINGS.md`** — what implementing it turned up. Nine places where the
-  specification says something the code cannot do or does not say enough for
-  two implementations to agree, each with the test that holds it in place. One
-  of them is a contradiction inside §11.1 that makes `canonical` two different
-  functions; the others are ambiguities.
-* **`docs/spec-v0.1.de.md`** and **`docs/errata-v0.1.de.md`** — the previous
-  version and the decisions taken against it, kept because they carry the
-  reasoning v0.2 only states. `PREREGISTRATION.md` is the measurement rule for
-  the two decisions that needed one, written before the run.
-* **`docs/vectors.json`** — 449 vectors over every preset and profile, as input
-  and expected stream in hex, so a second implementation can discharge §16.3
-  without reading any of this code.
-
-## Using it
+## One encoder, no options
 
 ```rust
 use base65t::{decode, encode, Profile};
 
-let stream = encode(b"alice.jones");          // dense, profile U
+let stream = encode(b"alice.jones");
 assert_eq!(stream, b"~Lalice.jones");
 assert_eq!(decode(&stream, Profile::U)?.bytes, b"alice.jones");
 ```
 
-`encode` takes no options and gives the default of §9.3. `decode` takes a
-profile and nothing else: the alphabet variant, the padding and the framing are
-read out of the stream and reported back, because they are properties of the
-stream, while the profile is a statement about the container the stream is
-going into and cannot be derived from it.
+`encode` takes bytes and returns bytes. There is no mode to pick, no threshold
+to tune and no preset to understand, and that is the design rather than an
+omission: this format exists for the caller who is *unsure* — who has something
+that is already text and has to put it through a channel that must accept bytes
+— and every word such a caller has to learn first is a reason to write base64
+instead. v0.1 had five presets and v0.2 had six; v0.4 has none.
 
-**Five presets**, all the same format and all read by the same decoder:
-`dense` (the default: one forward scan, constant memory, 0.2 % off the shortest
-encoding over the corpus and about ten times faster to produce), `canonical`
-(the shortest encoding, for cache keys),
-`opaque` (never a literal, byte-identical to unpadded base64url, for tokens
-that carry a secret), `framed` (fixed-size frames, for random access) and
-`dense-fast` (§9.6: `dense`, minus the looking in windows where a sample says
-the looking will not pay — 1.3× to 1.8× the encoding speed for nought to 1.3
-points of density, and where there is real density to lose the sample keeps
-every window and nothing is skipped).
+Two parameters remain, and neither is a choice about the encoding:
 
-All five are deterministic — the output of a preset is a function of input,
-preset and profile (§9.0). What separates them is whether that function carries
-parameters: `dense` and `framed` do (`L ≥ 11`, frame size), and §9.5
-may still move them; `canonical` and `opaque` do not and are frozen.
-That is why cache keys belong to `canonical` and not to `dense`.
+* **The profile** is a statement about the container, not about the stream, and
+  cannot be derived from it. `U` is RFC 3986 *unreserved*, which goes into a
+  URL query and a cookie value as it stands; `T` is printable ASCII without `"`
+  and `\`, which a JSON string carries unescaped.
+* **`encode_base64url`** is not a mode of the format but the way out of it: for
+  a caller carrying a secret who wants no part of it left in the clear, and for
+  one talking to something that only speaks base64url. Its output is ordinary
+  unpadded base64url and any base64 decoder reads it.
 
-**All but `framed` are never longer than base64** — per input, not on average
-(§9.4). `framed` is the exception, at five characters per frame. And on
-high-entropy input `dense` does not merely match base64's length: it writes the
-same bytes.
+What the encoder does, it decides itself: §9.6 looks at the head of the input
+once — a magic number, or the integer entropy of the first four kilobytes — and
+either writes base64url without looking further, or runs the exact programme of
+§9.2 over the whole input. The answer is a function of the input, so two
+implementations write the same bytes.
 
-**Three profiles** decide what a literal may carry: `U` is RFC 3986
-*unreserved*, which goes into a URL query and a cookie value as it stands; `T`
-is printable ASCII without `"` and `\`, which a JSON string carries unescaped;
-`B` is every octet, which no text container should be given.
+**The output is never longer than base64** — per input, not on average, with no
+exception. Where nothing is to be found it is not merely the same length as
+base64url but the *same bytes*.
 
 **Into a buffer you own.** `encode_into` and `decode_into` append to a `Vec`
 the caller supplies, which is what a loop over many small values wants and what
-a buffer registered with the kernel requires. The allocation they save is a
-fixed cost, so it shows where the values are small: 1.69× on eight bytes, 1.44×
-on sixteen, 1.16× on sixty-four, nothing above half a kilobyte.
+a buffer registered with the kernel requires.
 
-**Four decoder entry points.** `decode` detects the framing; `decode_plain`,
-`decode_framed` and `decode_url_strict` fix it instead. Auto-detection is a
-convenience for a stream you trust — an attacker who controls the stream
-chooses the mode, and §14 of the specification says so at more length.
+**Two decoder entry points.** `decode` reads the alphabet variant and the
+padding out of the stream and reports both back; `decode_url_strict` rejects
+`+` and `/` instead of accepting them.
 
 ## When it is worth it, and when it is not
 
-Measured over 101 samples — the benchmark's short values, its files, its
-synthetic set and the Silesia corpus — `dense` in profile U against base64:
+Measured over 69 samples — the benchmark's short values, its files and its
+synthetic set — profile U against base64:
 
 | | share of the samples |
 |---|--:|
-| better than 95 % of base64's size | 39 % |
-| better than 99 % | 54 % |
-| indistinguishable from base64 (≥ 99.9 %) | 31 % |
+| better than 95 % of base64's size | 55 % |
+| better than 99 % | 75 % |
+| indistinguishable from base64 (≥ 99.9 %) | 19 % |
 
-Summed over all of them it is 98.8 %. That number is not worth much, because
-the samples are not one population but two, and the average describes neither.
+Summed it is 98.6 % in profile U and 93.6 % in profile T. Those numbers are not
+worth much, because the samples are not one population but two, and the average
+describes neither.
 
 **What wins**, and it is one shape:
 
@@ -137,16 +92,15 @@ the samples are not one population but two, and the average describes neither.
 | a git commit id | 40 | 77.8 % |
 | a session id, 40 alphanumerics | 40 | 77.8 % |
 | a UUID | 36 | 79.2 % |
-| an email address | 24 | 90.6 % |
-| `bootstrap.css` | 281 046 | 93.2 % |
+| `bootstrap.css` | 281 046 | 92.5 % |
 
 **What does not:**
 
 | sample | bytes | vs base64 |
 |---|--:|--:|
-| `dickens` (Silesia, English prose) | 10 192 446 | 99.5 % |
-| `webster` (Silesia) | 41 458 703 | 99.6 % |
-| `sql-wasm.wasm` | 659 730 | 99.9 % |
+| `dickens` (Silesia, English prose, profile U) | 10 192 446 | 98.8 % |
+| `countries.json` | 1 408 911 | 99.3 % |
+| `x-ray` (Silesia) | 8 474 240 | 100.0 % |
 | a JPEG, a PNG, random bytes, anything compressed | — | 100.0 % |
 
 The decisive pair is in the corpus twice over: `session_ids_32.bin`, which is
@@ -167,106 +121,105 @@ base64 would have been.
 **So it earns its place where a field must accept arbitrary bytes but usually
 carries text.** URL query and cookie values (profile U goes into both
 unescaped), log fields and debug output (profile T, where the readable part
-stays readable), cache keys over mixed payloads (`canonical`), and any
-migration that has to decode base64, base64url, padded, unpadded and this,
-with one decoder.
+stays readable), cache keys over mixed payloads, and any migration that has to
+decode base64, base64url, padded, unpadded and this, with one decoder.
 
-**It does not earn its place** in front of a compressor — measured identical to
-base64 there, 40.6 % either way — nor on high-entropy data, where it is
-byte-identical to base64 by construction, nor anywhere density is the actual
-goal: base91z reaches 37.5 % and base85n 100.7 % where this reaches 132.0 %.
-And §14 names the one place it is strictly behind base64: its decoder parses
+**It does not earn its place** in front of a compressor, nor on high-entropy
+data, where it is byte-identical to base64 by construction, nor anywhere
+density is the actual goal: base91z and base85n are both far denser. And §14
+names the one place it is strictly behind base64: its decoder parses
 attacker-controlled lengths, and base64's does not.
 
-## Density
+## Speed
 
-`cargo run --release --example density`, 1 MiB per input:
-
-| input | base64 | base65t/U | base65t/T |
-|---|---|---|---|
-| pure binary | 1.333 | 1.333 | 1.333 |
-| pure profile-legal text | 1.333 | 1.001 | 1.001 |
-| 70 % text / 30 % binary | 1.333 | 1.113 | 1.113 |
-| 30 % text / 70 % binary | 1.333 | 1.244 | 1.243 |
-
-Binary data is base64 exactly — that is the guarantee in §9.4, and it is
-checked over the corpus rather than argued. Text costs four characters per 4158
-bytes, which is the header of one literal segment. Everything between is
-between.
-
-These are generated inputs of a stated shape, not a corpus. The corpus
-measurement is binary2textbench's, where base65t is the seventh codec:
-
-| | encode | decode | size |
-|---|---|---|---|
-| no compressor | 105 % of base64's time | 108 % | 132.0 % (base64: 133.3 %) |
-| zstd −5 in front | 102 % | 102 % | 56.1 % (base64: 56.6 %) |
-| zstd 1 in front | 99 % | 98 % | 40.6 % (base64: 40.6 %) |
-
-That corpus is weighted by bytes, so megabyte files decide it. On the values
-the format is for — the ones §0.1 names, and the 55 samples the benchmark
-keeps as `short/` — base65t is **faster than base64 as well as smaller**:
+On the values the format is for — the 55 samples the benchmark keeps as
+`short/`, profile U, base64 = 100 %:
 
 | sample | bytes | size | encode | decode |
 |---|--:|--:|--:|--:|
-| SHA-256 digest, hex | 64 | 77 % | **58 %** | **82 %** |
-| JWT, three segments | 155 | 76 % | **63 %** | **71 %** |
-| session id, 40 alnum | 40 | 75 % | **69 %** | **89 %** |
-| UUID v4 | 36 | 79 % | **80 %** | **89 %** |
-| 64 random bytes | 64 | 98 % | 102 % | 108 % |
-| a log line | 93 | 95 % | 110 % | 137 % |
-| **all 55, as time** | | | **86 %** | **~100 %** |
+| JWT, three segments | 155 | 77 % | **43 %** | **69 %** |
+| SHA-512 digest, hex | 128 | 77 % | **37 %** | **74 %** |
+| SHA-256 digest, hex | 64 | 78 % | **54 %** | **87 %** |
+| session id, 40 alnum | 40 | 78 % | **56 %** | **77 %** |
+| UUID v4 | 36 | 79 % | **62 %** | **82 %** |
+| an IPv6 address | 28 | 95 % | 782 % | 123 % |
+| a log line | 93 | 95 % | 997 % | 142 % |
 
-The throughput advantage *is* the density advantage, near enough one for one,
-and the arithmetic says why: base64 reads a byte, looks up four characters and
-writes four, per three bytes. A literal reads a byte, tests it against the
-profile set and writes **one** — the writing is a `memcpy`. Write less, write
-faster. The converse is in the same rows: where the output is the same size as
-base64, base65t is slower by exactly what the looking costs.
+The split is not a gradient, and one property explains both halves: where
+*every* byte of the input is one the profile admits, the segmentation the
+programme would compute can be written down instead (§9.2.4) and the encoder
+never runs a dynamic programme at all. Where one space or one `=` interrupts,
+it does, and that costs eight to ten times base64's encode time — on exactly
+the rows where the size is 95 to 100 % and there was nothing to win anyway.
+
+The same rows in **profile T** are all in the first half: a log line, a SQL
+statement and an IPv6 address are entirely printable ASCII.
+
+**On large files the exact programme is expensive, and this is the open point
+of v0.4:** 45 to 69 MiB/s against base64's 393 to 601, for nought to 1.5 % of
+size. v0.2 had a linear rule for the default that cost 105 to 125 % and gave up
+0.22 %; it is gone, because a rule that is not length-optimal cannot satisfy
+§11.1, and §11.1 is the byte-equality that cache keys hang on. §13.3 of the
+specification states the number rather than hiding it, and §17 names a
+branch-free backward pass as the way out.
 
 **`--features simd`** hands the base64 writing *and reading* to a vectorised
 kernel. It cannot change a byte — base64 is base64, and `tests/simd.rs` checks
-that either way — so it is a speed switch like the thread count, and it is off
-by default so the reference build stays dependency-free and readable. On eight
-megabytes it takes encoding from 113 % of a scalar base64's time to 80 %, and
-decoding from 103 % to 72 %.
+that either way — so it is a speed switch, and it is off by default so the
+reference build stays dependency-free and readable.
 
 Decoding was the side that looked closed: a base64 library commits to one
 alphabet per call and returns one opaque error, where §5.2 needs both variants
-read, §5.4 needs to know which was seen, and §10.4 names twelve conditions.
-What opens it is that Rule A only asks *does this run hold a `+`, `/`, `-` or
-`_`* — a search, not a decode, at a seventh of the cost — and its answer picks
-the alphabet for the call. A failed call falls through to the scalar loop,
-which names the condition; that is the path taken only by streams already being
+read, §5.4 needs to know which was seen, and §10.4 names ten conditions. What
+opens it is that Rule A only asks *does this run hold a `+`, `/`, `-` or `_`* —
+a search, not a decode, at a seventh of the cost — and its answer picks the
+alphabet for the call. A failed call falls through to the scalar loop, which
+names the condition; that is the path taken only by streams already being
 rejected.
 
-Against a *vectorised* base64 it is 3.5× slower on high-entropy input, and the
-reason is structural: base64 does not look, it only writes. base65t has to read
-the input to know whether a literal is in it, and on input where none is, that
-reading is pure overhead.
+## Readability, and what the profile does to it
 
-Which is what `dense-fast` declines to do. With both — `--features simd` and
-the preset — the gap closes to **105 %** of a vectorised base64 on random
-bytes, 114 % on JSON, 125 % on prose, where `dense` sits at 565 %, 325 % and
-455 %. §13.1.1 and §9.6 of the specification have the numbers.
+A literal stands in the output as it stood in the input. How much stays
+readable is decided by the profile, and by orders of magnitude more than any
+encoder rule ever decided it:
 
-The last row is what a protocol that compresses actually sees: the input is
-high-entropy by then, `dense` writes the same bytes base64url would, and what
-is left is the cost of looking for literals that are not there. The base64 it
-is measured against is the same scalar shape with the same table, built by the
-same compiler, so the ratio is the format rather than a handicap.
+| file | size U | size T | clear U | clear T |
+|---|--:|--:|--:|--:|
+| `xml` (Silesia) | 98.0 % | **79.8 %** | 21 % | **92 %** |
+| `dickens` (Silesia) | 98.8 % | **79.9 %** | 17 % | **91 %** |
+| `lodash.js` | 97.9 % | **81.9 %** | 23 % | **88 %** |
+| `bootstrap.css` | 92.5 % | **82.6 %** | 54 % | **88 %** |
 
-Per file, the cost tracks how often the stream switches segments — §13 of the
-specification carries the table, from one segment per 262 144 bytes to one per
-19.
+The reason is the space character. Profile U does not admit it, so English
+prose falls into five-byte runs and none is worth a literal; profile T does, and
+the same text becomes one literal. v0.2 had a preset for this question
+(`legible`) that bought five points and cost every other preset 60 to 190 % of
+its time. The profile buys seventy points and costs nothing.
 
-`encode_parallel(data, profile, threads)` splits the input and writes **the
-same bytes**, whatever the thread count: a profile-illegal byte lies in no
-literal, so it is a point two runs of the rule agree on, and a cut at a
-literal's first byte leaves no segment spanning it (§9.2.1.1). Decoding a plain
-stream cannot be split — whether a `~` opens a segment or is payload is known
-only to the parser that came before it. `framed` can, in both directions, and
-that is what it is for.
+## What is here
+
+* **`docs/spec-v0.4.de.md`** — the specification, v0.4 final, in German. The
+  normative document; everything else is downstream of it.
+* **`rust/`** — the reference implementation. No dependencies and no unsafe in
+  the default build, and written to be read against the specification rather
+  than to be fast: the section numbers are in the comments. `--features simd`
+  is the one exception and is off by default.
+* **`python/`** — the Python distribution: a PyO3 extension over the same
+  crate, packaged with maturin, so what Python runs is byte for byte what a
+  Rust caller gets. There is no Python implementation of the format in it, and
+  its tests are about what a binding can get wrong on its own.
+* **`conformance/reference.py`** — the second implementation §16.3 asks for,
+  which is a different thing from a binding: written from the specification
+  rather than from the Rust, a plain quadratic dynamic programme instead of the
+  sliding windows of §9.2, no shared code and no shared tables. The gap that
+  stays open is that both have the same author.
+* **`docs/vectors.json`** — 137 vectors over both entry points and both
+  profiles, as input and expected stream in hex, so a second implementation can
+  discharge §16.3 without reading any of this code.
+* **`docs/history/`** — v0.1, v0.2, the errata, the findings and the
+  pre-registered measurement, with a note on what was cut between the versions
+  and why. Nothing there is normative; it is the record of how the decisions
+  were reached, which is the half a specification does not carry.
 
 ## Building and testing
 
@@ -275,25 +228,23 @@ cd rust
 cargo test --release
 cargo clippy --all-targets --release -- -D warnings
 cargo run --release --example density
-cargo run --release --example tiebreak -- --profile=U --lmin=1 <file>...
 cargo run --release --example timing -- <file>...
+cargo run --release --example tiebreak -- --profile=U --lmin=1 <file>...
 ```
 
-`timing` is the throughput instrument: `dense` and `opaque`, encode and decode,
-on files you name, so that a change meant to be faster can be shown to be.
-
-`tiebreak` is the instrument for the open question in FINDINGS.md item 1: it
-runs both readings of §11.1 over the same files and reports what separates
-them, per file rather than as one average. Both are the same length by
-construction, and it asserts that rather than assuming it.
+`timing` is the throughput instrument: the encoding and base64url, encode and
+decode, on files you name, so that a change meant to be faster can be shown to
+be. `tiebreak` runs both readings of §11.1 over the same files and reports what
+separates them — both are the same length by construction, and it asserts that
+rather than assuming it.
 
 The suite is organised by what it proves, not by what it covers:
 `tests/vectors.rs` is §15 vector by vector, `tests/roundtrip.rs` and
 `tests/against_the_system.rs` are conformance points 1 and 2 of §16,
 `tests/canonical.rs` is point 3 as far as one implementation can take it,
-`tests/framed.rs` is point 4, and `tests/errors.rs` raises each of the twelve
-error codes of §10.4 on purpose. `tests/against_the_system.rs` needs
-`base64(1)` and Python and skips itself where they are missing.
+`tests/never_worse.rs` is §9.4 and the windowing, and `tests/errors.rs` raises
+each of the ten error codes of §10.4 on purpose. `tests/against_the_system.rs`
+needs `base64(1)` and Python and skips itself where they are missing.
 
 ```sh
 python3 conformance/test_vectors.py     # the two implementations against each other

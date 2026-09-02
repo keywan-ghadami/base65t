@@ -13,7 +13,7 @@ name = "base65t"
 # The major and minor track the specification version, like the crate does --
 # the wire format is what a caller depends on -- and the patch level is this
 # distribution's own.
-version = "0.2.0"
+version = "0.4.0"
 description = "Base65t: Base64URL plus a 65th character introducing raw runs - Python bindings for the Rust implementation"
 readme = "README.md"
 requires-python = ">=3.9"

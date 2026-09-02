@@ -1,5 +1,10 @@
 # Pre-registration: what `legible` optimises, and how `dense` breaks a tie
 
+> **Historie.** Der aktuelle Stand ist `docs/spec-v0.4.de.md`. Dieses Dokument
+> ist nicht normativ; es liegt hier, weil es trägt, wie es dazu kam.
+> `docs/history/README.md` sagt, was zwischen den Fassungen gestrichen wurde
+> und warum.
+
 > **Nachtrag.** Das Preset, das diese Messung ausgewählt hat — `legible` —
 > ist gestrichen. Nicht wegen des Ergebnisses: die Messung war richtig und der
 > Tie-Break kostete tatsächlich nichts an Größe. Er kostete etwas an einer

@@ -1,5 +1,10 @@
 # Base65t — Spezifikation v0.2 (final)
 
+> **Historie.** Der aktuelle Stand ist `docs/spec-v0.4.de.md`. Dieses Dokument
+> ist nicht normativ; es liegt hier, weil es trägt, wie es dazu kam.
+> `docs/history/README.md` sagt, was zwischen den Fassungen gestrichen wurde
+> und warum.
+
 **Status:** final. Ersetzt v0.1; `spec-v0.1.de.md` und `errata-v0.1.de.md`
 bleiben als Geschichte im Repository liegen.
 **Kurzfassung:** Base64URL, erweitert um ein 65. Zeichen (`~`), das längenpräfigierte

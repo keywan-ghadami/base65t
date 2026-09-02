@@ -6,24 +6,21 @@ class Decoded:
     bytes: bytes
     alphabet_seen: str
     padding_seen: bool
-    framing_seen: str
 
 class Base65tDecodeError(ValueError):
     code: str
 
-def encode(data: _Bytes, /, preset: str = ..., profile: str = ..., threads: int = ...) -> bytes: ...
+def encode(data: _Bytes, /, profile: str = ...) -> bytes: ...
+def encode_base64url(data: _Bytes, /, profile: str = ...) -> bytes: ...
+def classify(data: _Bytes, /) -> str: ...
 def decode(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
-def decode_plain(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
-def decode_framed(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
 def decode_url_strict(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
 
-PRESETS: Final[list[str]]
 PROFILES: Final[list[str]]
 MAX_LITERAL: Final[int]
-MAX_FRAME_BODY: Final[int]
 MIN_LITERAL: Final[int]
-FAST_WINDOW: Final[int]
-FAST_SAMPLE: Final[int]
-FRAME_BYTES: Final[int]
+WINDOW_BYTES: Final[int]
+SAMPLE_BYTES: Final[int]
+ENTROPY_LIMIT_MILLIBITS: Final[int]
 SPEC_VERSION: Final[str]
 __version__: Final[str]

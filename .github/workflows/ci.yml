@@ -27,7 +27,7 @@ jobs:
           components: clippy, rustfmt
 
       # The test names say what they prove: §15 vector by vector, the four
-      # conformance points of §16, and each of the twelve error codes of §10.4.
+      # conformance points of §16, and each of the ten error codes of §10.4.
       # `against_the_system` needs base64(1) and Python, which the runner has;
       # it skips rather than fails where they are missing.
       - name: Test
@@ -85,11 +85,19 @@ jobs:
       - name: Real parsers take what profile U writes
         run: python3 conformance/test_containers.py
 
-      # The published vectors stop below a kilobyte, and a segmentation
-      # mistake hides above that -- one did. One implementation encodes a
-      # quarter-megabyte stream, the other encodes it again and decodes what
-      # the first wrote; §9.2.1 is linear, so both are cheap.
       - uses: dtolnay/rust-toolchain@stable
+
+      # Conformance point 4 of §16. §9.6's entropy figure decides which bytes
+      # the encoder writes and is not observable in any vector under 4096
+      # bytes, so the two implementations are held against each other on it
+      # directly -- including on inputs that hit the threshold exactly.
+      - name: The two implementations decide §9.6 alike
+        run: python3 conformance/test_classify.py
+
+      # The published vectors stop below a kilobyte, and a segmentation
+      # mistake hides above that -- one did. This runs a stream over four
+      # window boundaries through both implementations, which is the only
+      # place the seam rule of §9.2.1 can be observed at all.
       - name: A long stream, across implementations
         run: |
           cd rust
@@ -98,10 +106,10 @@ jobs:
           python3 conformance/test_large.py /tmp/in.bin /tmp/in.b65
 
   # The shipped Python distribution is a PyO3 layer over the same crate, so
-  # what it can get wrong is the layer: argument types, the preset and profile
-  # names, the fields of the result, the error code. That is what its tests
-  # are about, and the vectors are in them only to catch a binding that
-  # silently encodes everything as `dense`.
+  # what it can get wrong is the layer: argument types, the profile names, the
+  # fields of the result, the error code. That is what its tests are about,
+  # and the vectors are in them only to catch a binding that silently sends
+  # every call to the same entry point.
   python-bindings:
     name: The Python bindings
     runs-on: ubuntu-latest

@@ -33,7 +33,7 @@ def main() -> int:
             print(f"FAIL {v['name']}: stream_ascii disagrees with the hex")
             failed += 1
         for profile in v["profiles"]:
-            got = base65t.PRESETS[v["preset"]](data, profile)
+            got = base65t.KINDS[v["kind"]](data, profile)
             if got != want:
                 print(f"FAIL {v['name']} ({profile}) encode")
                 print(f"     want {want!r}")
@@ -52,14 +52,14 @@ def main() -> int:
 
 
 def errors() -> int:
-    """The twelve codes of §10.4, on the vectors of §15.
+    """The ten codes of §10.4, on the vectors of §15.
 
     A second implementation that agrees on every valid stream and disagrees on
     what is invalid has not agreed about the format.
     """
     cases = [
         (b"abc~", "U", "decode", "E_TRAILING_TILDE"),
-        (b"~AAAA", "U", "decode_plain", "E_RESERVED_LEN"),
+        (b"~A", "U", "decode", "E_RESERVED_LEN"),
         (b"~_A", "U", "decode", "E_TRUNCATED"),
         (b"~Ca b", "U", "decode", "E_PROFILE"),
         (b"abcde", "U", "decode", "E_ALIGN"),
@@ -68,11 +68,11 @@ def errors() -> int:
         (b"YWxp==", "U", "decode", "E_PADDING"),
         (b"PDw_Pz8+Pg", "U", "decode", "E_MIXED_ALPHABET"),
         (b"PDw/Pz8+Pg", "U", "decode_url_strict", "E_NON_URL_ALPHABET"),
-        (b"~AAAC~A", "U", "decode", "E_FRAME_RULE"),
-        (b"YWxpY2U", "U", "decode_framed", "E_FRAME_SYNC"),
-        (b"~AAAIYWxpY2U=", "U", "decode", "E_CHARSET"),      # TV15
         (b"~Da=b=", "T", "decode", "E_PADDING"),             # TV10
-        (b"~Aabc", "U", "decode", "E_TRUNCATED"),            # TV11
+        (b"~Labc", "U", "decode", "E_TRUNCATED"),            # TV11
+        (b"~Cab~", "U", "decode", "E_TRAILING_TILDE"),       # TV11
+        (b"~=ab", "U", "decode", "E_CHARSET"),               # TV8
+        (b"YWxpY2U=~Lfoo", "U", "decode", "E_CHARSET"),      # TV9
     ]
     bad = 0
     for stream, profile, entry, want in cases:
@@ -85,18 +85,18 @@ def errors() -> int:
             if e.code != want:
                 print(f"FAIL {stream!r}: expected {want}, got {e.code}")
                 bad += 1
-    # And the ones that must be accepted (TV9b, TV10, TV15).
+    # And the ones that must be accepted (TV6, TV7, TV9, TV10).
     for stream, profile, expect in [
-        (b"~AAAI~Cx~~Cyz", "U", b"x~yz"),
         (b"~Ea=b=", "T", b"a=b="),
         (b"YWxpY2U=", "U", b"alice"),
-        (b"~AAAHYWxpY2U", "U", b"alice"),
+        (b"YWxpY2Uu", "U", b"alice."),
+        (b"~Ka+b/c-d_e~fg", "T", b"a+b/c-d_e~\x7e"),
     ]:
         got = base65t.decode(stream, profile).bytes
         if got != expect:
             print(f"FAIL {stream!r}: {got!r} != {expect!r}")
             bad += 1
-    print(f"{len(cases)} error codes and 4 acceptances checked, {bad} wrong")
+    print(f"{len(cases)} error cases and 4 acceptances checked, {bad} wrong")
     return bad
 
 

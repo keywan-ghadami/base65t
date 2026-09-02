@@ -2,17 +2,22 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Base65t v0.2, written from ``docs/spec-v0.2.de.md``.
+"""Base65t v0.4, written from ``docs/spec-v0.4.de.md``.
 
 This is the second implementation §16.3 asks for, and it is deliberately not a
-translation of the Rust one: it was written from the specification, it uses a
-plain quadratic dynamic programme instead of the sliding windows of §9.2, and
-it shares no code, no tables and no structure with it. Where the two disagree,
-one of them has misread the document -- which is the entire point of asking for
-two.
+translation of the Rust one: it was written from the specification, it walks
+the literal edges of §9.2 one at a time instead of keeping the two sliding
+windows, its forward pass enumerates rather than reconstructs, and it shares no
+code, no tables and no structure with it. Where the two disagree, one of them
+has misread the document -- which is the entire point of asking for two.
+
+The one place it does follow §9.2 closely is the three-state recurrence for the
+base64 edges, and not for elegance: taken as "try every end" it is quadratic,
+and then a 64 KiB window -- the unit §9.2.1 makes normative -- is out of reach
+here, so `test_large.py` could not test a window seam at all.
 
 What it is not: written by somebody else. That gap stays open and is named in
-FINDINGS.md.
+``docs/history/FINDINGS.md``.
 
 Reference, not production. Readability before speed everywhere.
 """
@@ -22,8 +27,9 @@ from __future__ import annotations
 ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 TILDE = 0x7E
 MAX_LITERAL = 4158        # §6.1: 63 + 4095
-MAX_FRAME_BODY = 262143   # §8.1: 18 bits
-FRAME_BYTES = 65536       # §8.1
+WINDOW_BYTES = 65536      # §9.2.1
+SAMPLE_BYTES = 4096              # §9.6
+ENTROPY_LIMIT_MILLIBITS = 7400   # §9.6
 
 _VALUE = {}
 for _i, _c in enumerate(ALPHABET):
@@ -33,7 +39,7 @@ _VALUE[ord("/")] = 63
 
 
 class Base65tError(Exception):
-    """One of the twelve codes of §10.4."""
+    """One of the ten codes of §10.4."""
 
     def __init__(self, code: str):
         super().__init__(code)
@@ -55,23 +61,20 @@ def allows(profile: str, b: int) -> bool:
         return _unreserved(b)
     if profile == "T":
         return 0x20 <= b <= 0x7E and b not in (0x22, 0x5C)
-    if profile == "B":
-        return True
-    raise ValueError("profile is U, T or B")
+    raise ValueError("profile is U or T")
 
 
 # --- decoder, §10 ---------------------------------------------------------
 
 
 class Decoded:
-    def __init__(self, data, alphabet_seen, padding_seen, framing_seen):
+    def __init__(self, data, alphabet_seen, padding_seen):
         self.bytes = data
         self.alphabet_seen = alphabet_seen      # "none" | "url" | "classic"
         self.padding_seen = padding_seen
-        self.framing_seen = framing_seen        # "plain" | "framed"
 
     def __repr__(self):
-        return f"Decoded({self.bytes!r}, {self.alphabet_seen}, {self.padding_seen}, {self.framing_seen})"
+        return f"Decoded({self.bytes!r}, {self.alphabet_seen}, {self.padding_seen})"
 
 
 class _Decoder:
@@ -164,51 +167,21 @@ class _Decoder:
                 raise Base65tError("E_NONZERO_TAIL")
             self.out += bytes(((acc >> 10) & 255, (acc >> 2) & 255))
 
-    def framed(self, stream: bytes) -> None:
-        pos, n = 0, len(stream)
-        while pos < n:
-            if n - pos < 2 or stream[pos:pos + 2] != b"~A":
-                raise Base65tError("E_FRAME_SYNC")
-            if pos + 5 > n:
-                raise Base65tError("E_TRUNCATED")
-            a = self.read(stream[pos + 2])
-            b = self.read(stream[pos + 3])
-            c = self.read(stream[pos + 4])
-            length = a << 12 | b << 6 | c
-            if pos + 5 + length > n:
-                raise Base65tError("E_TRUNCATED")
-            body = stream[pos + 5:pos + 5 + length]
-            if b"~A" in body:                       # F', §8.2 -- before decoding
-                raise Base65tError("E_FRAME_RULE")
-            self.plain(body, padding_allowed=False)  # §5.3: not the stream
-            pos += 5 + length
 
-
-def framing_of(stream: bytes) -> str:
-    """Rule F, §5.6."""
-    return "framed" if stream[:2] == b"~A" else "plain"
-
-
-def _run(stream, profile, mode, strict_url=False) -> Decoded:
+def _run(stream, profile, strict_url=False) -> Decoded:
     d = _Decoder(profile, strict_url)
-    (d.framed if mode == "framed" else (lambda s: d.plain(s, True)))(stream)
-    return Decoded(bytes(d.out), d.alphabet, d.padding, mode)
+    d.plain(stream, padding_allowed=True)
+    return Decoded(bytes(d.out), d.alphabet, d.padding)
 
 
 def decode(stream: bytes, profile: str = "U") -> Decoded:
-    return _run(stream, profile, framing_of(stream))
-
-
-def decode_plain(stream: bytes, profile: str = "U") -> Decoded:
-    return _run(stream, profile, "plain")
-
-
-def decode_framed(stream: bytes, profile: str = "U") -> Decoded:
-    return _run(stream, profile, "framed")
+    """§10.2. One entry point: v0.2 had three plus Rule F in front of them,
+    and Rule F went with the framed mode (§5.6)."""
+    return _run(stream, profile)
 
 
 def decode_url_strict(stream: bytes, profile: str = "U") -> Decoded:
-    return _run(stream, profile, framing_of(stream), strict_url=True)
+    return _run(stream, profile, strict_url=True)
 
 
 # --- encoder, §9 ----------------------------------------------------------
@@ -228,13 +201,12 @@ def _b64(chunk: bytes) -> bytes:
     return bytes(out)
 
 
-def _segments(data: bytes, profile: str, lmin, framed: bool):
-    """Length-optimal segmentation under §9.2.2, quadratic and obvious.
+def _segments(data: bytes, profile: str, lmin):
+    """Length-optimal segmentation under §9.2, written out rather than tuned.
 
     Returns a list of ("B" | "L", start, end). `lmin` of None never takes a
-    literal (`opaque`). The cost is the character count and nothing else: the
-    second component this carried existed for `legible`, and that preset is
-    gone.
+    literal, which is `encode_base64url`. The cost is the character count and
+    nothing else.
     """
     n = len(data)
     INF = float("inf")
@@ -244,75 +216,74 @@ def _segments(data: bytes, profile: str, lmin, framed: bool):
             return False
         if any(not allows(profile, b) for b in data[i:j]):
             return False
-        if framed:
-            if data[j - 1] == TILDE:                       # F2
-                return False
-            if b"~A" in data[i:j]:                         # F1
-                return False
         return True
 
     def lit_cost(m):
         return m + _header(m)
 
-    def add(x, y):
-        return x + y
-
     # r_l[j]: a base64 segment may open at j; r_b[j]: it may not (§4).
+    # g[j][p]: cheapest finish from inside a base64 segment with p bytes in the
+    # open quantum. §9.2 writes the base64 edges as a three-state recurrence
+    # for exactly this reason -- taken literally as "try every end" it is
+    # quadratic, and then a 64 KiB window is out of reach for this
+    # implementation.
     r_l = [INF] * (n + 1)
     r_b = [INF] * (n + 1)
-    for j in range(n, -1, -1):
-        if j == n:
-            r_l[j] = r_b[j] = 0
-            continue
+    g = [[INF, INF, INF] for _ in range(n + 1)]
+    r_l[n] = r_b[n] = 0
+    g[n] = [0, 0, 0]
+    for j in range(n - 1, -1, -1):
         best = INF
-        for t in range(j + 1, min(n, j + MAX_LITERAL) + 1):
-            if literal_ok(j, t) and r_l[t] != INF:
-                best = min(best, add(lit_cost(t - j), r_l[t]))
+        # Literal edges. The run has to be admissible over its whole length,
+        # so the walk stops at the first byte the profile rejects rather than
+        # asking again for every end past it.
+        if lmin is not None:
+            t = j + 1
+            while t <= n and t - j <= MAX_LITERAL and allows(profile, data[t - 1]):
+                if t - j >= lmin and r_l[t] != INF:
+                    best = min(best, lit_cost(t - j) + r_l[t])
+                t += 1
         r_b[j] = best
-        # A base64 segment covering [j, t), then a literal must follow.
-        for t in range(j + 1, n + 1):
-            if r_b[t] != INF or t == n:
-                cand = add(-(-4 * (t - j) // 3), r_b[t])
-                best = min(best, cand)
-        r_l[j] = best
+        # Base64 edges: +2 characters opening a quantum, +1 for each further
+        # byte, and a segment may end at any p.
+        g[j] = [
+            min(r_b[j], 2 + g[j + 1][1]),
+            min(r_b[j], 1 + g[j + 1][2]),
+            min(r_b[j], 1 + g[j + 1][0]),
+        ]
+        r_l[j] = g[j][0]
+
+    def opens_b64(j):
+        """Can a base64 segment start at j and still be length-optimal?"""
+        return j < n and r_l[j] == 2 + g[j + 1][1]
 
     segs, pos, may_open = [], 0, True
     while pos < n:
-        took = False
-        if may_open:
+        if may_open and opens_b64(pos):
             # `B` is the smallest symbol, so the run is as long as optimality
-            # allows: pick the longest t reaching the optimum.
-            best_t = None
-            for t in range(pos + 1, n + 1):
-                if r_b[t] == INF and t != n:
-                    continue
-                if add(-(-4 * (t - pos) // 3), r_b[t]) == r_l[pos]:
-                    best_t = t
-            if best_t is not None:
-                segs.append(("B", pos, best_t))
-                pos, may_open, took = best_t, False, True
-        if took:
+            # allows.
+            t, p = pos + 1, 1
+            while t < n and g[t][p] == (2 if p == 0 else 1) + g[t + 1][(p + 1) % 3]:
+                p = (p + 1) % 3
+                t += 1
+            segs.append(("B", pos, t))
+            pos, may_open = t, False
             continue
         target = r_b[pos]
-        ends = [
-            t
-            for t in range(pos + 1, min(n, pos + MAX_LITERAL) + 1)
-            if literal_ok(pos, t) and r_l[t] != INF and add(lit_cost(t - pos), r_l[t]) == target
-        ]
+        ends = []
+        t = pos + 1
+        while t <= n and t - pos <= MAX_LITERAL and allows(profile, data[t - 1]):
+            if t - pos >= lmin and r_l[t] != INF and lit_cost(t - pos) + r_l[t] == target:
+                ends.append(t)
+            t += 1
         assert ends, "the cost table promised a literal"
         # `B` beats `L` beats `S`: the first end where base64 can optimally
         # open wins, otherwise carry on to the longest optimal end.
         chosen = ends[-1]
         for t in ends:
-            if t < n:
-                opens = any(
-                    add(-(-4 * (u - t) // 3), r_b[u]) == r_l[t]
-                    for u in range(t + 1, n + 1)
-                    if r_b[u] != INF or u == n
-                )
-                if opens and add(lit_cost(t - pos), r_l[t]) == target and r_l[t] != r_b[t]:
-                    chosen = t
-                    break
+            if opens_b64(t) and lit_cost(t - pos) + (2 + g[t + 1][1]) == target:
+                chosen = t
+                break
         segs.append(("L", pos, chosen))
         pos, may_open = chosen, True
     return segs
@@ -335,130 +306,119 @@ def _emit(data: bytes, segs) -> bytes:
     return bytes(out)
 
 
-def _linear_segments(data: bytes, profile: str, lmin: int, framed: bool):
-    """§9.2.1 read literally: one forward scan, no lookahead, no table.
+def _encode_one(data, profile, lmin) -> bytes:
+    return _emit(data, _segments(data, profile, lmin))
 
-    Written out one byte at a time on purpose. The Rust encoder skips ahead in
-    windows of `lmin`, which is an argument about where a literal can start;
-    this is the sentence the argument is about.
+
+# --- §9.6: one decision at the head of the stream --------------------------
+
+MAGIC = (
+    b"\x1f\x8b",              # gzip
+    b"\x28\xb5\x2f\xfd",      # zstd
+    b"\xfd7zXZ",              # xz
+    b"BZh",                   # bzip2
+    b"PK\x03\x04",            # zip
+    b"\xff\xd8\xff",          # JPEG
+    b"\x89PNG",               # PNG
+    b"OggS",                  # Ogg
+    b"\x1aE\xdf\xa3",         # Matroska / WebM
+)
+
+
+def _log2_millibits(a: int, b: int) -> int:
+    """1000 * log2(a / b) for a >= b > 0, by integer bisection.
+
+    Integer on purpose (§9.6): this decides which bytes the encoder writes, and
+    two implementations have to agree on it exactly. Written the way the
+    specification describes it rather than the way the Rust does -- the whole
+    part by halving, the fraction by squaring -- so that agreement is evidence
+    and not a shared bug.
     """
+    whole = 0
+    x = a
+    while x >= 2 * b:
+        x //= 2
+        whole += 1
+    frac = 0
+    num, den = x, b
+    for bit in range(16):
+        while num > (1 << 31) or den > (1 << 31):
+            num >>= 1
+            den >>= 1
+        num *= num
+        den *= den
+        if num >= 2 * den:
+            num //= 2
+            frac |= 1 << (15 - bit)
+    return whole * 1000 + (frac * 1000) // (1 << 16)
+
+
+def entropy_millibits(data: bytes) -> int:
+    """Shannon entropy in thousandths of a bit per byte (§9.6)."""
     n = len(data)
-    segs, pending, i = [], 0, 0
-    while i < n:
-        j = i
-        while j < n and j - i < MAX_LITERAL and allows(profile, data[j]):
-            if framed and data[j] == TILDE and j + 1 < n and data[j + 1] == ord("A"):
-                break                                       # F1
-            j += 1
-        if framed:
-            while j > i and data[j - 1] == TILDE:           # F2
-                j -= 1
-        if j - i >= lmin:
-            if pending < i:
-                segs.append(("B", pending, i))
-            segs.append(("L", i, j))
-            i = pending = j
-        else:
-            i = max(j, i + 1)
-    if pending < n:
-        segs.append(("B", pending, n))
-    return segs
+    if n == 0:
+        return 0
+    count = [0] * 256
+    for b in data:
+        count[b] += 1
+    total = 0
+    for k in count:
+        if k:
+            total += k * _log2_millibits(n, k)
+    return total // n
 
 
-def _encode_one(data, profile, lmin, framed=False) -> bytes:
-    return _emit(data, _segments(data, profile, lmin, framed))
+def classify(data: bytes) -> str:
+    """§9.6: "base64" writes without looking, "exact" runs the programme."""
+    for m in MAGIC:
+        if data.startswith(m):
+            return "base64"
+    if len(data) < SAMPLE_BYTES:
+        return "exact"
+    if entropy_millibits(data[:SAMPLE_BYTES]) > ENTROPY_LIMIT_MILLIBITS:
+        return "base64"
+    return "exact"
 
 
-def _encode_linear(data, profile, lmin, framed=False) -> bytes:
-    return _emit(data, _linear_segments(data, profile, lmin, framed))
+# --- §9: the encoder -------------------------------------------------------
 
 
-def encode_dense(data: bytes, profile: str = "U") -> bytes:
-    """§9.2.1: the linear rule, in constant memory and one pass."""
-    return _encode_linear(data, profile, 11)
-
-
-FAST_WINDOW = 65536       # §9.6
-FAST_SAMPLE = 1024
-FAST_SHARE = (1, 10)
-
-
-def _worth_scanning(data: bytes, window: int, profile: str, lmin: int) -> bool:
-    """§9.6: does the sample of this window show enough to pay for a scan?"""
-    start = window * FAST_WINDOW
-    end = min(start + FAST_WINDOW, len(data))
-    sample = data[start:min(start + FAST_SAMPLE, end)]
-    if not sample:
-        return False
-    literal = sum(j - i for kind, i, j in _linear_segments(sample, profile, lmin, False)
-                  if kind == "L")
-    return literal * FAST_SHARE[1] >= len(sample) * FAST_SHARE[0]
-
-
-def encode_dense_fast(data: bytes, profile: str = "U") -> bytes:
-    """§9.6: `dense`, minus the scan where a sample says it will not pay.
-
-    Windows are cut at absolute offsets and the sample is a fixed prefix, so
-    the answer is a function of the input. A literal may start only in a window
-    the sample kept; once started it runs to the end of its run, window or no
-    window.
-    """
-    n = len(data)
-    lmin = 11
-    keep = [_worth_scanning(data, w, profile, lmin)
-            for w in range((n + FAST_WINDOW - 1) // FAST_WINDOW)]
-    segs, pending, i = [], 0, 0
-    while i < n:
-        if not keep[i // FAST_WINDOW]:
-            i = min((i // FAST_WINDOW + 1) * FAST_WINDOW, n)
-            continue
-        # The same rule as §9.2.1, restricted to starts inside kept windows.
-        run = i
-        while run < n and allows(profile, data[run]):
-            run += 1
-        if run - i >= lmin:
-            j = min(run, i + MAX_LITERAL)
-            if pending < i:
-                segs.append(("B", pending, i))
-            segs.append(("L", i, j))
-            i = pending = j
-        else:
-            i = max(run, i + 1)
-    if pending < n:
-        segs.append(("B", pending, n))
-    return _emit(data, segs)
-
-
-def encode_canonical(data: bytes, profile: str = "U") -> bytes:
-    return _encode_one(data, profile, 1)
-
-
-def encode_opaque(data: bytes, profile: str = "U") -> bytes:
+def encode_base64url(data: bytes, profile: str = "U") -> bytes:
+    """§9.3, §14: base64url and nothing else, whatever the input looks like."""
     return _b64(data)
 
 
-def encode_framed(data: bytes, profile: str = "U") -> bytes:
-    out = bytearray()
-    for i in range(0, len(data), FRAME_BYTES):
-        body = _encode_linear(data[i:i + FRAME_BYTES], profile, 11, framed=True)
-        assert len(body) <= MAX_FRAME_BODY
-        out += bytes((TILDE, ord("A"),
-                      ALPHABET[(len(body) >> 12) & 63],
-                      ALPHABET[(len(body) >> 6) & 63],
-                      ALPHABET[len(body) & 63]))
-        out += body
-    return bytes(out)
+def encode_with(data: bytes, profile: str = "U") -> bytes:
+    """§9.0, §9.2.1, §9.6: the encoding.
+
+    The windows of §9.2.1 are part of the definition, not of the
+    implementation: the programme runs per window at absolute offsets, and
+    adjacent base64 segments across a seam are one segment (§4). The Rust does
+    this too and the two have to reach the same bytes on inputs past 64 KiB,
+    which `conformance/test_large.py` is for.
+    """
+    if not data:
+        return b""
+    if classify(data) == "base64":
+        return _b64(data)
+    segs = []
+    for start in range(0, len(data), WINDOW_BYTES):
+        end = min(start + WINDOW_BYTES, len(data))
+        for kind, i, j in _segments(data[start:end], profile, 1):
+            i, j = start + i, start + j
+            if segs and kind == "B" and segs[-1][0] == "B" and segs[-1][2] == i:
+                segs[-1] = ("B", segs[-1][1], j)
+            else:
+                segs.append((kind, i, j))
+    return _emit(data, segs)
 
 
 def encode(data: bytes) -> bytes:
-    """§9.3: no preset means `dense` and profile U."""
-    return encode_dense(data, "U")
+    """§9.3: no parameter means profile U."""
+    return encode_with(data, "U")
 
 
-PRESETS = {
-    "dense": encode_dense,
-    "dense-fast": encode_dense_fast,
-    "canonical": encode_canonical,
-    "opaque": encode_opaque,
-    "framed": encode_framed,
+KINDS = {
+    "encode": encode_with,
+    "base64url": encode_base64url,
 }
