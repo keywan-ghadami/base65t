@@ -162,7 +162,7 @@ mod tests {
                         by_longest.len(),
                         "{data:?} {profile:?} {lmin}"
                     );
-                    assert_eq!(3 * by_order.len() as i64, c.r_l[0]);
+                    assert_eq!(3 * by_order.len() as i64, c.r_l(0));
                 }
             }
         }

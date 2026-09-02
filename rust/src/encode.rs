@@ -27,8 +27,6 @@
 //! the latter may open a base64 segment. Adjacent *literals* stay legal —
 //! §11.1 turns on them.
 
-use std::collections::VecDeque;
-
 use crate::alphabet::{Profile, ALPHABET, MAX_LITERAL, TILDE};
 
 /// What an encoding costs, in **thirds of a character**.
@@ -161,12 +159,32 @@ pub fn c_vector(segs: &[Seg]) -> String {
 /// * `g[j][p]` — cheapest finish from inside a base64 segment with `p` bytes
 ///   already in the open quantum.
 pub struct Costs {
-    pub r_l: Vec<Cost>,
-    pub r_b: Vec<Cost>,
-    g: Vec<[Cost; 3]>,
+    /// `g[j][0..3]` as above, and `g[j][3]` is `r_b[j]`.
+    ///
+    /// One table rather than three. `r_l` was a copy of `g[j][0]` and `r_b`
+    /// was a second allocation for a number the same loop already computes; on
+    /// a short value the encoder's cost is the number of times it calls the
+    /// allocator, and this took it from three to one.
+    g: Vec<[Cost; 4]>,
 }
 
 impl Costs {
+    /// `r_l[j]`, which is `g[j][0]` and was a table of its own until it was
+    /// noticed that the two are the same number. Dropping the duplicate is
+    /// worth more than the memory it saves: on a short value the encoder's
+    /// time is its allocations, and this is one of three.
+    #[inline]
+    pub fn r_l(&self, j: usize) -> Cost {
+        self.g[j][0]
+    }
+
+    /// `r_b[j]`: the cheapest encoding of `data[j..]` when a literal must come
+    /// first, because the previous segment was base64 (§4).
+    #[inline]
+    pub fn r_b(&self, j: usize) -> Cost {
+        self.g[j][3]
+    }
+
     /// Cost of opening a base64 segment at `j`, or `INF` at the end of input.
     #[inline]
     fn open_b64(&self, j: usize) -> Cost {
@@ -179,15 +197,81 @@ impl Costs {
     }
 }
 
+/// A monotone deque over a ring of power-of-two capacity: the sliding-window
+/// minimum the two bands of §9.2 need, and nothing else.
+///
+/// It replaced a pair of `VecDeque`s, and the replacement is most of what the
+/// backward pass costs. The window widths are known from §6.1 -- 62 for the
+/// two-character header, 4096 for the four-character one -- so the ring never
+/// grows, the index arithmetic is a mask rather than a division, and the whole
+/// structure is one allocation sized to the input. On a 155-byte value that
+/// took the backward pass from 2840 ns to 850.
+struct Band {
+    buf: Vec<(u32, Cost)>,
+    mask: usize,
+    head: usize,
+    len: usize,
+}
+
+impl Band {
+    /// `width` is the widest window this band can hold; `n` bounds it for a
+    /// short input, where a full-width ring would be the allocation the whole
+    /// encode is trying to avoid.
+    fn new(width: usize, n: usize) -> Self {
+        if n == 0 {
+            return Band {
+                buf: Vec::new(),
+                mask: 0,
+                head: 0,
+                len: 0,
+            };
+        }
+        let cap = (n + 2).min(width + 2).next_power_of_two();
+        Band {
+            buf: vec![(0, 0); cap],
+            mask: cap - 1,
+            head: 0,
+            len: 0,
+        }
+    }
+
+    #[inline]
+    fn push(&mut self, t: usize, k: Cost) {
+        while self.len > 0 {
+            let back = self.buf[(self.head + self.len - 1) & self.mask];
+            if back.1 >= k {
+                self.len -= 1;
+            } else {
+                break;
+            }
+        }
+        debug_assert!(self.len < self.buf.len());
+        self.buf[(self.head + self.len) & self.mask] = (t as u32, k);
+        self.len += 1;
+    }
+
+    /// Drops candidates past the window's far end and returns the minimum key
+    /// of what is left.
+    #[inline]
+    fn min_within(&mut self, hi: usize) -> Cost {
+        while self.len > 0 {
+            let front = self.buf[self.head];
+            if front.0 as usize > hi {
+                self.head = (self.head + 1) & self.mask;
+                self.len -= 1;
+            } else {
+                return front.1;
+            }
+        }
+        INF
+    }
+}
+
 /// The backward pass of §9.2. O(n) time, O(1) extra state beyond the tables.
 pub fn costs(data: &[u8], rules: Rules) -> Costs {
     let n = data.len();
-    let mut r_l = vec![INF; n + 1];
-    let mut r_b = vec![INF; n + 1];
-    let mut g = vec![[INF; 3]; n + 1];
-    r_l[n] = 0;
-    r_b[n] = 0;
-    g[n] = [0; 3];
+    let mut g = vec![[INF; 4]; n + 1];
+    g[n] = [0; 4];
 
     // Deques over candidate end positions `t`. A literal edge [j, t) costs
     // `(3 − λ)(t − j) + 3h + r_l[t]` in thirds, and buys `t − j` passthrough
@@ -203,37 +287,24 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     // `r_l[t]`, neither of which changes after the candidate enters, and the
     // pop loop below compares against it once per candidate examined --
     // recomputing it there was a third of this function's time.
-    let mut band1: VecDeque<(usize, Cost)> = VecDeque::new();
-    let mut band2: VecDeque<(usize, Cost)> = VecDeque::new();
-
-    let key = |t: usize, r_l: &[Cost]| -> Cost { 3 * t as i64 + r_l[t] };
+    // A band that no candidate can ever enter is not allocated: on a short
+    // value the encoder's time is its allocations, and band 2 needs 63 bytes
+    // before it holds anything.
+    let lmin = rules.min_literal.unwrap_or(usize::MAX);
+    let mut band1 = Band::new(62, if lmin <= n { n } else { 0 });
+    let mut band2 = Band::new(MAX_LITERAL - 63, if lmin.max(63) <= n { n } else { 0 });
 
     // `first_bad[j]` as a running value: it is monotone as `j` decreases,
     // which is exactly why it can be a window bound instead of a per-edge
     // check.
     let mut first_bad = n;
 
-    let lmin = rules.min_literal.unwrap_or(usize::MAX);
     for j in (0..n).rev() {
         if !rules.profile.allows(data[j]) {
             first_bad = j;
         }
 
         if rules.min_literal.is_some() {
-            let admit = |t: usize, dq: &mut VecDeque<(usize, Cost)>, r_l: &[Cost]| {
-                if t > n {
-                    return;
-                }
-                let k = key(t, r_l);
-                while let Some(&(_, kb)) = dq.back() {
-                    if kb >= k {
-                        dq.pop_back();
-                    } else {
-                        break;
-                    }
-                }
-                dq.push_back((t, k));
-            };
             // The far end of each window: the byte run must stay inside the
             // profile. Computed before the candidates enter, because it
             // decides whether they may.
@@ -249,54 +320,43 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
             // every few characters means every band-2 candidate, sixty-three
             // bytes out, is born ineligible.
             if lmin <= 62 && j + lmin <= hi1 {
-                admit(j + lmin, &mut band1, &r_l);
+                let t = j + lmin;
+                band1.push(t, 3 * t as i64 + g[t][0]);
             }
             let entry2 = lmin.max(63);
             if entry2 <= MAX_LITERAL && j + entry2 <= hi2 {
-                admit(j + entry2, &mut band2, &r_l);
-            }
-            while let Some(&(f, _)) = band1.front() {
-                if f > hi1 {
-                    band1.pop_front();
-                } else {
-                    break;
-                }
-            }
-            while let Some(&(f, _)) = band2.front() {
-                if f > hi2 {
-                    band2.pop_front();
-                } else {
-                    break;
-                }
+                let t = j + entry2;
+                band2.push(t, 3 * t as i64 + g[t][0]);
             }
 
             // Put the `j` parts back on: the same constant for every candidate
             // in a band, so it cannot change which one won.
+            let k1 = band1.min_within(hi1);
+            let k2 = band2.min_within(hi2);
+            let base = 3 * j as i64;
             let mut best = INF;
-            for (dq, header) in [(&band1, 2i64), (&band2, 4i64)] {
-                if let Some(&(_, k)) = dq.front() {
-                    if !is_inf(k) {
-                        let c = k + 3 * header - 3 * j as i64;
-                        best = best.min(c);
-                    }
-                }
+            if !is_inf(k1) {
+                best = k1 + 6 - base;
             }
-            r_b[j] = best;
+            if !is_inf(k2) {
+                best = best.min(k2 + 12 - base);
+            }
+            g[j][3] = best;
         }
 
         // Written out rather than looped: the modulo was a division in the
         // innermost loop of the whole encoder, and there are exactly three.
         let gn = g[j + 1];
-        let b = r_b[j];
+        let b = g[j][3];
         g[j] = [
             b.min(add(inc(0), gn[1])),
             b.min(add(inc(1), gn[2])),
             b.min(add(inc(2), gn[0])),
+            b,
         ];
-        r_l[j] = g[j][0];
     }
 
-    Costs { r_l, r_b, g }
+    Costs { g }
 }
 
 /// Which end position to take when several are length-optimal.
@@ -313,12 +373,23 @@ pub enum LiteralEnd {
 }
 
 pub fn segment_with(data: &[u8], rules: Rules, c: &Costs, end: LiteralEnd) -> Vec<Seg> {
-    let n = data.len();
     let mut segs = Vec::new();
+    segment_scan(data, rules, c, end, |seg| segs.push(seg));
+    segs
+}
+
+/// The forward pass of §9.2, handing each segment to `f` as it is decided.
+///
+/// A callback rather than a `Vec`, because the encoder does not want the list:
+/// it wants to write the bytes. On the values §0.1 names that list was one of
+/// four allocations against base64's one, and the allocations were most of the
+/// difference.
+pub fn segment_scan(data: &[u8], rules: Rules, c: &Costs, end: LiteralEnd, mut f: impl FnMut(Seg)) {
+    let n = data.len();
     let mut pos = 0;
     let mut may_open_b64 = true;
     while pos < n {
-        if may_open_b64 && c.r_l[pos] == c.open_b64(pos) {
+        if may_open_b64 && c.r_l(pos) == c.open_b64(pos) {
             // Inside the run every byte is another `B`, and `B` is the
             // smallest symbol, so the run extends as far as optimality allows.
             let mut t = pos + 1;
@@ -331,17 +402,16 @@ pub fn segment_with(data: &[u8], rules: Rules, c: &Costs, end: LiteralEnd) -> Ve
                 p = (p + 1) % 3;
                 t += 1;
             }
-            segs.push(Seg::Base64(pos, t));
+            f(Seg::Base64(pos, t));
             pos = t;
             may_open_b64 = false;
         } else {
             let t = literal_end(data, rules, c, pos, end);
-            segs.push(Seg::Literal(pos, t));
+            f(Seg::Literal(pos, t));
             pos = t;
             may_open_b64 = true;
         }
     }
-    segs
 }
 
 /// Where the literal that starts at `i` ends.
@@ -354,44 +424,38 @@ pub fn segment_with(data: &[u8], rules: Rules, c: &Costs, end: LiteralEnd) -> Ve
 fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) -> usize {
     let n = data.len();
     let lmin = rules.min_literal.expect("a literal was chosen");
-    let best = c.r_b[i];
+    let best = c.r_b(i);
     debug_assert!(!is_inf(best));
 
-    // Candidate ends, in increasing order. The walk starts at the first byte
-    // rather than at `i + L_min`, because the run has to be admissible over
-    // its whole length and not only past the threshold.
-    let mut cands: Vec<usize> = Vec::new();
+    // One walk over the candidate ends, in increasing order, keeping the two
+    // the order can ask for rather than the list of them. The walk starts at
+    // the first byte rather than at `i + L_min`, because the run has to be
+    // admissible over its whole length and not only past the threshold.
+    //
+    // `B < L < S`: ending at `t` writes `B` at `t` when a base64 segment opens
+    // there and `S` when another literal does, and carrying on writes `L`. So
+    // the first end that opens a base64 segment wins outright, and when none
+    // does, carrying on beats starting a new literal -- which is the *longest*
+    // optimal end, not the earliest.
+    let mut last = 0usize;
     let mut t = i + 1;
     while t <= n && t - i <= MAX_LITERAL {
         if !rules.profile.allows(data[t - 1]) {
             break;
         }
-        if t - i >= lmin && add(rules.literal_edge(t - i), c.r_l[t]) == best {
-            cands.push(t);
+        if t - i >= lmin && add(rules.literal_edge(t - i), c.r_l(t)) == best {
+            if end == LiteralEnd::KeyOrder
+                && t < n
+                && add(rules.literal_edge(t - i), c.open_b64(t)) == best
+            {
+                return t;
+            }
+            last = t;
         }
         t += 1;
     }
-    assert!(
-        !cands.is_empty(),
-        "the cost table promised a literal at {i}"
-    );
-
-    match end {
-        LiteralEnd::Longest => *cands.last().expect("non-empty"),
-        LiteralEnd::KeyOrder => {
-            // Ending at `t` writes `B` at `t` when a base64 segment opens
-            // there and `S` when another literal does; carrying on writes `L`.
-            // `B < L < S`, so: the first end that opens a base64 segment wins
-            // outright, and when none does, carrying on beats starting a new
-            // literal — which is the *longest* optimal end, not the earliest.
-            for &t in &cands {
-                if t < n && add(rules.literal_edge(t - i), c.open_b64(t)) == best {
-                    return t;
-                }
-            }
-            *cands.last().expect("non-empty")
-        }
-    }
+    assert!(last > 0, "the cost table promised a literal at {i}");
+    last
 }
 
 /// Writes a segmentation out (§5.1, §6.1): URL alphabet, never padded, and
@@ -478,6 +542,47 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
+    /// The closed form of §9.2.4 is the programme's own answer, and this is why
+    /// it may be believed: every length it claims, over both profiles and over
+    /// alphabets that reach the header bands, checked against the programme
+    /// byte for byte.
+    ///
+    /// The interesting lengths are all near a boundary -- 6/7, 62/63, 65/66,
+    /// 68/69 -- so it walks every one of them rather than sampling.
+    #[test]
+    fn the_closed_form_agrees_with_the_programme() {
+        let pools: [(Profile, &[u8]); 3] = [
+            (Profile::U, b"a"),
+            (Profile::U, b"abcXY9-._~"),
+            (Profile::T, b"a=b, |"),
+        ];
+        for (profile, pool) in pools {
+            for n in 1..=300usize {
+                let data: Vec<u8> = (0..n).map(|i| pool[i % pool.len()]).collect();
+                let r = Rules::new(profile, Some(1));
+                let c = costs(&data, r);
+                let by_table = emit(&data, &segment_with(&data, r, &c, LiteralEnd::KeyOrder));
+                let by_argument = crate::encode_with(&data, profile);
+                assert_eq!(
+                    by_argument, by_table,
+                    "{profile:?}, n = {n}: the closed form and the programme disagree"
+                );
+            }
+        }
+        // And at the far end of the header's reach, where the closed form
+        // stops claiming anything.
+        for n in [4155usize, 4156, 4157, 4158, 4159, 4160, 4300] {
+            let data = vec![b'a'; n];
+            let r = Rules::new(Profile::U, Some(1));
+            let c = costs(&data, r);
+            assert_eq!(
+                crate::encode_with(&data, Profile::U),
+                emit(&data, &segment_with(&data, r, &c, LiteralEnd::KeyOrder)),
+                "n = {n}"
+            );
+        }
+    }
+
     fn rules(min_literal: Option<usize>) -> Rules {
         Rules::new(Profile::U, min_literal)
     }
@@ -500,7 +605,7 @@ mod tests {
                 let c = costs(data, r);
                 let segs = segment_with(data, r, &c, LiteralEnd::KeyOrder);
                 let out = emit(data, &segs);
-                assert_eq!(3 * out.len() as i64, c.r_l[0], "{data:?} at L_min {lmin:?}");
+                assert_eq!(3 * out.len() as i64, c.r_l(0), "{data:?} at L_min {lmin:?}");
             }
         }
     }
@@ -620,12 +725,22 @@ pub enum Mode {
 }
 
 /// §9.6, once at the head of the stream and carried through.
+///
+/// The magic numbers are asked first because they are evidence and the entropy
+/// is an estimate. The estimate then needs a full sample: over `n` bytes the
+/// plug-in entropy of 256 symbols cannot exceed `log2(n)` at all, so under
+/// 4096 bytes the figure cannot reach the limit however random the input is,
+/// and asking would be arithmetic with a foregone answer. Such an input gets
+/// the programme -- which is the thorough branch, not a fallback, and cheap
+/// on an input that small.
 pub fn classify(data: &[u8]) -> Mode {
     if MAGIC.iter().any(|m| data.starts_with(m)) {
         return Mode::Base64;
     }
-    let sample = &data[..SAMPLE_BYTES.min(data.len())];
-    if entropy_millibits(sample) > ENTROPY_LIMIT_MILLIBITS {
+    if data.len() < SAMPLE_BYTES {
+        return Mode::Exact;
+    }
+    if entropy_millibits(&data[..SAMPLE_BYTES]) > ENTROPY_LIMIT_MILLIBITS {
         Mode::Base64
     } else {
         Mode::Exact
@@ -641,6 +756,73 @@ pub fn classify(data: &[u8]) -> Mode {
 /// offsets, so the segmentation stays a function of the input.
 pub const WINDOW_BYTES: usize = 65536;
 
+/// Whether every byte of `data` may appear in a literal payload.
+///
+/// The mask of §9.2.1.2 answers for sixty-four bytes at a time and does not
+/// branch on the data, so this costs about three quarters of a nanosecond a
+/// byte and stops at the first block that says no.
+fn all_admitted(profile: Profile, data: &[u8]) -> bool {
+    let (blocks, tail) = data.as_chunks::<64>();
+    for b in blocks {
+        if profile.mask64(b) != u64::MAX {
+            return false;
+        }
+    }
+    tail.is_empty() || profile.mask_short(tail) == (1u64 << tail.len()) - 1
+}
+
+/// The programme's answer, in closed form, for an input every byte of which
+/// the profile admits and which fits inside the header's reach (§6.1).
+///
+/// Not a second encoder and not an approximation: it is the same segmentation
+/// the programme returns, arrived at by argument instead of by table, and
+/// `the_closed_form_agrees_with_the_programme` checks that byte for byte over
+/// every length it claims.
+///
+/// **The argument.** Adjacent base64 runs are one run (§4) and `ceil` is
+/// superadditive over a split, so an optimum needs at most one base64 run, and
+/// putting it first is what `B` being the smallest symbol asks for. With `B`
+/// base64 bytes and the rest in literals, the cost over `n` is
+///
+/// ```text
+/// extra(B) = ceil(B/3) + cover(n - B),   cover(M) = 2*ceil(M/62) capped at 4
+/// ```
+///
+/// because a literal of at most 62 bytes carries a two-character header and one
+/// of up to 4158 a four-character one (§6.1). Minimising it, and breaking ties
+/// by `B < L < S` from index 0:
+///
+/// * `n <= 6` — `ceil(n/3) <= 2`, so base64 is shorter, or equal at 4, 5 and 6
+///   where `B` takes the tie.
+/// * `7 <= n <= 62` — one literal at `n + 2`, and strictly: any base64 byte
+///   adds at least one character and saves none.
+/// * `63 <= n <= 65` — three base64 bytes cost one character over their own
+///   length and drop the literal from the four-character header band to the
+///   two-character one, which is worth two. Three rather than one or two,
+///   because all three tie and the longest base64 run is the smallest vector.
+/// * `66 <= n <= 68` — the same one band further: six base64 bytes cost two and
+///   still save two, tying with the single four-character literal, and `B < S`
+///   at index 0 decides for the run.
+/// * `69 <= n <= 4158` — one literal at `n + 4`. Below 125 that ties with two
+///   literals of at most 62, and `L < S` at the seam takes the single one; the
+///   `100 = 50 + 50` case §11.1 raises is exactly this.
+///
+/// Above 4158 the partition question is real -- `4238 + 62` costs six header
+/// characters where `4158 + 142` costs eight -- and this declines to answer it.
+fn closed_form(profile: Profile, data: &[u8]) -> Option<(Seg, Option<Seg>)> {
+    let n = data.len();
+    if n == 0 || n > MAX_LITERAL || !all_admitted(profile, data) {
+        return None;
+    }
+    Some(match n {
+        1..=6 => (Seg::Base64(0, n), None),
+        7..=62 => (Seg::Literal(0, n), None),
+        63..=65 => (Seg::Base64(0, 3), Some(Seg::Literal(3, n))),
+        66..=68 => (Seg::Base64(0, 6), Some(Seg::Literal(6, n))),
+        _ => (Seg::Literal(0, n), None),
+    })
+}
+
 /// The segmentation of the whole input: the programme per window, and adjacent
 /// base64 runs joined across the boundaries.
 ///
@@ -653,20 +835,17 @@ fn segment_windowed(data: &[u8], rules: Rules) -> Vec<Seg> {
     let mut segs: Vec<Seg> = Vec::new();
     for start in (0..data.len()).step_by(WINDOW_BYTES) {
         let end = (start + WINDOW_BYTES).min(data.len());
-        let window = &data[start..end];
-        let c = costs(window, rules);
-        for seg in segment_with(window, rules, &c, LiteralEnd::KeyOrder) {
+        let c = costs(&data[start..end], rules);
+        segment_scan(&data[start..end], rules, &c, LiteralEnd::KeyOrder, |seg| {
             let seg = match seg {
                 Seg::Base64(i, j) => Seg::Base64(start + i, start + j),
                 Seg::Literal(i, j) => Seg::Literal(start + i, start + j),
             };
             match (segs.last_mut(), seg) {
-                (Some(Seg::Base64(_, prev_end)), Seg::Base64(i, j)) if *prev_end == i => {
-                    *prev_end = j;
-                }
+                (Some(Seg::Base64(_, prev)), Seg::Base64(i, j)) if *prev == i => *prev = j,
                 _ => segs.push(seg),
             }
-        }
+        });
     }
     segs
 }
@@ -689,10 +868,34 @@ pub fn encode_rules_into(data: &[u8], rules: Rules, out: &mut Vec<u8>) {
         Some(_) => match classify(data) {
             Mode::Base64 => emit_base64(data, out),
             Mode::Exact => {
-                for seg in segment_windowed(data, rules) {
-                    match seg {
-                        Seg::Base64(i, j) => emit_base64(&data[i..j], out),
-                        Seg::Literal(i, j) => emit_literal(&data[i..j], out),
+                // The case §0.1 is about -- a value that is already text --
+                // is also the case the programme has nothing to decide about,
+                // and answering it by argument rather than by table is the
+                // difference between costing four times what base64 costs on
+                // a session id and costing a fifth of it.
+                let mut write = |seg: Seg| match seg {
+                    Seg::Base64(i, j) => emit_base64(&data[i..j], out),
+                    Seg::Literal(i, j) => emit_literal(&data[i..j], out),
+                };
+                match closed_form(rules.profile, data) {
+                    Some((a, b)) => {
+                        write(a);
+                        if let Some(b) = b {
+                            write(b);
+                        }
+                    }
+                    // One window is the common case and needs no list of
+                    // segments at all: the runs inside a window are already
+                    // maximal, so there is no seam to join and the bytes can
+                    // go straight out.
+                    None if data.len() <= WINDOW_BYTES => {
+                        let c = costs(data, rules);
+                        segment_scan(data, rules, &c, LiteralEnd::KeyOrder, write);
+                    }
+                    None => {
+                        for seg in segment_windowed(data, rules) {
+                            write(seg);
+                        }
                     }
                 }
             }
