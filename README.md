@@ -28,9 +28,11 @@ path follows from that.
   of the wire format: every v0.1 stream is a v0.2 stream and the other way
   round. What it settled is what an encoder must *choose* where v0.1 left the
   choice open, and two things a decoder must reject.
-* **`rust/`** — the reference implementation. No dependencies, no unsafe, and
-  written to be read against the specification rather than to be fast: the
-  section numbers are in the comments.
+* **`rust/`** — the reference implementation. No dependencies and no unsafe in
+  the default build, and written to be read against the specification rather
+  than to be fast: the section numbers are in the comments. `--features simd`
+  is the one exception and is off by default; it takes a vectorised base64
+  kernel as a dependency, which has unsafe inside it.
 * **`python/`** — the Python distribution: a PyO3 extension over the same
   crate, packaged with maturin, so what Python runs is byte for byte what a
   Rust caller gets. There is no Python implementation of the format in it, and
@@ -112,6 +114,71 @@ on sixteen, 1.16× on sixty-four, nothing above half a kilobyte.
 `decode_framed` and `decode_url_strict` fix it instead. Auto-detection is a
 convenience for a stream you trust — an attacker who controls the stream
 chooses the mode, and §14 of the specification says so at more length.
+
+## When it is worth it, and when it is not
+
+Measured over 101 samples — the benchmark's short values, its files, its
+synthetic set and the Silesia corpus — `dense` in profile U against base64:
+
+| | share of the samples |
+|---|--:|
+| better than 95 % of base64's size | 39 % |
+| better than 99 % | 54 % |
+| indistinguishable from base64 (≥ 99.9 %) | 31 % |
+
+Summed over all of them it is 98.8 %. That number is not worth much, because
+the samples are not one population but two, and the average describes neither.
+
+**What wins**, and it is one shape:
+
+| sample | bytes | vs base64 |
+|---|--:|--:|
+| a JWT, three segments | 155 | 76.8 % |
+| two ULIDs | 52 | 77.1 % |
+| a SHA-512 digest in hex | 128 | 77.2 % |
+| a git commit id | 40 | 77.8 % |
+| a session id, 40 alphanumerics | 40 | 77.8 % |
+| a UUID | 36 | 79.2 % |
+| an email address | 24 | 90.6 % |
+| `bootstrap.css` | 281 046 | 93.2 % |
+
+**What does not:**
+
+| sample | bytes | vs base64 |
+|---|--:|--:|
+| `dickens` (Silesia, English prose) | 10 192 446 | 99.5 % |
+| `webster` (Silesia) | 41 458 703 | 99.6 % |
+| `sql-wasm.wasm` | 659 730 | 99.9 % |
+| a JPEG, a PNG, random bytes, anything compressed | — | 100.0 % |
+
+The decisive pair is in the corpus twice over: `session_ids_32.bin`, which is
+raw binary session ids, comes out at **100.0 %**; the same thing written as
+text, `28-alnum-session-id-40`, comes out at **77.8 %**. The saving is not
+about binary data at all. It is about **carrying something that is already text
+through a channel that has to accept bytes**.
+
+Which is the point, and the honest way to state the value: base65t is not a
+density format — against the other encodings it is the second worst, ahead of
+base64 alone. What it removes is a decision. A system that wants both usually
+writes "if the value is printable, pass it through, otherwise base64 it, and
+set a flag": three code paths, a flag to get wrong, and no bound on what the
+wrong branch costs. base65t does that per segment, self-describing, with one
+decoder, and with a proof (§9.1 → §9.4) that the answer is never longer than
+base64 would have been.
+
+**So it earns its place where a field must accept arbitrary bytes but usually
+carries text.** URL query and cookie values (profile U goes into both
+unescaped), log fields and debug output (`legible`, where the readable part
+stays readable), cache keys over mixed payloads (`canonical`), and any
+migration that has to decode base64, base64url, padded, unpadded and this,
+with one decoder.
+
+**It does not earn its place** in front of a compressor — measured identical to
+base64 there, 40.6 % either way — nor on high-entropy data, where it is
+byte-identical to base64 by construction, nor anywhere density is the actual
+goal: base91z reaches 37.5 % and base85n 100.7 % where this reaches 132.0 %.
+And §14 names the one place it is strictly behind base64: its decoder parses
+attacker-controlled lengths, and base64's does not.
 
 ## Density
 
