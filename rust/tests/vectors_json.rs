@@ -48,6 +48,7 @@ fn the_published_vectors_are_what_this_encoder_writes() {
         let name = field(line, "name").expect("name");
         let preset = match field(line, "preset").expect("preset") {
             "dense" => Preset::Dense,
+            "dense-fast" => Preset::DenseFast,
             "legible" => Preset::Legible,
             "canonical" => Preset::Canonical,
             "opaque" => Preset::Opaque,

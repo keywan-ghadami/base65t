@@ -100,6 +100,9 @@ pub struct Rules {
     pub min_literal: Option<usize>,
     /// F1 and F2 in force, for a stream that will be carried in frames (§8.2).
     pub framed: bool,
+    /// §9.6: skip the scan over a window whose sample shows too little to
+    /// gain. `dense-fast` and nothing else.
+    pub fast: bool,
     /// λ: thirds of a character a passthrough byte is worth, subtracted from
     /// what a literal costs. Zero is the pure length optimum, which is what
     /// every preset in §9.3 uses; the specification has no other value yet,
@@ -117,6 +120,7 @@ impl Rules {
             profile,
             min_literal,
             framed,
+            fast: false,
             bonus: 0,
             prefer_passthrough: false,
         }
@@ -553,8 +557,28 @@ fn walk_greedy(data: &[u8], rules: Rules, mut take: impl FnMut(Seg)) {
     let mut i = 0; // first position not yet decided
     let mut base = 0; // first byte of the block `lo` describes
     let mut lo = block_mask(data, 0, profile);
+    let mut window = usize::MAX; // the window `scanning` was decided for
+    let mut scanning = true;
 
     while base < n {
+        // §9.6. A window the sample writes off is not masked at all -- that is
+        // the whole saving, and it is why the test is on the window rather
+        // than on each block of it.
+        if rules.fast {
+            let w = base / FAST_WINDOW;
+            if w != window {
+                window = w;
+                scanning = worth_scanning(data, w, rules, lmin);
+            }
+            if !scanning {
+                let end = ((w + 1) * FAST_WINDOW).min(n);
+                i = i.max(end);
+                base = end;
+                lo = block_mask(data, base, profile);
+                continue;
+            }
+        }
+
         // One pass over the input, two blocks in hand: the second is what
         // lets a run that straddles the boundary be judged on the bytes that
         // actually follow it.
@@ -662,6 +686,45 @@ fn runs_at_least_64(mut m: u64, k: usize) -> u64 {
         have += step;
     }
     m
+}
+
+/// §9.6. A window is decided as a whole, and the windows are cut at absolute
+/// offsets, so the decision is a function of the input and not of where an
+/// encoder happened to start.
+pub const FAST_WINDOW: usize = 65536;
+/// The bytes of a window the decision is taken on.
+pub const FAST_SAMPLE: usize = 1024;
+/// A window is scanned when at least this share of its sample goes into
+/// literals, as a fraction: one tenth.
+pub const FAST_SHARE: (usize, usize) = (1, 10);
+
+/// §9.6: is this window worth scanning?
+///
+/// A literal byte saves a third of a character against the four thirds base64
+/// spends on it, so a window whose sample puts a tenth of its bytes into
+/// literals is worth about two and a half per cent of its output -- and the
+/// scan costs about half the encoding time. Below that the trade is bad, and
+/// `dense-fast` declines it. The tenth is not derived from that arithmetic; it
+/// is read off the corpus, where it is the knee: prose gets 1.81x for half a
+/// point of density and a stylesheet, which has real density to lose, is not
+/// touched at all.
+fn worth_scanning(data: &[u8], window: usize, rules: Rules, lmin: usize) -> bool {
+    let start = window * FAST_WINDOW;
+    let end = (start + FAST_WINDOW).min(data.len());
+    let sample = &data[start..(start + FAST_SAMPLE).min(end)];
+    if sample.is_empty() {
+        return false;
+    }
+    let mut plain = rules;
+    plain.fast = false;
+    let mut literal = 0usize;
+    walk_greedy(sample, plain, |seg| {
+        if let Seg::Literal(i, j) = seg {
+            literal += j - i;
+        }
+    });
+    let _ = lmin;
+    literal * FAST_SHARE.1 >= sample.len() * FAST_SHARE.0
 }
 
 /// Bits where a run of at least `k` set bits starts. Doubling, so `log k`

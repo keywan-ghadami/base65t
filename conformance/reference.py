@@ -378,6 +378,57 @@ def encode_dense(data: bytes, profile: str = "U") -> bytes:
     return _encode_linear(data, profile, 11)
 
 
+FAST_WINDOW = 65536       # §9.6
+FAST_SAMPLE = 1024
+FAST_SHARE = (1, 10)
+
+
+def _worth_scanning(data: bytes, window: int, profile: str, lmin: int) -> bool:
+    """§9.6: does the sample of this window show enough to pay for a scan?"""
+    start = window * FAST_WINDOW
+    end = min(start + FAST_WINDOW, len(data))
+    sample = data[start:min(start + FAST_SAMPLE, end)]
+    if not sample:
+        return False
+    literal = sum(j - i for kind, i, j in _linear_segments(sample, profile, lmin, False)
+                  if kind == "L")
+    return literal * FAST_SHARE[1] >= len(sample) * FAST_SHARE[0]
+
+
+def encode_dense_fast(data: bytes, profile: str = "U") -> bytes:
+    """§9.6: `dense`, minus the scan where a sample says it will not pay.
+
+    Windows are cut at absolute offsets and the sample is a fixed prefix, so
+    the answer is a function of the input. A literal may start only in a window
+    the sample kept; once started it runs to the end of its run, window or no
+    window.
+    """
+    n = len(data)
+    lmin = 11
+    keep = [_worth_scanning(data, w, profile, lmin)
+            for w in range((n + FAST_WINDOW - 1) // FAST_WINDOW)]
+    segs, pending, i = [], 0, 0
+    while i < n:
+        if not keep[i // FAST_WINDOW]:
+            i = min((i // FAST_WINDOW + 1) * FAST_WINDOW, n)
+            continue
+        # The same rule as §9.2.1, restricted to starts inside kept windows.
+        run = i
+        while run < n and allows(profile, data[run]):
+            run += 1
+        if run - i >= lmin:
+            j = min(run, i + MAX_LITERAL)
+            if pending < i:
+                segs.append(("B", pending, i))
+            segs.append(("L", i, j))
+            i = pending = j
+        else:
+            i = max(run, i + 1)
+    if pending < n:
+        segs.append(("B", pending, n))
+    return _emit(data, segs)
+
+
 def encode_legible(data: bytes, profile: str = "U") -> bytes:
     return _encode_one(data, profile, 1, passthrough=True)
 
@@ -410,6 +461,7 @@ def encode(data: bytes) -> bytes:
 
 PRESETS = {
     "dense": encode_dense,
+    "dense-fast": encode_dense_fast,
     "legible": encode_legible,
     "canonical": encode_canonical,
     "opaque": encode_opaque,

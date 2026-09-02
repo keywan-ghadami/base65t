@@ -338,7 +338,7 @@ above, which is the useful property.
 
 **Since then there is a second implementation.** `conformance/reference.py` is
 written from v0.2 rather than from the Rust, with a quadratic dynamic programme instead
-of the sliding windows and no shared code; the two agree over all 456 vectors
+of the sliding windows and no shared code; the two agree over all 553 vectors
 and all three profiles, 870 pairs, plus fifteen error cases. That discharges
 most of point 3. What it does not discharge is the part the section is really
 after: both were written by the same person, from the same reading. A third
@@ -670,6 +670,57 @@ encode, and for bulk data the thread split of §9.2.1.1 is nearer and exact. DMA
 moves memory, and this is not a move: the machine copies at 7 GB/s and the
 bottleneck is at 0.8.
 
+## Deciding not to look at all
+
+The question was whether base65t can beat base64 on large inputs, and the last
+answer was: not a vectorised one, because base64 does not look, it only writes.
+That reading was right about the arithmetic and wrong about the options, and
+the sister format had the missing one written down. base91z §11.5 is called
+"Deciding not to scan": sample a window, and where the sample says nothing is
+there to find, put the whole window through the cheap path. Its argument for
+why that is safe to guess at is one sentence -- **a wrong decision costs size,
+never correctness** -- and base65t has the same property to lean on, because a
+window written as plain base64 is exactly base64 and §9.4 holds by definition.
+
+So §9.6, `dense-fast`: windows of 65536 bytes cut at absolute offsets, the
+first kilobyte of each as the sample, and a window whose sample puts less than
+a tenth of its bytes into literals is written without being scanned. Absolute
+offsets and a fixed prefix keep it a function of the input, so §9.0 still
+holds, `docs/vectors.json` carries byte-exact vectors for it, and the thread
+split of §9.2.1.1 still applies.
+
+| file | size `dense` | size `dense-fast` | encoding |
+|---|--:|--:|--:|
+| `random.bin` | 100.0 % | 100.0 % | 1.82x |
+| `dickens` | 99.5 % | 100.0 % | 1.82x |
+| `countries.json` | 99.6 % | 100.0 % | 1.77x |
+| `mozilla` | 98.5 % | 99.2 % | 1.60x |
+| `requests-2.32.3.tar` | 96.9 % | 98.2 % | 1.26x |
+| `bootstrap.css` | 93.2 % | 93.2 % | 0.94x |
+
+The last row is the one that says the rule is right rather than lucky. A
+stylesheet has real density to lose, the sample keeps every window of it,
+nothing is skipped, and the only cost is the sample itself. The decision
+selects itself.
+
+**And it closes the gap the previous entry called structural.** With a
+vectorised writer as well, against a vectorised base64:
+
+| | `dense` | `dense-fast` |
+|---|--:|--:|
+| `random.bin` | 565 % | **105 %** |
+| `countries.json` | 325 % | **114 %** |
+| `dickens` | 455 % | **125 %** |
+
+On input with nothing to find, base65t now writes base64's bytes in base64's
+time. The structural argument stands -- looking costs -- and the answer was not
+to look faster but to stop looking where there is nothing to see.
+
+The threshold is measured and says so: at a twentieth the gain falls to 1.4x,
+at a fifth `bootstrap.css` starts losing density. A tenth is the knee on this
+corpus, on this machine, and it is a number read off a graph rather than
+derived from one.
+
 ## What was not done
 
 * **The `L_min`/`B_min` surface of §9.5.** The throughput measurement itself is
@@ -681,7 +732,7 @@ bottleneck is at 0.8.
   frameworks are still unchecked. (`python/` is the shipped binding over the
   same Rust and is not part of this: a binding cannot disagree with what it
   wraps.)
-* **§16.8** — `docs/vectors.json` carries 456 vectors, past what the section
+* **§16.8** — `docs/vectors.json` carries 553 vectors, past what the section
   asks for; §15 itself still names fifteen, and those are the ones written out
   in a form a reader can check by hand.
 * **The SIMD decoder of §13.1.** This implementation is scalar and is meant to

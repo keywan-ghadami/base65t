@@ -40,7 +40,7 @@ path follows from that.
   which is a different thing from a binding: written from the specification
   rather than from the Rust, a plain quadratic dynamic programme instead of the
   sliding windows of §9.2, no shared code and no shared tables. The two agree
-  byte for byte over all 456 vectors, all five presets and all three profiles —
+  byte for byte over all 553 vectors, all six presets and all three profiles —
   870 pairs — and over fifteen error cases, which counts as much: agreeing
   about valid streams and not about invalid ones is not agreeing about the
   format. The gap that stays open is that both have the same author.
@@ -53,7 +53,7 @@ path follows from that.
   version and the decisions taken against it, kept because they carry the
   reasoning v0.2 only states. `PREREGISTRATION.md` is the measurement rule for
   the two decisions that needed one, written before the run.
-* **`docs/vectors.json`** — 456 vectors over every preset and profile, as input
+* **`docs/vectors.json`** — 553 vectors over every preset and profile, as input
   and expected stream in hex, so a second implementation can discharge §16.3
   without reading any of this code.
 
@@ -73,14 +73,18 @@ read out of the stream and reported back, because they are properties of the
 stream, while the profile is a statement about the container the stream is
 going into and cannot be derived from it.
 
-**Five presets**, all the same format and all read by the same decoder:
+**Six presets**, all the same format and all read by the same decoder:
 `dense` (the default: one forward scan, constant memory, 0.2 % off the shortest
 encoding over the corpus and about ten times faster to produce), `legible`
 (readability at no cost in size: the shortest encoding, and among the shortest
 the one that leaves the most bytes readable), `canonical` (the shortest
 encoding, for cache keys),
 `opaque` (never a literal, byte-identical to unpadded base64url, for tokens
-that carry a secret) and `framed` (fixed-size frames, for random access).
+that carry a secret), `framed` (fixed-size frames, for random access) and
+`dense-fast` (§9.6: `dense`, minus the looking in windows where a sample says
+the looking will not pay — 1.3× to 1.8× the encoding speed for nought to 1.3
+points of density, and where there is real density to lose the sample keeps
+every window and nothing is skipped).
 
 All five are deterministic — the output of a preset is a function of input,
 preset and profile (§9.0). What separates them is whether that function carries
@@ -88,7 +92,7 @@ parameters: `dense` and `framed` do (`L ≥ 11`, frame size), and §9.5
 may still move them; `canonical`, `legible` and `opaque` do not and are frozen.
 That is why cache keys belong to `canonical` and not to `dense`.
 
-**Four of the five are never longer than base64** — per input, not on average
+**All but `framed` are never longer than base64** — per input, not on average
 (§9.4). `framed` is the exception, at five characters per frame. And on
 high-entropy input `dense` does not merely match base64's length: it writes the
 same bytes.
@@ -155,12 +159,15 @@ way — so it is a speed switch like the thread count, and it is off by default
 so the reference build stays dependency-free and readable. On eight megabytes
 it takes encoding from 113 % of a scalar base64's time to 80 %.
 
-Against a *vectorised* base64 it is 3.5× slower on high-entropy input, and that
-is structural rather than fixable: base64 does not look, it only writes.
-base65t has to read the input to know whether a literal is in it, and on input
-where none is, that reading is pure overhead. Where literals do come off, it
-wins for the same reason it is smaller — §13.1.1 of the specification has the
-numbers.
+Against a *vectorised* base64 it is 3.5× slower on high-entropy input, and the
+reason is structural: base64 does not look, it only writes. base65t has to read
+the input to know whether a literal is in it, and on input where none is, that
+reading is pure overhead.
+
+Which is what `dense-fast` declines to do. With both — `--features simd` and
+the preset — the gap closes to **105 %** of a vectorised base64 on random
+bytes, 114 % on JSON, 125 % on prose, where `dense` sits at 565 %, 325 % and
+455 %. §13.1.1 and §9.6 of the specification have the numbers.
 
 The last row is what a protocol that compresses actually sees: the input is
 high-entropy by then, `dense` writes the same bytes base64url would, and what

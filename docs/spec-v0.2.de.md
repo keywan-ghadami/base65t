@@ -28,14 +28,14 @@ deren Anhang und in `PREREGISTRATION.md`.
 | 2, 13 | Durchsatz ist ein **Ziel**, kein Nicht-Ziel. Was das heißt und was nicht, steht in §13.2 |
 | 9.2, 9.2.1 | `dense` und `framed` sind durch eine **lineare Regel** definiert, nicht durch das Programm aus §9.2.2. Ein Durchlauf, konstanter Speicher, und §9.1 zeigt, dass sie §9.4 nicht verletzen kann |
 | 9.3 | `legible` hat eine Zielfunktion statt eines Schwellwerts. Die Spalte „Determinismus" wird zu „parameterfrei" |
-| 9.4 | Gilt für vier der fünf Presets statt für eines. Die Ausnahme `framed` ist beziffert |
+| 9.4 | Gilt für alle Presets außer `framed` statt für eines. Die Ausnahme ist beziffert |
 | 10.1 | Vierte Implementierungsfalle: die Marker-Prüfung aus §10.3 braucht eine Längenprüfung |
 | 11, 11.1 | Der Encoder ist jetzt eine Funktion. Die *Berechnung* in §11.1 war falsch und ist korrigiert; ihre O(n)-Zusage gilt der Kostentabelle |
 | 12 | Die Binärzeile ist eine Aussage über Profil U und T |
 | 15 | TV2, TV5a und TV11 korrigiert; TV13–TV15 neu |
 | 16 | Nachweis 3 und 6 sind erbracht, mit benannten Lücken; 5 ist nicht mehr bindend |
 | 7 | Profil T enthält das Leerzeichen — der Zusatz, den der Container-Test hervorgebracht hat |
-| 9.5 | Als Formatfrage geschlossen: eine Messung darf ein Preset nie ändern, nur eines hinzufügen |
+| 9.5, 9.6 | Als Formatfrage geschlossen: eine Messung darf ein Preset nie ändern, nur eines hinzufügen — und genau das ist mit `dense-fast` (§9.6) geschehen |
 | 13.2 | Die erfundenen Durchsatz-Schwellwerte sind durch ein gemessenes Kriterium ersetzt |
 
 ---
@@ -44,12 +44,13 @@ deren Anhang und in `PREREGISTRATION.md`.
 
 ### 0.1 Format und Presets
 
-Base65t ist **ein Format** mit **fünf Presets**. Die Trennung ist wichtig, weil die
+Base65t ist **ein Format** mit **sechs Presets**. Die Trennung ist wichtig, weil die
 Zielkontexte unterschiedliche Optimierungsziele haben.
 
 ```
 base65t                      # Format: Segmente, Alphabet, Profile, Framing
 ├── dense       (Default)    # klein und schnell         -> URL, Header, allgemein
+├── dense-fast               # dasselbe, ohne zu suchen, wo Suchen nichts bringt
 ├── legible                  # bevorzugt Lesbarkeit      -> Logs, Debug
 ├── canonical                # minimale Größe, byte-identisch -> Cache-Keys, Dedup
 ├── opaque                   # garantiert keine Literale -> Tokens mit Geheimnisanteil
@@ -64,6 +65,7 @@ base65t                      # Format: Segmente, Alphabet, Profile, Framing
 | Token mit Secret | `opaque` | — | keine Klartext-Leaks (§14) |
 | Cache-/Dedup-Key | `canonical` | wie Container | byteweiser Determinismus (§11.1), kürzeste Ausgabe |
 | Log-Feld | `legible` | T | Lesbarkeit vor Größe |
+| Massendaten, Durchsatz | `dense-fast` | U | so groß wie `dense`, nur wo Suchen sich lohnt (§9.6) |
 
 ### 0.2 Was Base65t *ist*, in einem Satz
 
@@ -461,7 +463,7 @@ Es gibt zwei Wege dahin, und Base65t geht beide:
 > nach §9.3 eine eigene Zielfunktion hat.
 
 Damit kann ein Testvektor Bytes prüfen statt nur Längen — was §16.8 braucht und
-was `docs/vectors.json` über 456 Vektoren tut.
+was `docs/vectors.json` über 553 Vektoren tut.
 
 ### 9.1 Schwellwert
 
@@ -733,6 +735,7 @@ Header, also gibt es dort keine offene Naht.
 | Preset | Zielfunktion | Framing | Alphabet | parameterfrei |
 |--------|--------------|---------|----------|---------------|
 | `dense` (Default) | die lineare Regel, Literale ab `L ≥ 11` (§9.2.1) | Plain | URL | nein |
+| `dense-fast` | wie `dense`, aber nur in Fenstern, die eine Stichprobe behält (§9.6) | Plain | URL | nein |
 | `legible` | kürzeste, darunter die mit dem größten Klartextanteil | Plain | URL | **ja** |
 | `canonical` | kürzeste, darunter die kleinste nach §11.1 | Plain | URL | **ja** |
 | `opaque` | nie Literale (= Base64URL) | Plain | URL | **ja** |
@@ -741,7 +744,7 @@ Header, also gibt es dort keine offene Naht.
 Ein Aufruf ohne Preset MUSS `dense` + Profil U liefern. Bibliotheken SOLLTEN genau
 eine parameterlose `encode`-Funktion exportieren.
 
-**Alle fünf sind deterministisch** — das folgt aus §9.0 und ist kein
+**Alle sechs sind deterministisch** — das folgt aus §9.0 und ist kein
 Unterscheidungsmerkmal mehr. Was sie trennt, ist die letzte Spalte: `dense` und
 `framed` tragen Parameter (`L ≥ 11`, Framegröße), die §9.5 noch bewegen könnte;
 ihre Ausgabe ist deterministisch, **solange diese Parameter stehen**.
@@ -765,7 +768,7 @@ Log-Feld (§0.1) die richtige Richtung ist.
 
 ### 9.4 Nie-schlechter-Garantie (normativ)
 
-Für `dense`, `legible`, `canonical` und `opaque` MUSS gelten:
+Für `dense`, `dense-fast`, `legible`, `canonical` und `opaque` MUSS gelten:
 
 ```
 len(encode(x)) <= ceil(4 * len(x) / 3)
@@ -781,6 +784,9 @@ len(encode(x)) <= ceil(4 * len(x) / 3)
   Bytes, und die dortige Rechnung zeigt, dass die schon einzeln nicht verlieren
   können, unabhängig davon, wie viele es sind und wo sie liegen. `dense`
   optimiert nichts und hält die Garantie trotzdem.
+* Für `dense-fast` folgt sie aus beidem: ein übersprungenes Fenster ist
+  **exakt Base64**, ein durchsuchtes gehorcht §9.1. Deshalb kann eine falsche
+  Stichprobe Größe kosten und nie die Garantie (§9.6).
 
 **Schärfer, und der eigentliche Grund für die Umstellung:** auf hochentropen
 Daten findet kein Literal einen Platz, und `dense` schreibt dann nicht nur
@@ -853,8 +859,12 @@ Ergebnis ist die Fläche `(L_min, B_min) → (Dichte, Durchsatz)` über den Korp
 > daraus ein **neues** Preset (etwa `dense-fast`), nie eine neue Fassung von
 > `dense`.
 
+Genau das ist eingetreten, mit einem anderen Hebel als hier erwartet: nicht
+`L_min` und nicht `B_min`, sondern die Frage, ob überhaupt gesucht wird. §9.6
+ist das Preset, das diese Regel vorsieht, und es heißt wie hier vermutet.
+
 Damit ist §9.5 als Formatfrage geschlossen, ohne dass die Messung ihren Wert
-verliert. Der Grund ist nicht Bequemlichkeit: `docs/vectors.json` führt 456
+verliert. Der Grund ist nicht Bequemlichkeit: `docs/vectors.json` führt 553
 byte-exakte Vektoren, und Cache-Keys, Dedup-Keys und Content-Adressen hängen an
 genau diesen Bytes. Ein Preset, das sich später bewegt, bricht sie still.
 
@@ -862,9 +872,70 @@ Für `dense` heißt das konkret: `L_min` bleibt bei **11**, hergeleitet in §9.1
 und nicht gemessen, und `B_min` bleibt **aus**. Ein `B_min > 1` erkauft
 Durchsatz mit Größe. Durchsatz ist zwar ein Ziel (§13.2), aber Größe ist in §9.4
 normativ, und ein Tausch in diese Richtung braucht einen Beleg — das Ergebnis
-ist dann ein eigenes Preset. Damit sind **alle fünf Presets eingefroren**, und die Spalte in §9.3
+ist dann ein eigenes Preset. Damit sind **alle Presets eingefroren**, und die Spalte in §9.3
 sagt nur noch, ob die Definition Parameter *enthält*, nicht ob sie sich noch
 bewegen kann.
+
+### 9.6 `dense-fast`: nicht hinschauen, wo Hinschauen nichts bringt (normativ)
+
+§9.2.1 muss die Eingabe lesen, um zu erfahren, ob ein Literal darin steckt. Wo
+keines steckt — und das ist alles, was ein Kompressor liefert —, ist dieses
+Lesen Arbeit ohne Gegenwert. Gemessen kostet es rund die Hälfte der Kodierzeit.
+
+> **Regel.** Die Eingabe wird in **Fenster von 65536 Bytes** geschnitten, an
+> absoluten Offsets ab Eingabeanfang. Für jedes Fenster ist die **Stichprobe**
+> seine ersten **1024 Bytes** (oder das ganze Fenster, wenn es kürzer ist).
+> Ein Encoder wendet §9.2.1 auf die Stichprobe an; gehen dabei **weniger als
+> ein Zehntel** ihrer Bytes in Literale, MUSS das ganze Fenster ohne Scan als
+> Base64 geschrieben werden. Andernfalls gilt §9.2.1 für das Fenster
+> unverändert. Ein Literal DARF nur in einem behaltenen Fenster **beginnen**;
+> einmal begonnen, läuft es bis zum Ende seines Laufs, über Fenstergrenzen
+> hinweg.
+
+**Die Ausgabe bleibt eine Funktion der Eingabe.** Fenstergrenzen liegen an
+absoluten Offsets, die Stichprobe ist ein fester Präfix, die Schwelle ist eine
+Zahl — es gibt nichts zu raten und nichts, was von der Aufrufreihenfolge
+abhinge. §9.0 gilt also unverändert, `docs/vectors.json` führt auch für dieses
+Preset byte-exakte Vektoren, und die Aufteilung aus §9.2.1.1 bleibt gültig.
+
+**Eine falsche Entscheidung kostet Größe, nie Korrektheit.** Ein
+übersprungenes Fenster ist exakt Base64URL, also greift §9.4 in jedem Fall. Das
+ist die Eigenschaft, die es erlaubt, hier überhaupt zu raten — dieselbe
+Begründung, die base91z in seinem §11.5 für dieselbe Entscheidung gibt.
+
+**Je Fenster und nicht je Strom**, aus dem Grund, den base91z ebenfalls nennt:
+ein `tar` wechselt alle paar hundert Bytes zwischen Textkopf, komprimiertem
+Element und Nullpolsterung, und eine Entscheidung am Anfang wäre für den
+größten Teil falsch.
+
+**Was es bringt und kostet**, über den Korpus, gegen `dense`:
+
+| Datei | Größe `dense` | Größe `dense-fast` | Kodieren |
+|---|--:|--:|--:|
+| `random.bin` | 100,0 % | 100,0 % | **1,82×** |
+| `dickens` (Silesia) | 99,5 % | 100,0 % | **1,82×** |
+| `countries.json` | 99,6 % | 100,0 % | **1,77×** |
+| `mozilla` (Silesia) | 98,5 % | 99,2 % | **1,60×** |
+| `webster` (Silesia) | 99,6 % | 100,0 % | **1,47×** |
+| `requests-2.32.3.tar` | 96,9 % | 98,2 % | **1,26×** |
+| `bootstrap.css` | 93,2 % | 93,2 % | 0,94× |
+
+Die letzte Zeile ist die wichtige: wo wirklich Dichte zu holen ist, behält die
+Stichprobe jedes Fenster, und dann kostet sie ihre eigenen sechs Prozent. Die
+Entscheidung wählt sich selbst aus.
+
+**Zum Zehntel.** Es ist gemessen, nicht hergeleitet. Ein Literal-Byte spart ein
+Drittel Zeichen gegen die vier Drittel, die Base64 dafür ausgibt, ein Zehntel
+Literalanteil ist also rund 2,5 % der Ausgabe — aber welcher Anteil den Scan
+lohnt, hängt daran, was der Scan kostet, und das ist eine Maschineneigenschaft.
+Über den Korpus liegt das Knie bei einem Zehntel: bei einem Zwanzigstel fällt
+der Gewinn auf 1,4×, bei einem Fünftel fängt `bootstrap.css` an, Dichte zu
+verlieren.
+
+**Mit einem vektorisierten Base64-Schreiber zusammen** (§13.1.1) ist das der
+Punkt, an dem der Abstand verschwindet: auf `random.bin` schreibt `dense-fast`
+dieselben Bytes wie Base64 in 105 % der Zeit, auf `countries.json` in 114 %, wo
+`dense` bei 565 % und 325 % liegt. Wer nicht sucht, muss nicht suchen.
 
 ## 10. Dekoder
 
@@ -1678,8 +1749,8 @@ belegt:
    `rust/` und `conformance/reference.py`, die zweite aus diesem Dokument
    geschrieben,
    mit einem quadratischen DP statt der Schiebefenster aus §9.2 und ohne eine
-   Zeile gemeinsamen Code. Sie stimmen über alle 456 Vektoren, alle fünf
-   Presets und alle drei Profile byteweise überein — 870 Paare — und über
+   Zeile gemeinsamen Code. Sie stimmen über alle 553 Vektoren, alle sechs
+   Presets und alle drei Profile byteweise überein — 1044 Paare — und über
    fünfzehn Fehlerfälle dazu, was ebenso zählt: wer sich über gültige Ströme
    einig ist und über ungültige nicht, ist sich über das Format nicht einig.
    Über den Vektorsatz hinaus kodieren beide dieselbe Viertelmegabyte-Eingabe
@@ -1713,8 +1784,8 @@ Ergänzende Arbeiten, nicht normativ:
    dieselbe Menge, damit ein Python-Aufrufer byteweise dasselbe bekommt wie ein
    Rust-Aufrufer. Ein Binding ist ausdrücklich **keine** zweite Implementierung
    im Sinne von Nachweis 3 — es kann der ersten gar nicht widersprechen.
-8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 456
-   Vektoren über alle fünf Presets und alle drei Profile, jeder als Eingabe und
+8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 553
+   Vektoren über alle sechs Presets und alle drei Profile, jeder als Eingabe und
    erwarteter Strom in Hex. Der Fuzzing-Korpus für alle zwölf Fehlercodes
    liegt in der Testsuite der Referenzimplementierung.
 

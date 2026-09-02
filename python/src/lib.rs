@@ -71,12 +71,14 @@ fn profile_of(name: &str) -> PyResult<Profile> {
 fn preset_of(name: &str) -> PyResult<Preset> {
     match name {
         "dense" => Ok(Preset::Dense),
+        "dense-fast" => Ok(Preset::DenseFast),
         "legible" => Ok(Preset::Legible),
         "canonical" => Ok(Preset::Canonical),
         "opaque" => Ok(Preset::Opaque),
         "framed" => Ok(Preset::Framed),
         other => Err(PyValueError::new_err(format!(
-            "preset is one of dense, legible, canonical, opaque, framed, not {other:?}"
+            "preset is one of dense, dense-fast, legible, canonical, opaque, framed, \
+             not {other:?}"
         ))),
     }
 }
@@ -238,8 +240,13 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("MAX_LITERAL", base65t::MAX_LITERAL)?;
     m.add("MAX_FRAME_BODY", base65t::MAX_FRAME_BODY)?;
     m.add("MIN_LITERAL", base65t::MIN_LITERAL)?;
+    m.add("FAST_WINDOW", base65t::FAST_WINDOW)?;
+    m.add("FAST_SAMPLE", base65t::FAST_SAMPLE)?;
     m.add("FRAME_BYTES", base65t::FRAME_BYTES)?;
-    m.add("PRESETS", vec!["dense", "legible", "canonical", "opaque", "framed"])?;
+    m.add(
+        "PRESETS",
+        vec!["dense", "dense-fast", "legible", "canonical", "opaque", "framed"],
+    )?;
     m.add("PROFILES", vec!["U", "T", "B"])?;
 
     m.add(
@@ -257,6 +264,8 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "MAX_LITERAL",
             "MAX_FRAME_BODY",
             "MIN_LITERAL",
+            "FAST_WINDOW",
+            "FAST_SAMPLE",
             "FRAME_BYTES",
             "SPEC_VERSION",
             "__version__",

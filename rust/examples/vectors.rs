@@ -102,8 +102,9 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
 }
 
 fn main() {
-    let presets: [(&str, Preset); 5] = [
+    let presets: [(&str, Preset); 6] = [
         ("dense", Preset::Dense),
+        ("dense-fast", Preset::DenseFast),
         ("legible", Preset::Legible),
         ("canonical", Preset::Canonical),
         ("opaque", Preset::Opaque),
