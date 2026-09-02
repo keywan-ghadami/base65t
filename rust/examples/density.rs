@@ -101,7 +101,6 @@ fn main() {
     println!("\nPresets on the mixed input (70 % text):");
     for (name, out) in [
         ("dense", encode_dense(&mix30, Profile::U)),
-        ("legible", encode_legible(&mix30, Profile::U)),
         ("canonical", encode_canonical(&mix30, Profile::U)),
         ("opaque", encode_opaque(&mix30)),
         ("framed", encode_framed(&mix30, Profile::U)),

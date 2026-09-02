@@ -6,8 +6,8 @@
 //!
 //! The guarantee is what makes the format a drop-in rather than a trade, so it
 //! is checked over everything the round-trip corpus holds and not only over
-//! the cases it was designed for. §9.4 exempts `legible` and `framed`; only
-//! one of those exemptions turns out to be needed, and the test says which.
+//! the cases it was designed for. §9.4 exempts only `framed`, and the test
+//! that measures that exemption says by how much.
 
 use base65t::*;
 
@@ -95,7 +95,6 @@ fn the_guarantee_covers_four_of_the_five_presets() {
         for profile in [Profile::U, Profile::T, Profile::B] {
             for (preset, out) in [
                 ("dense", encode_dense(&data, profile)),
-                ("legible", encode_legible(&data, profile)),
                 ("canonical", encode_canonical(&data, profile)),
                 ("opaque", encode_opaque(&data)),
             ] {
@@ -134,19 +133,6 @@ fn only_framed_is_exempt_and_by_how_much() {
                 framed.len()
             );
         }
-    }
-}
-
-/// §9.4 does not extend the guarantee to `legible`, but under §9.0's objective
-/// — the shortest of the valid segmentations — `legible` cannot exceed it
-/// either: pure base64 is always a candidate. The exemption is only needed by
-/// an encoder that prefers literals for their own sake, and §9.3 defines
-/// `legible` as a threshold rather than as such a preference. See FINDINGS.md.
-#[test]
-fn legible_does_not_need_its_exemption() {
-    for (name, data) in corpus() {
-        let out = encode_legible(&data, Profile::U);
-        assert!(out.len() <= base64_len(data.len()), "{name}");
     }
 }
 
@@ -192,71 +178,6 @@ fn high_entropy_input_encodes_at_the_base64_ratio() {
     let out = encode_dense(&data, Profile::U);
     assert_eq!(out.len(), base64_len(data.len()));
     assert_eq!(out, encode_opaque(&data));
-}
-
-/// Bytes a reader can see without decoding: the payloads of the literal
-/// segments. Walked out of the stream rather than taken from the encoder, so
-/// that what is checked is the stream and not a number beside it.
-fn passthrough(stream: &[u8]) -> usize {
-    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let value = |c: u8| A.iter().position(|&x| x == c).expect("alphabet");
-    let mut total = 0;
-    let mut pos = 0;
-    while pos < stream.len() {
-        if stream[pos] == b'~' {
-            let l1 = value(stream[pos + 1]);
-            let (len, header) = if l1 == 63 {
-                (
-                    63 + (value(stream[pos + 2]) << 6) + value(stream[pos + 3]),
-                    4,
-                )
-            } else {
-                (l1, 2)
-            };
-            total += len;
-            pos += header + len;
-        } else {
-            pos += 1;
-        }
-    }
-    total
-}
-
-/// What `legible` is, after the errata: the shortest encoding, and among the
-/// shortest the one that leaves the most bytes readable (E4). Both halves are
-/// normative now, so both are checked — the second one against the rule
-/// `dense` and `canonical` use, which is what it has to beat to be worth a
-/// preset of its own.
-#[test]
-fn legible_is_readability_at_no_cost_in_size() {
-    let mut ahead = 0usize;
-    let mut inputs = 0usize;
-    for (name, data) in corpus() {
-        if data.is_empty() {
-            continue;
-        }
-        for profile in [Profile::U, Profile::T] {
-            let legible = encode_legible(&data, profile);
-            let dense = encode_dense(&data, profile);
-            let canonical = encode_canonical(&data, profile);
-
-            // Never longer than base64 — §9.4 now covers `legible` too.
-            assert!(legible.len() <= base64_len(data.len()), "{name}");
-            // And never longer than the length-optimal encoding without a
-            // threshold, because it *is* one of those.
-            assert_eq!(legible.len(), canonical.len(), "{name}, {profile:?}");
-            assert!(legible.len() <= dense.len(), "{name}, {profile:?}");
-
-            inputs += 1;
-            if passthrough(&legible) < passthrough(&canonical) {
-                ahead += 1;
-            }
-        }
-    }
-    // The passthrough claim is a property of the objective, not of the corpus:
-    // maximising it among equal-length segmentations cannot come out behind on
-    // any single input.
-    assert_eq!(ahead, 0, "{ahead} of {inputs} inputs were less readable");
 }
 
 /// The case the benchmark found within a minute of being pointed at a real

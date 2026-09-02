@@ -42,7 +42,7 @@ path follows from that.
   which is a different thing from a binding: written from the specification
   rather than from the Rust, a plain quadratic dynamic programme instead of the
   sliding windows of §9.2, no shared code and no shared tables. The two agree
-  byte for byte over all 553 vectors, all six presets and all three profiles —
+  byte for byte over all 449 vectors, all five presets and all three profiles —
   870 pairs — and over fifteen error cases, which counts as much: agreeing
   about valid streams and not about invalid ones is not agreeing about the
   format. The gap that stays open is that both have the same author.
@@ -55,7 +55,7 @@ path follows from that.
   version and the decisions taken against it, kept because they carry the
   reasoning v0.2 only states. `PREREGISTRATION.md` is the measurement rule for
   the two decisions that needed one, written before the run.
-* **`docs/vectors.json`** — 553 vectors over every preset and profile, as input
+* **`docs/vectors.json`** — 449 vectors over every preset and profile, as input
   and expected stream in hex, so a second implementation can discharge §16.3
   without reading any of this code.
 
@@ -75,12 +75,10 @@ read out of the stream and reported back, because they are properties of the
 stream, while the profile is a statement about the container the stream is
 going into and cannot be derived from it.
 
-**Six presets**, all the same format and all read by the same decoder:
+**Five presets**, all the same format and all read by the same decoder:
 `dense` (the default: one forward scan, constant memory, 0.2 % off the shortest
-encoding over the corpus and about ten times faster to produce), `legible`
-(readability at no cost in size: the shortest encoding, and among the shortest
-the one that leaves the most bytes readable), `canonical` (the shortest
-encoding, for cache keys),
+encoding over the corpus and about ten times faster to produce), `canonical`
+(the shortest encoding, for cache keys),
 `opaque` (never a literal, byte-identical to unpadded base64url, for tokens
 that carry a secret), `framed` (fixed-size frames, for random access) and
 `dense-fast` (§9.6: `dense`, minus the looking in windows where a sample says
@@ -91,7 +89,7 @@ every window and nothing is skipped).
 All five are deterministic — the output of a preset is a function of input,
 preset and profile (§9.0). What separates them is whether that function carries
 parameters: `dense` and `framed` do (`L ≥ 11`, frame size), and §9.5
-may still move them; `canonical`, `legible` and `opaque` do not and are frozen.
+may still move them; `canonical` and `opaque` do not and are frozen.
 That is why cache keys belong to `canonical` and not to `dense`.
 
 **All but `framed` are never longer than base64** — per input, not on average
@@ -168,7 +166,7 @@ base64 would have been.
 
 **So it earns its place where a field must accept arbitrary bytes but usually
 carries text.** URL query and cookie values (profile U goes into both
-unescaped), log fields and debug output (`legible`, where the readable part
+unescaped), log fields and debug output (profile T, where the readable part
 stays readable), cache keys over mixed payloads (`canonical`), and any
 migration that has to decode base64, base64url, padded, unpadded and this,
 with one decoder.

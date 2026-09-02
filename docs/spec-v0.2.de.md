@@ -27,7 +27,8 @@ deren Anhang und in `PREREGISTRATION.md`.
 | 9.0 | Bei Längengleichstand ist die Segmentierung vorgeschrieben, nicht freigestellt |
 | 2, 13 | Durchsatz ist ein **Ziel**, kein Nicht-Ziel. Was das heißt und was nicht, steht in §13.2 |
 | 9.2, 9.2.1 | `dense` und `framed` sind durch eine **lineare Regel** definiert, nicht durch das Programm aus §9.2.2. Ein Durchlauf, konstanter Speicher, und §9.1 zeigt, dass sie §9.4 nicht verletzen kann |
-| 9.3 | `legible` hat eine Zielfunktion statt eines Schwellwerts. Die Spalte „Determinismus" wird zu „parameterfrei" |
+| 9.3 | Die Spalte „Determinismus" wird zu „parameterfrei" |
+| 9.3, 15 | **`legible` ist gestrichen.** Sein Tie-Break brauchte eine zweite Kostenkomponente, und deren lexikografischer Vergleich kostete das Programm aus §9.2 zwischen 60 und 190 % — bei *jedem* Preset, auch den vieren, die ihn nie verlangt haben. TV14 ist zurückgezogen |
 | 9.4 | Gilt für alle Presets außer `framed` statt für eines. Die Ausnahme ist beziffert |
 | 10.1 | Vierte Implementierungsfalle: die Marker-Prüfung aus §10.3 braucht eine Längenprüfung |
 | 11, 11.1 | Der Encoder ist jetzt eine Funktion. Die *Berechnung* in §11.1 war falsch und ist korrigiert; ihre O(n)-Zusage gilt der Kostentabelle |
@@ -44,14 +45,13 @@ deren Anhang und in `PREREGISTRATION.md`.
 
 ### 0.1 Format und Presets
 
-Base65t ist **ein Format** mit **sechs Presets**. Die Trennung ist wichtig, weil die
+Base65t ist **ein Format** mit **fünf Presets**. Die Trennung ist wichtig, weil die
 Zielkontexte unterschiedliche Optimierungsziele haben.
 
 ```
 base65t                      # Format: Segmente, Alphabet, Profile, Framing
 ├── dense       (Default)    # klein und schnell         -> URL, Header, allgemein
 ├── dense-fast               # dasselbe, ohne zu suchen, wo Suchen nichts bringt
-├── legible                  # bevorzugt Lesbarkeit      -> Logs, Debug
 ├── canonical                # minimale Größe, byte-identisch -> Cache-Keys, Dedup
 ├── opaque                   # garantiert keine Literale -> Tokens mit Geheimnisanteil
 └── framed                   # wahlfreier Zugriff        -> Storage, Streams
@@ -64,7 +64,7 @@ base65t                      # Format: Segmente, Alphabet, Profile, Framing
 | HTTP-Header | `dense` | U oder T | ASCII, keine Trennzeichen |
 | Token mit Secret | `opaque` | — | keine Klartext-Leaks (§14) |
 | Cache-/Dedup-Key | `canonical` | wie Container | byteweiser Determinismus (§11.1), kürzeste Ausgabe |
-| Log-Feld | `legible` | T | Lesbarkeit vor Größe |
+| Log-Feld | `dense` | T | dort bleibt der Text lesbar (§13) |
 | Massendaten, Durchsatz | `dense-fast` | U | so groß wie `dense`, nur wo Suchen sich lohnt (§9.6) |
 
 ### 0.2 Was Base65t *ist*, in einem Satz
@@ -456,14 +456,13 @@ Es gibt zwei Wege dahin, und Base65t geht beide:
 * **Eine Regel, die nur eine Segmentierung erzeugt.** So sind `dense` und
   `framed` definiert (§9.2.1): ein Vorwärtsdurchlauf ohne Wahlfreiheit.
 * **Eine Zielfunktion plus eine Ordnung für Gleichstände.** So sind
-  `canonical`, `legible` und `opaque` definiert. Für sie gilt:
+  `canonical` und `opaque` definiert. Für sie gilt:
 
 > Haben mehrere gültige Segmentierungen dieselbe Länge, MUSS ein Encoder die
-> nach der Ordnung aus §11.1 kleinste wählen. Ausgenommen ist `legible`, das
-> nach §9.3 eine eigene Zielfunktion hat.
+> nach der Ordnung aus §11.1 kleinste wählen.
 
 Damit kann ein Testvektor Bytes prüfen statt nur Längen — was §16.8 braucht und
-was `docs/vectors.json` über 553 Vektoren tut.
+was `docs/vectors.json` über 449 Vektoren tut.
 
 ### 9.1 Schwellwert
 
@@ -497,7 +496,7 @@ lineare Regel sein.
 ### 9.2 Optimale Segmentierung — Herleitung
 
 Dieser Abschnitt leitet die **längenoptimale** Segmentierung her. Sie ist die
-Definition von `canonical`, `legible` und `opaque`. `dense` und `framed`
+Definition von `canonical` und `opaque`. `dense` und `framed`
 benutzen sie **nicht**; sie sind in §9.2.1 durch eine lineare Regel definiert,
 und §9.2.2 fasst zusammen, was sie dafür aufgeben und was nicht.
 
@@ -736,7 +735,6 @@ Header, also gibt es dort keine offene Naht.
 |--------|--------------|---------|----------|---------------|
 | `dense` (Default) | die lineare Regel, Literale ab `L ≥ 11` (§9.2.1) | Plain | URL | nein |
 | `dense-fast` | wie `dense`, aber nur in Fenstern, die eine Stichprobe behält (§9.6) | Plain | URL | nein |
-| `legible` | kürzeste, darunter die mit dem größten Klartextanteil | Plain | URL | **ja** |
 | `canonical` | kürzeste, darunter die kleinste nach §11.1 | Plain | URL | **ja** |
 | `opaque` | nie Literale (= Base64URL) | Plain | URL | **ja** |
 | `framed` | wie `dense`, Frames à 65536 (§8.1) | Framed | URL | nein |
@@ -744,11 +742,11 @@ Header, also gibt es dort keine offene Naht.
 Ein Aufruf ohne Preset MUSS `dense` + Profil U liefern. Bibliotheken SOLLTEN genau
 eine parameterlose `encode`-Funktion exportieren.
 
-**Alle sechs sind deterministisch** — das folgt aus §9.0 und ist kein
+**Alle fünf sind deterministisch** — das folgt aus §9.0 und ist kein
 Unterscheidungsmerkmal mehr. Was sie trennt, ist die letzte Spalte: `dense` und
 `framed` tragen Parameter (`L ≥ 11`, Framegröße), die §9.5 noch bewegen könnte;
 ihre Ausgabe ist deterministisch, **solange diese Parameter stehen**.
-`canonical`, `legible` und `opaque` haben keine, sind also eingefroren. Deshalb
+`canonical` und `opaque` haben keine, sind also eingefroren. Deshalb
 gehören Cache-Keys an `canonical` und nicht an `dense` (§11.1).
 
 **`dense` ist nicht die kürzeste Ausgabe, `canonical` ist es.** Das ist neu in
@@ -758,17 +756,20 @@ kürzeste Ausgabe braucht und die Eingabe klein ist — ein Cache-Key, ein
 Log-Feld, eine URL —, nimmt `canonical`. Die Nie-schlechter-Garantie aus §9.4
 gilt für beide.
 
-**`legible` hat keinen Schwellwert.** Ein Schwellwert kann Ausgaben nicht
-lesbarer machen: die Zielfunktion bleibt nach §9.0 die Länge, also wird ein
-Literal, das etwas kostet, nie gewählt. `legible` minimiert deshalb die Länge
-und wählt unter den längengleichen Segmentierungen die mit dem größten
-Klartextanteil. Das kostet nichts an Größe und bringt auf Textdaten rund fünf
-Punkte mehr Klartext; es kostet Segmente und damit Durchsatz, was für ein
-Log-Feld (§0.1) die richtige Richtung ist.
+**`legible` gab es einmal**, mit derselben Zielfunktion wie `canonical` und
+einem Tie-Break zugunsten des Klartexts. Es ist gestrichen. Der Grund ist nicht
+sein Nutzen — fünf Punkte mehr Klartext bei gleicher Länge —, sondern sein Preis
+an einer Stelle, an der ihn niemand vermutet hätte: der Tie-Break brauchte eine
+zweite Kostenkomponente, und die machte aus jedem Kostenvergleich im Programm
+aus §9.2 einen lexikografischen, also verzweigten. Das kostete **60 bis 190 %
+der Zeit dieses Programms — bei jedem Preset**, auch bei den vieren, die den
+Tie-Break nie benutzt haben. Wer Lesbarkeit will, nimmt Profil T: dasselbe XML
+kommt dort mit 93 % Klartext heraus statt mit 12 %, und das mit der billigen
+Regel aus §9.2.1 (§13).
 
 ### 9.4 Nie-schlechter-Garantie (normativ)
 
-Für `dense`, `dense-fast`, `legible`, `canonical` und `opaque` MUSS gelten:
+Für `dense`, `dense-fast`, `canonical` und `opaque` MUSS gelten:
 
 ```
 len(encode(x)) <= ceil(4 * len(x) / 3)
@@ -776,7 +777,7 @@ len(encode(x)) <= ceil(4 * len(x) / 3)
 
 **Je Eingabe, nicht im Mittel**, und aus zwei verschiedenen Gründen:
 
-* Für `legible`, `canonical` und `opaque` folgt sie aus §9.0: die reine
+* Für `canonical` und `opaque` folgt sie aus §9.0: die reine
   Base64-Segmentierung liegt immer in der Kandidatenmenge, und alle drei
   minimieren die Länge über diese Menge — sie können also nichts Längeres
   wählen.
@@ -864,7 +865,7 @@ Genau das ist eingetreten, mit einem anderen Hebel als hier erwartet: nicht
 ist das Preset, das diese Regel vorsieht, und es heißt wie hier vermutet.
 
 Damit ist §9.5 als Formatfrage geschlossen, ohne dass die Messung ihren Wert
-verliert. Der Grund ist nicht Bequemlichkeit: `docs/vectors.json` führt 553
+verliert. Der Grund ist nicht Bequemlichkeit: `docs/vectors.json` führt 449
 byte-exakte Vektoren, und Cache-Keys, Dedup-Keys und Content-Adressen hängen an
 genau diesen Bytes. Ein Preset, das sich später bewegt, bricht sie still.
 
@@ -1068,7 +1069,7 @@ nie Padding (§5.1, §5.3).
 
 Kanonisch ist das Format damit trotzdem nicht, aus zwei verbleibenden Gründen.
 Erstens ist das **Preset und das Profil eine Wahl**: derselbe Input ergibt unter
-`dense` und `legible` verschiedene Ströme. Zweitens akzeptiert der **Dekoder
+`dense` und `canonical` verschiedene Ströme. Zweitens akzeptiert der **Dekoder
 Formen, die kein Encoder schreibt** — das Classic-Alphabet (§5.2) und Padding
 (§5.3). Ein Dritter kann denselben Strom also umschreiben, ohne die dekodierten
 Bytes zu ändern. Regel A und Regel P halten diese Freiheit bei je Faktor 2.
@@ -1557,16 +1558,16 @@ nennen, die sie auszeichnet; v0.2 nennt sie.
 Input            : "hello~Alice"     (11 Bytes)
 Literal-Versuch  : ~Lhello~Alice     (13 chars) -> F1-VERSTOSS, ungültig
 Body (dense)     : aGVsbG9-QWxpY2U   (15 chars) -> reines Base64
-Body (legible)   : aGVsbG9-QWxpY2U   (15 chars) -> ebenso
+Body (canonical) : aGVsbG9-QWxpY2U   (15 chars) -> ebenso
 ```
 
 Der dichte Encoder wählt **kein** Literal — der erzwungene Moduswechsel (§8.2) ist
 teurer als durchgehendes Base64. Regressionstest für die DP-Kostenfunktion.
 
-v0.1 gab hier für `legible` `~Fhellofg~FAlice` an, 16 Zeichen. Das ist ein
-gültiger Strom und dekodiert korrekt, aber kein Encoder schreibt ihn: `legible`
-minimiert nach §9.3 zuerst die Länge, und 15 ist kürzer als 16. Der
-Klartextanteil entscheidet erst bei **gleicher** Länge.
+v0.1 gab hier für das inzwischen gestrichene `legible` `~Fhellofg~FAlice` an,
+16 Zeichen. Das ist ein gültiger Strom und dekodiert korrekt, aber kein Encoder
+schreibt ihn: jedes Preset minimiert nach §9.0 zuerst die Länge, und 15 ist
+kürzer als 16.
 
 **5b — dieselben Bodies als vollständige Framed-Ströme:**
 
@@ -1723,19 +1724,12 @@ neun Bytes lang und erreicht die Schwelle aus §9.1 nicht. Das ist genau der
 Unterschied, den §9.3 beziffert — und die Grenze aus §9.4 hält auch hier,
 `ceil(40/3) = 14`.
 
-### TV14 — `legible` gegen `dense` (§9.3)
+### TV14 — zurückgezogen
 
-```
-Input DE AD BE EF "abcdefg"  (11 Bytes, Profil U)
-
-dense   : 3q2-72FiY2RlZmc   (15 chars)   kein Literal, L ≥ 11 nicht erreicht
-legible : 3q2-7w~Habcdefg   (15 chars)   Literal von 7, gleiche Länge
-```
-
-Gleich lang, verschiedene Bytes: `dense` erreicht seinen Schwellwert nicht und
-schreibt durchgehend Base64, `legible` hat keinen und nimmt bei Gleichstand das
-Literal. Genau das ist der Unterschied zwischen den beiden Presets — Lesbarkeit
-zum Nulltarif, nicht Lesbarkeit gegen Größe.
+TV14 stellte `legible` gegen `dense` auf derselben Eingabe. `legible` ist
+gestrichen (§9.3), und die Nummer wird **nicht neu vergeben**: eine Verweisung
+auf TV14 aus einem älteren Dokument soll hier landen und nicht auf etwas
+anderem, das ihren Namen trägt.
 
 ### TV15 — Padding reicht nicht in einen Frame (§5.3)
 
@@ -1766,8 +1760,8 @@ belegt:
    `rust/` und `conformance/reference.py`, die zweite aus diesem Dokument
    geschrieben,
    mit einem quadratischen DP statt der Schiebefenster aus §9.2 und ohne eine
-   Zeile gemeinsamen Code. Sie stimmen über alle 553 Vektoren, alle sechs
-   Presets und alle drei Profile byteweise überein — 1044 Paare — und über
+   Zeile gemeinsamen Code. Sie stimmen über alle 449 Vektoren, alle fünf
+   Presets und alle drei Profile byteweise überein — 870 Paare — und über
    fünfzehn Fehlerfälle dazu, was ebenso zählt: wer sich über gültige Ströme
    einig ist und über ungültige nicht, ist sich über das Format nicht einig.
    Über den Vektorsatz hinaus kodieren beide dieselbe Viertelmegabyte-Eingabe
@@ -1796,13 +1790,13 @@ Ergänzende Arbeiten, nicht normativ:
    Proxies und Frameworks bleiben offen.
 7. API-Form je Zielsprache: `encode` / `decode` analog zum dortigen `base64`;
    zusätzlich `decode_url_strict`, `decode_plain`, `decode_framed`,
-   `encode_canonical`, `encode_opaque`, `encode_legible`, `encode_framed`.
+   `encode_canonical`, `encode_opaque`, `encode_framed`.
    Rust liegt bei; `python/` ist ein PyO3-Binding darüber und exportiert
    dieselbe Menge, damit ein Python-Aufrufer byteweise dasselbe bekommt wie ein
    Rust-Aufrufer. Ein Binding ist ausdrücklich **keine** zweite Implementierung
    im Sinne von Nachweis 3 — es kann der ersten gar nicht widersprechen.
-8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 553
-   Vektoren über alle sechs Presets und alle drei Profile, jeder als Eingabe und
+8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 449
+   Vektoren über alle fünf Presets und alle drei Profile, jeder als Eingabe und
    erwarteter Strom in Hex. Der Fuzzing-Korpus für alle zwölf Fehlercodes
    liegt in der Testsuite der Referenzimplementierung.
 

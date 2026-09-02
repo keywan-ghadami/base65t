@@ -29,10 +29,9 @@ fn samples() -> Vec<Vec<u8>> {
     v
 }
 
-const PRESETS: [Preset; 6] = [
+const PRESETS: [Preset; 5] = [
     Preset::Dense,
     Preset::DenseFast,
-    Preset::Legible,
     Preset::Canonical,
     Preset::Opaque,
     Preset::Framed,

@@ -12,7 +12,7 @@
 //! What it buys is the encoder running in constant memory at roughly base64's
 //! speed rather than at a twelfth of it.
 //!
-//! `canonical`, `legible` and `opaque` use the exact programme of §9.2, which
+//! `canonical` and `opaque` use the exact programme of §9.2, which
 //! derives an O(n) optimum. The derivation is the interesting part, so it is
 //! implemented as derived rather than as a quadratic scan that would agree
 //! with it on small inputs: literals are edges, `h` has two bands, and each
@@ -43,22 +43,35 @@ use crate::alphabet::{Profile, ALPHABET, MAX_FRAME_BODY, MAX_LITERAL, TILDE};
 /// bytes, and is held at zero unless the rules ask for readability; a
 /// lexicographic minimum over the pair is then "shortest, and among those the
 /// most readable".
-pub type Cost = (i64, i64);
+/// A cost in thirds of a character.
+///
+/// One number, not two. It carried a second component until `legible` was
+/// dropped -- the tie-break towards readability, which needed a lexicographic
+/// comparison -- and that comparison branches, five times per position, in the
+/// innermost loop of the programme. Removing it took the backward pass from 32
+/// to 51 MiB/s on a short input and from 10 to 29 on a megabyte, where it also
+/// halves the tables. One preset's tie-break was costing every preset that
+/// never used it between sixty and a hundred and ninety per cent.
+pub type Cost = i64;
 
-const INF: Cost = (i64::MAX / 4, 0);
+const INF: Cost = i64::MAX / 4;
 
 #[inline]
 fn is_inf(c: Cost) -> bool {
-    c.0 >= INF.0
+    c >= INF
 }
 
+/// Addition without the infinity check, which the choice of `INF` makes safe.
+///
+/// `INF` is `i64::MAX / 4`, so any sum of two costs fits, and a sum involving
+/// one stays above `INF` -- it goes on comparing as infinite, which is all the
+/// sentinel is for. Over a whole input the accumulated slack is `3n`, and `3n`
+/// against `i64::MAX / 4` leaves room for an input of two exabytes. The check
+/// this replaces was a branch three times per position, in the innermost loop
+/// of the encoder.
 #[inline]
 fn add(a: Cost, b: Cost) -> Cost {
-    if is_inf(a) || is_inf(b) {
-        INF
-    } else {
-        (a.0 + b.0, a.1 + b.1)
-    }
+    a + b
 }
 
 /// Bytes per frame body in `encode_framed`, before encoding (§8.1): a fixed
@@ -88,7 +101,11 @@ fn b64_chars(k: usize) -> usize {
 /// (§9.2), which is twelve thirds per three bytes.
 #[inline]
 fn inc(p: usize) -> Cost {
-    (if p == 0 { 6 } else { 3 }, 0)
+    if p == 0 {
+        6
+    } else {
+        3
+    }
 }
 
 /// What the encoder is allowed to do, which is all a preset is (§9.0, §9.3).
@@ -103,26 +120,16 @@ pub struct Rules {
     /// §9.6: skip the scan over a window whose sample shows too little to
     /// gain. `dense-fast` and nothing else.
     pub fast: bool,
-    /// λ: thirds of a character a passthrough byte is worth, subtracted from
-    /// what a literal costs. Zero is the pure length optimum, which is what
-    /// every preset in §9.3 uses; the specification has no other value yet,
-    /// and PREREGISTRATION.md is the measurement that picks one for `legible`.
-    pub bonus: i64,
-    /// Whether ties in length are broken towards readability rather than left
-    /// to the reconstruction rule. This is the second component of `Cost`.
-    pub prefer_passthrough: bool,
 }
 
 impl Rules {
-    /// A preset as §9.3 defines one: length only, no bonus.
+    /// A preset as §9.3 defines one.
     pub fn preset(profile: Profile, min_literal: Option<usize>, framed: bool) -> Self {
         Rules {
             profile,
             min_literal,
             framed,
             fast: false,
-            bonus: 0,
-            prefer_passthrough: false,
         }
     }
 
@@ -131,10 +138,7 @@ impl Rules {
     #[inline]
     fn literal_edge(&self, m: usize) -> Cost {
         let m = m as i64;
-        (
-            (3 - self.bonus) * m + 3 * h(m as usize) as i64,
-            if self.prefer_passthrough { -m } else { 0 },
-        )
+        3 * m + 3 * h(m as usize) as i64
     }
 }
 
@@ -194,9 +198,9 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     let mut r_l = vec![INF; n + 1];
     let mut r_b = vec![INF; n + 1];
     let mut g = vec![[INF; 3]; n + 1];
-    r_l[n] = (0, 0);
-    r_b[n] = (0, 0);
-    g[n] = [(0, 0); 3];
+    r_l[n] = 0;
+    r_b[n] = 0;
+    g[n] = [0; 3];
 
     // Deques over candidate end positions `t`. A literal edge [j, t) costs
     // `(3 − λ)(t − j) + 3h + r_l[t]` in thirds, and buys `t − j` passthrough
@@ -208,19 +212,14 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     // Going backwards, candidates enter at the near end and expire at the far
     // end, which is the mirror image of the usual sliding-window minimum: pop
     // the back on insertion, pop the front against the window's far end.
-    let mut band1: VecDeque<usize> = VecDeque::new();
-    let mut band2: VecDeque<usize> = VecDeque::new();
-    let pw: i64 = if rules.prefer_passthrough { 1 } else { 0 };
-    let key = |t: usize, r_l: &[Cost]| -> Cost {
-        if is_inf(r_l[t]) {
-            INF
-        } else {
-            (
-                (3 - rules.bonus) * t as i64 + r_l[t].0,
-                r_l[t].1 - pw * t as i64,
-            )
-        }
-    };
+    // The key is stored beside the candidate. It is a function of `t` and of
+    // `r_l[t]`, neither of which changes after the candidate enters, and the
+    // pop loop below compares against it once per candidate examined --
+    // recomputing it there was a third of this function's time.
+    let mut band1: VecDeque<(usize, Cost)> = VecDeque::new();
+    let mut band2: VecDeque<(usize, Cost)> = VecDeque::new();
+
+    let key = |t: usize, r_l: &[Cost]| -> Cost { 3 * t as i64 + r_l[t] };
 
     // `first_bad[j]` and `first_tilde_a[j]` as running values: both are
     // monotone as `j` decreases, which is exactly why they can be window
@@ -241,7 +240,7 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
             // A literal ending at `t` is barred outright when its last byte is
             // a tilde (F2) — a property of `t`, so such a `t` never enters a
             // deque at all.
-            let admit = |t: usize, dq: &mut VecDeque<usize>, r_l: &[Cost]| {
+            let admit = |t: usize, dq: &mut VecDeque<(usize, Cost)>, r_l: &[Cost]| {
                 if t > n {
                     return;
                 }
@@ -249,39 +248,47 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
                     return;
                 }
                 let k = key(t, r_l);
-                while let Some(&b) = dq.back() {
-                    if key(b, r_l) >= k {
+                while let Some(&(_, kb)) = dq.back() {
+                    if kb >= k {
                         dq.pop_back();
                     } else {
                         break;
                     }
                 }
-                dq.push_back(t);
+                dq.push_back((t, k));
             };
-            if lmin <= 62 {
-                admit(j + lmin, &mut band1, &r_l);
-            }
-            let entry2 = lmin.max(63);
-            if entry2 <= MAX_LITERAL {
-                admit(j + entry2, &mut band2, &r_l);
-            }
-
             // The far end of each window: the byte run must stay inside the
-            // profile, and inside F1 when framed.
+            // profile, and inside F1 when framed. Computed before the
+            // candidates enter, because it decides whether they may.
             let mut far = first_bad;
             if rules.framed && first_tilde_a != usize::MAX {
                 far = far.min(first_tilde_a + 1);
             }
             let hi1 = far.min(j + 62).min(n);
             let hi2 = far.min(j + MAX_LITERAL).min(n);
-            while let Some(&f) = band1.front() {
+
+            // A candidate past `far` names a literal that runs through a byte
+            // the profile rejects, so it can never be chosen -- and it never
+            // will be, because `far` only ever moves towards `j`. It used to
+            // be admitted anyway and popped again on the next position, which
+            // on text is most of what this loop did: a profile-illegal byte
+            // every few characters means every band-2 candidate, sixty-three
+            // bytes out, is born ineligible.
+            if lmin <= 62 && j + lmin <= hi1 {
+                admit(j + lmin, &mut band1, &r_l);
+            }
+            let entry2 = lmin.max(63);
+            if entry2 <= MAX_LITERAL && j + entry2 <= hi2 {
+                admit(j + entry2, &mut band2, &r_l);
+            }
+            while let Some(&(f, _)) = band1.front() {
                 if f > hi1 {
                     band1.pop_front();
                 } else {
                     break;
                 }
             }
-            while let Some(&f) = band2.front() {
+            while let Some(&(f, _)) = band2.front() {
                 if f > hi2 {
                     band2.pop_front();
                 } else {
@@ -293,13 +300,9 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
             // in a band, so it cannot change which one won.
             let mut best = INF;
             for (dq, header) in [(&band1, 2i64), (&band2, 4i64)] {
-                if let Some(&t) = dq.front() {
-                    let k = key(t, &r_l);
+                if let Some(&(_, k)) = dq.front() {
                     if !is_inf(k) {
-                        let c = (
-                            k.0 + 3 * header - (3 - rules.bonus) * j as i64,
-                            k.1 + pw * j as i64,
-                        );
+                        let c = k + 3 * header - 3 * j as i64;
                         best = best.min(c);
                     }
                 }
@@ -307,25 +310,19 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
             r_b[j] = best;
         }
 
-        for p in 0..3 {
-            g[j][p] = r_b[j].min(add(inc(p), g[j + 1][(p + 1) % 3]));
-        }
-        r_l[j] = r_b[j].min(add(inc(0), g[j + 1][1]));
+        // Written out rather than looped: the modulo was a division in the
+        // innermost loop of the whole encoder, and there are exactly three.
+        let gn = g[j + 1];
+        let b = r_b[j];
+        g[j] = [
+            b.min(add(inc(0), gn[1])),
+            b.min(add(inc(1), gn[2])),
+            b.min(add(inc(2), gn[0])),
+        ];
+        r_l[j] = g[j][0];
     }
 
     Costs { r_l, r_b, g }
-}
-
-/// The forward pass: among the length-optimal continuations, take the one the
-/// order of §11.1 names — `B` before `L` before `S`, decided at the earliest
-/// position where the candidates differ.
-///
-/// For `dense`, `legible` and `framed` any optimal segmentation would do and
-/// this one is simply the deterministic choice. For `canonical` it is the
-/// definition, and `canonical::longest_literal` is the same walk under the
-/// other rule, kept only so a test can hold the two apart.
-pub fn segment(data: &[u8], rules: Rules, c: &Costs) -> Vec<Seg> {
-    segment_with(data, rules, c, LiteralEnd::KeyOrder)
 }
 
 /// Which end position to take when several are length-optimal.
@@ -767,13 +764,6 @@ fn run_end(data: &[u8], at: usize, profile: Profile) -> usize {
     }
 }
 
-/// One plain-mode stream under the given rules, over the whole input.
-pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
-    let c = costs(data, rules);
-    let segs = segment(data, rules, &c);
-    emit(data, &segs)
-}
-
 /// One plain-mode stream under the linear rule of §9.2.1, over any input.
 ///
 /// The scan and the writing are one pass. `segment_greedy` exists beside this
@@ -949,13 +939,9 @@ mod tests {
             for lmin in [Some(1), Some(4), Some(11), None] {
                 let r = rules(lmin);
                 let c = costs(data, r);
-                let segs = segment(data, r, &c);
+                let segs = segment_with(data, r, &c, LiteralEnd::KeyOrder);
                 let out = emit(data, &segs);
-                assert_eq!(
-                    3 * out.len() as i64,
-                    c.r_l[0].0,
-                    "{data:?} at L_min {lmin:?}"
-                );
+                assert_eq!(3 * out.len() as i64, c.r_l[0], "{data:?} at L_min {lmin:?}");
             }
         }
     }

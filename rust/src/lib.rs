@@ -180,8 +180,6 @@ impl std::error::Error for Error {}
 pub enum Preset {
     /// Smallest output, and never larger than base64 (§9.4). The default.
     Dense,
-    /// Literals from four bytes up: readable in a log at some cost in size.
-    Legible,
     /// The deterministic one (§11.1). For cache keys, not for signatures.
     Canonical,
     /// Never a literal, so nothing of the input shows through. Byte-identical
@@ -249,7 +247,6 @@ pub fn decode_into(stream: &[u8], profile: Profile, out: &mut Vec<u8>) -> Result
 pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
     match preset {
         Preset::Dense => encode_dense(data, profile),
-        Preset::Legible => encode_legible(data, profile),
         Preset::Canonical => encode_canonical(data, profile),
         Preset::Opaque => encode_opaque(data),
         Preset::Framed => encode_framed(data, profile),
@@ -269,25 +266,6 @@ pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
 /// fast.
 pub fn encode_dense(data: &[u8], profile: Profile) -> Vec<u8> {
     encode::encode_greedy(data, Rules::preset(profile, Some(MIN_LITERAL), false))
-}
-
-/// Readability at no cost in size: the shortest encoding, and among the
-/// shortest the one that leaves the most bytes readable.
-///
-/// v0.1 defined `legible` by a threshold — literals from four bytes up — and a
-/// threshold cannot make output more readable: the objective is still the
-/// length (§9.0), so a literal that costs anything is never chosen and
-/// `legible` collapses into `dense`. §9.3 now gives it an objective instead.
-///
-/// The measurement in PREREGISTRATION.md is why this and not a budget over
-/// `dense`: every bonus large enough to buy a literal that costs something
-/// broke §9.4 on 35 of 87 corpus files, while breaking ties towards
-/// readability costs nothing at all and is worth about five points of
-/// passthrough. So §9.4 covers `legible` too (TV14).
-pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
-    let mut rules = Rules::preset(profile, Some(1), false);
-    rules.prefer_passthrough = true;
-    encode::encode_rules(data, rules)
 }
 
 /// `dense` on several threads, byte for byte what [`encode_dense`] writes.

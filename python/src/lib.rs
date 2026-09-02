@@ -72,13 +72,11 @@ fn preset_of(name: &str) -> PyResult<Preset> {
     match name {
         "dense" => Ok(Preset::Dense),
         "dense-fast" => Ok(Preset::DenseFast),
-        "legible" => Ok(Preset::Legible),
         "canonical" => Ok(Preset::Canonical),
         "opaque" => Ok(Preset::Opaque),
         "framed" => Ok(Preset::Framed),
         other => Err(PyValueError::new_err(format!(
-            "preset is one of dense, dense-fast, legible, canonical, opaque, framed, \
-             not {other:?}"
+            "preset is one of dense, dense-fast, canonical, opaque, framed, not {other:?}"
         ))),
     }
 }
@@ -245,7 +243,7 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("FRAME_BYTES", base65t::FRAME_BYTES)?;
     m.add(
         "PRESETS",
-        vec!["dense", "dense-fast", "legible", "canonical", "opaque", "framed"],
+        vec!["dense", "dense-fast", "canonical", "opaque", "framed"],
     )?;
     m.add("PROFILES", vec!["U", "T", "B"])?;
 

@@ -9,7 +9,7 @@ vectors were written from, so agreement here is agreement with itself. What it
 does check is that every preset and profile name reaches the argument it is
 supposed to reach — a binding that silently encoded everything as `dense`
 would pass every test in test_bindings.py that does not compare bytes, and fail
-here on the first `legible` vector.
+here on the first `canonical` vector.
 
 The check that means something about the format is ../conformance, which runs
 an implementation written from the specification instead.

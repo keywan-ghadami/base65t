@@ -228,16 +228,16 @@ def _b64(chunk: bytes) -> bytes:
     return bytes(out)
 
 
-def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
+def _segments(data: bytes, profile: str, lmin, framed: bool):
     """Length-optimal segmentation under §9.2.2, quadratic and obvious.
 
     Returns a list of ("B" | "L", start, end). `lmin` of None never takes a
-    literal (`opaque`). Cost is (characters, -passthrough) when the preset asks
-    for readability at equal length, which is the lexicographic minimum §9.3
-    describes for `legible`.
+    literal (`opaque`). The cost is the character count and nothing else: the
+    second component this carried existed for `legible`, and that preset is
+    gone.
     """
     n = len(data)
-    INF = (float("inf"), 0)
+    INF = float("inf")
 
     def literal_ok(i, j):
         if lmin is None or j - i > MAX_LITERAL or j - i < lmin:
@@ -252,17 +252,17 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
         return True
 
     def lit_cost(m):
-        return (m + _header(m), -m if passthrough else 0)
+        return m + _header(m)
 
     def add(x, y):
-        return (x[0] + y[0], x[1] + y[1])
+        return x + y
 
     # r_l[j]: a base64 segment may open at j; r_b[j]: it may not (§4).
     r_l = [INF] * (n + 1)
     r_b = [INF] * (n + 1)
     for j in range(n, -1, -1):
         if j == n:
-            r_l[j] = r_b[j] = (0, 0)
+            r_l[j] = r_b[j] = 0
             continue
         best = INF
         for t in range(j + 1, min(n, j + MAX_LITERAL) + 1):
@@ -272,7 +272,7 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
         # A base64 segment covering [j, t), then a literal must follow.
         for t in range(j + 1, n + 1):
             if r_b[t] != INF or t == n:
-                cand = add((-(-4 * (t - j) // 3), 0), r_b[t])
+                cand = add(-(-4 * (t - j) // 3), r_b[t])
                 best = min(best, cand)
         r_l[j] = best
 
@@ -286,7 +286,7 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
             for t in range(pos + 1, n + 1):
                 if r_b[t] == INF and t != n:
                     continue
-                if add((-(-4 * (t - pos) // 3), 0), r_b[t]) == r_l[pos]:
+                if add(-(-4 * (t - pos) // 3), r_b[t]) == r_l[pos]:
                     best_t = t
             if best_t is not None:
                 segs.append(("B", pos, best_t))
@@ -306,7 +306,7 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
         for t in ends:
             if t < n:
                 opens = any(
-                    add((-(-4 * (u - t) // 3), 0), r_b[u]) == r_l[t]
+                    add(-(-4 * (u - t) // 3), r_b[u]) == r_l[t]
                     for u in range(t + 1, n + 1)
                     if r_b[u] != INF or u == n
                 )
@@ -365,8 +365,8 @@ def _linear_segments(data: bytes, profile: str, lmin: int, framed: bool):
     return segs
 
 
-def _encode_one(data, profile, lmin, framed=False, passthrough=False) -> bytes:
-    return _emit(data, _segments(data, profile, lmin, framed, passthrough))
+def _encode_one(data, profile, lmin, framed=False) -> bytes:
+    return _emit(data, _segments(data, profile, lmin, framed))
 
 
 def _encode_linear(data, profile, lmin, framed=False) -> bytes:
@@ -429,10 +429,6 @@ def encode_dense_fast(data: bytes, profile: str = "U") -> bytes:
     return _emit(data, segs)
 
 
-def encode_legible(data: bytes, profile: str = "U") -> bytes:
-    return _encode_one(data, profile, 1, passthrough=True)
-
-
 def encode_canonical(data: bytes, profile: str = "U") -> bytes:
     return _encode_one(data, profile, 1)
 
@@ -462,7 +458,6 @@ def encode(data: bytes) -> bytes:
 PRESETS = {
     "dense": encode_dense,
     "dense-fast": encode_dense_fast,
-    "legible": encode_legible,
     "canonical": encode_canonical,
     "opaque": encode_opaque,
     "framed": encode_framed,

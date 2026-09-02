@@ -796,6 +796,52 @@ the second buffer's cache footprint, and that only shows on inputs large enough
 not to fit — which is the case §0.1 does not name. The reasoning is recorded so
 that whoever wants it does not have to re-derive whether it is allowed.
 
+## What one preset's tie-break cost every other one
+
+The exact programme of §9.2 ran at 21 MiB/s, twenty-one to sixty-three times
+slower than the linear rule, and the first three attempts to speed it up moved
+nothing worth reporting: caching the deque keys, unrolling a modulo, dropping
+an infinity check from the addition. Together, a fifth.
+
+The fourth was the whole of it. `Cost` was a pair -- characters, and a
+passthrough term -- so every comparison of two costs was lexicographic, and a
+lexicographic comparison branches. There are five of them per input position in
+the innermost loop. Making it one number:
+
+| | before | after |
+|---|--:|--:|
+| 64 bytes | 32 MiB/s | **51** |
+| 64 KiB | 26 | **39** |
+| 1 MiB | 10 | **29** |
+
+The second component existed for one preset. `legible` broke ties towards
+readability, and nothing else in the format ever looked at that number -- but
+every preset paid for its presence, in a comparison that ran whether or not
+anyone had asked for it. Sixty to a hundred and ninety per cent, on `dense`,
+`canonical`, `opaque` and `framed` alike.
+
+So `legible` is gone, and this is the reason. Not its cost in size, which was
+zero as `PREREGISTRATION.md` measured; its cost in the shape of a number that
+four other presets carried for it. What it offered -- five points more
+plaintext at equal length -- profile T offers far more of, on the cheap rule:
+the same XML comes out 93 % legible under T against 12 % under U, and 80 % of
+base64's size against 98.6 %.
+
+The other half of the speedup was cheaper to find and is worth writing down
+because it is a general shape. The programme admitted candidates into its
+sliding windows and let the window bounds reject them on the next position.
+On text that is nearly all of them: a profile-illegal byte every few characters
+means every band-2 candidate, sixty-three bytes ahead, is born ineligible.
+Testing eligibility before admitting rather than after took the backward pass
+from 31 to 41 MiB/s and cost four lines.
+
+Measured end to end, the programme went from 21 MiB/s to 50 on a short value
+and from 8 to 27 on a megabyte, and the factor against the linear rule from
+21-63x down to 9-18x. And this is what settles the question the size figures
+could not: the programme is worth 0.54 % on the short corpus and 0.31 % over
+all of it, so it never had to be a *choice*, only affordable enough to be the
+default where it pays.
+
 ## What was not done
 
 * **The `L_min`/`B_min` surface of §9.5.** The throughput measurement itself is

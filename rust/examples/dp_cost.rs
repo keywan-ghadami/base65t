@@ -12,6 +12,7 @@
 //! with it: the programme earns most on short values and almost nothing on
 //! long ones, while its cost goes the other way.
 
+use base65t::internals::{costs, segment_with, LiteralEnd, Rules as R};
 use base65t::*;
 use std::time::Instant;
 
@@ -40,8 +41,8 @@ fn main() {
         s ^= s << 5;
         s as usize
     };
-    println!("| bytes | linear | exact DP | factor | exact is smaller by |");
-    println!("|---|--:|--:|--:|--:|");
+    println!("| bytes | linear | exact DP | factor | backward pass | forward pass | smaller by |");
+    println!("|---|--:|--:|--:|--:|--:|--:|");
     for n in [64usize, 256, 1024, 4096, 16_384, 65_536, 262_144, 1 << 20] {
         let d: Vec<u8> = (0..n)
             .map(|_| {
@@ -58,12 +59,22 @@ fn main() {
         let b = bench(n, || {
             std::hint::black_box(encode_canonical(&d, Profile::U));
         });
+        // The two halves of the programme, separately: the backward cost pass
+        // and the forward reconstruction that reads its tables.
+        let r = R::preset(Profile::U, Some(1), false);
+        let back = bench(n, || {
+            std::hint::black_box(costs(&d, r));
+        });
+        let c = costs(&d, r);
+        let fwd = bench(n, || {
+            std::hint::black_box(segment_with(&d, r, &c, LiteralEnd::KeyOrder));
+        });
         let (la, lb) = (
             encode_dense(&d, Profile::U).len(),
             encode_canonical(&d, Profile::U).len(),
         );
         println!(
-            "| {n} | {a:.0} MiB/s | {b:.0} MiB/s | **{:.0}x** | {:.2} % |",
+            "| {n} | {a:.0} | {b:.0} | **{:.0}x** | {back:.0} | {fwd:.0} | {:.2} % |",
             a / b,
             100.0 * (la as f64 / lb as f64 - 1.0)
         );

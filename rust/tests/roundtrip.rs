@@ -84,9 +84,8 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 const PROFILES: [Profile; 3] = [Profile::U, Profile::T, Profile::B];
-const PRESETS: [Preset; 5] = [
+const PRESETS: [Preset; 4] = [
     Preset::Dense,
-    Preset::Legible,
     Preset::Canonical,
     Preset::Opaque,
     Preset::Framed,

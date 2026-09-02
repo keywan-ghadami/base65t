@@ -1,5 +1,13 @@
 # Pre-registration: what `legible` optimises, and how `dense` breaks a tie
 
+> **Nachtrag.** Das Preset, das diese Messung ausgewählt hat — `legible` —
+> ist gestrichen. Nicht wegen des Ergebnisses: die Messung war richtig und der
+> Tie-Break kostete tatsächlich nichts an Größe. Er kostete etwas an einer
+> Stelle, die hier niemand angeschaut hat, nämlich im Programm aus §9.2, dessen
+> Kostenvergleich er von einer Zahl auf ein Paar erweiterte. Das Dokument
+> bleibt als Aufzeichnung dessen stehen, wie entschieden wurde; `FINDINGS.md`
+> sagt, warum es zurückgenommen wurde.
+
 Written and committed **before** the measurement it describes. Nothing below is
 adjusted afterwards; the run either satisfies a rule here or falls to the
 default here, and both outcomes are decisions.

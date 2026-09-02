@@ -114,7 +114,7 @@ fn tv5a_dense_declines_the_forced_mode_switch() {
     assert_eq!(body.len(), 15);
 
     // Plain mode has no F1/F2 to enforce, so there the literal wins outright.
-    assert_eq!(encode_legible(input, Profile::U), b"~Lhello~Alice");
+    assert_eq!(encode_canonical(input, Profile::U), b"~Lhello~Alice");
 
     let v01_legible = b"~Fhellofg~FAlice";
     assert_eq!(v01_legible.len(), 16);
@@ -337,25 +337,13 @@ fn tv13_the_tie_break_decides() {
     }
 }
 
-/// `legible` against `dense` on one input: same length, different bytes.
-///
-/// `dense` needs eleven bytes before it takes a literal (§9.1) and this run is
-/// seven, so it writes base64 throughout. `legible` has no threshold and takes
-/// the literal at equal length. That is the whole difference between the two
-/// presets — readability at no cost, not readability against size.
-#[test]
-fn tv14_legible_against_dense() {
-    let input = [b"\xde\xad\xbe\xef".as_slice(), b"abcdefg"].concat();
-    let d = encode_dense(&input, Profile::U);
-    let l = encode_legible(&input, Profile::U);
-    assert_eq!(d, b"3q2-72FiY2RlZmc");
-    assert_eq!(l, b"3q2-7w~Habcdefg");
-    assert_eq!(d.len(), l.len());
-    assert_eq!(d.len(), base64_len(input.len()));
-    for s in [&d, &l] {
-        assert_eq!(decode(s, Profile::U).unwrap().bytes, input);
-    }
-}
+// TV14 is withdrawn. It read `legible` against `dense` on one input, and
+// `legible` is gone: its tie-break needed a second cost component, and that
+// component's lexicographic comparison cost the exact programme between sixty
+// and a hundred and ninety per cent -- on every preset, including the four
+// that never asked for it. The number is withdrawn rather than reused, so that
+// a reference to TV14 from anywhere else lands on this and not on something
+// different wearing its name.
 
 /// Padding does not reach into a frame body (§5.3). The same base64 text, once
 /// as a stream and once as a body, gets two different answers — and that is
