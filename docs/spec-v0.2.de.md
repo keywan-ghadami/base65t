@@ -549,6 +549,21 @@ Dass `framed` eine Zweierpotenz verwendet, ist kein Widerspruch: dort ist der
 Zweck die Offset-Arithmetik (§8.1), und `framed` ist von §9.4 ohnehin
 ausgenommen.
 
+**Ein Block DARF NICHT mit einem angebrochenen Quantum enden.** Endet der
+letzte Lauf eines Blocks in Base64 und umfasst `k` Bytes mit `k mod 3 ≠ 0`, so
+bleibt ein Quantum offen; der erste Lauf des nächsten Blocks setzt es fort,
+denn zwei aneinandergrenzende Base64-Segmente sind für den Dekoder **ein**
+Segment (§4). Der Strom dekodiert dann zu etwas, das keiner der beiden Blöcke
+gemeint hat, oder zu `E_ALIGN`. Ein Encoder MUSS die Segmentierung eines
+Blocks deshalb so wählen, dass ein Base64-Lauf am Blockende auf einer
+Quantengrenze schließt; im DP aus §9.2 ist das eine Randbedingung am Blockende
+(`p = 0`) und kostet nichts weiter. Ein **Literal** darf einen Block beenden,
+wie es will — sein Längen-Header ist die Grenze.
+
+Dass die Blockgröße durch 3 teilbar ist, genügt dafür **nicht**: es sichert nur
+den Fall, dass ein Lauf am Blockanfang beginnt. Beginnt er nach einem Literal,
+hängt seine Länge von dessen Ende ab.
+
 **Kosten.** Ein Literal kann keine Blockgrenze überspannen, also höchstens ein
 zusätzlicher Header je Grenze — unter 0,01 %.
 

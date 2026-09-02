@@ -379,6 +379,33 @@ absence of a check.
   an adversarial character pool, through all four entry points and all three
   profiles.
 
+## What integrating it into the benchmark found
+
+Wiring the codec into binary2textbench took about a minute to produce a round
+trip failure on a 640 KiB tar file: `E_ALIGN`, decoding this implementation's
+own output.
+
+The block rule of §9.2.1 was wrong as first written. A block whose last segment
+is a base64 run of `k` bytes with `k mod 3 != 0` leaves a partial quantum open;
+the next block's run continues it, because two adjacent base64 segments are one
+segment to a decoder (§4), and the seam decodes to what neither block meant.
+The block size being a multiple of three does not save it — that only covers a
+run starting at a block boundary, and a run that starts after a literal has
+whatever length the literal left it.
+
+Sixty-eight tests did not catch it, and the reason is worth keeping: the block
+tests used homogeneous input. Pure noise makes exactly one base64 run per block
+of exactly `BLOCK_BYTES` bytes, which is aligned by construction; pure
+profile-legal text makes no base64 run at all. It takes a mixture — which is
+what every real file is, and what a corpus assembled by somebody else for
+another purpose supplies without being asked.
+
+Fixed by requiring a base64 run that ends a block to close on a quantum
+boundary, which in the dynamic programme is one boundary condition. The
+regression test uses mixed input across four blocks and every offset around a
+boundary, `python/test_large.py` checks the seam from the other implementation,
+and §9.2.1 now says the rule outright.
+
 ## What was not done
 
 * **§16.5** — the throughput measurements and the `L_min`/`B_min` surface. That

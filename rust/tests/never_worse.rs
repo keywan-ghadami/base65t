@@ -333,3 +333,54 @@ fn legible_is_readability_at_no_cost_in_size() {
     // any single input.
     assert_eq!(ahead, 0, "{ahead} of {inputs} inputs were less readable");
 }
+
+/// The case the block tests missed, and the benchmark found within a minute of
+/// being pointed at a real file.
+///
+/// A block whose last segment is a base64 run of `k` bytes with `k mod 3 != 0`
+/// leaves a partial quantum open. The next block's run continues it — two
+/// adjacent base64 segments are one segment to a decoder (§4) — and the seam
+/// decodes to something neither block meant, or to `E_ALIGN`. It cannot happen
+/// on homogeneous input: pure noise makes one run per block of exactly
+/// `BLOCK_BYTES` bytes, and pure profile-legal text makes no base64 run at all.
+/// It needs a mixture, which is what every real file is.
+#[test]
+fn a_block_never_ends_on_a_partial_quantum() {
+    let mut s: u32 = 0x51ce_1234;
+    let mut next = move || {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        s
+    };
+    // Text runs of varying length with binary between them, so that the
+    // segmentation lands differently at every block boundary.
+    let mut data: Vec<u8> = Vec::with_capacity(4 * BLOCK_BYTES);
+    while data.len() < 4 * BLOCK_BYTES {
+        let run = 1 + (next() % 60) as usize;
+        if next() % 3 == 0 {
+            data.extend((0..run).map(|_| (next() & 0xff) as u8));
+        } else {
+            data.extend((0..run).map(|i| b"abcdefghij"[i % 10]));
+        }
+    }
+    for profile in [Profile::U, Profile::T] {
+        let out = encode_dense(&data, profile);
+        let back = decode(&out, profile)
+            .unwrap_or_else(|e| panic!("{profile:?}: {e} at the seam of a block"));
+        assert_eq!(back.bytes, data, "{profile:?}");
+        assert!(out.len() <= base64_len(data.len()), "{profile:?}");
+    }
+
+    // And the same for every offset around a boundary, where the seam moves
+    // through all three quantum phases.
+    for extra in 0..6 {
+        let d = &data[..2 * BLOCK_BYTES + extra];
+        let out = encode_dense(d, Profile::U);
+        assert_eq!(
+            decode(&out, Profile::U).expect("decodes").bytes,
+            d,
+            "extra {extra}"
+        );
+    }
+}

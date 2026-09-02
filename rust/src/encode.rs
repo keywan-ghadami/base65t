@@ -124,6 +124,17 @@ pub struct Rules {
     /// Whether ties in length are broken towards readability rather than left
     /// to the reconstruction rule. This is the second component of `Cost`.
     pub prefer_passthrough: bool,
+    /// Whether a base64 segment reaching the end of this input must end on a
+    /// quantum boundary.
+    ///
+    /// It must, whenever something else follows that the decoder will not see
+    /// a boundary in front of — which is exactly a block in §9.2.1. Two
+    /// adjacent base64 segments are one segment to a decoder (§4), so a block
+    /// whose last segment is a base64 run of `k` bytes with `k mod 3 != 0`
+    /// leaves a partial quantum, the next block's run continues it, and the
+    /// two decode to something neither block meant. A literal may end a block
+    /// freely: its length header is the boundary.
+    pub aligned_end: bool,
 }
 
 impl Rules {
@@ -135,6 +146,7 @@ impl Rules {
             framed,
             bonus: 0,
             prefer_passthrough: false,
+            aligned_end: false,
         }
     }
 
@@ -208,7 +220,14 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     let mut g = vec![[INF; 3]; n + 1];
     r_l[n] = (0, 0);
     r_b[n] = (0, 0);
-    g[n] = [(0, 0); 3];
+    // A base64 segment may close at the end of the input from any quantum
+    // offset -- unless something follows that carries no boundary of its own,
+    // and then only `p = 0` will do. See `Rules::aligned_end`.
+    g[n] = if rules.aligned_end {
+        [(0, 0), INF, INF]
+    } else {
+        [(0, 0); 3]
+    };
 
     // Deques over candidate end positions `t`. A literal edge [j, t) costs
     // `(3 − λ)(t − j) + 3h + r_l[t]` in thirds, and buys `t − j` passthrough
@@ -510,9 +529,14 @@ pub fn encode_blocked(data: &[u8], rules: Rules, block: usize) -> Vec<u8> {
     if data.len() <= block {
         return encode_rules(data, rules);
     }
+    let mut inner = rules;
+    inner.aligned_end = true;
+    let last = (data.len() - 1) / block;
     let mut out = Vec::with_capacity(data.len() + data.len() / 3 + 8);
-    for chunk in data.chunks(block) {
-        out.extend_from_slice(&encode_rules(chunk, rules));
+    for (i, chunk) in data.chunks(block).enumerate() {
+        // Only the final block may leave a partial quantum open: after it
+        // nothing follows to be merged with.
+        out.extend_from_slice(&encode_rules(chunk, if i == last { rules } else { inner }));
     }
     out
 }

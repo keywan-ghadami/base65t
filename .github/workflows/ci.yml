@@ -69,3 +69,15 @@ jobs:
 
       - name: Real parsers take what profile U writes
         run: python3 python/test_containers.py
+
+      # The published vectors stop below a kilobyte, so the block rule of
+      # §9.2.1 is outside them -- and that is where the one bug integration
+      # found was living. One implementation encodes across five blocks, the
+      # other decodes.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The block seam, across implementations
+        run: |
+          cd rust
+          cargo run --release --quiet --example large_sample -- /tmp/in.bin /tmp/in.b65
+          cd ..
+          python3 python/test_large.py /tmp/in.bin /tmp/in.b65
