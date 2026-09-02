@@ -20,52 +20,22 @@
 use crate::alphabet::{
     AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
 };
-use crate::{Decoded, Error, Framing, Meta};
+use crate::{Decoded, Error, Meta};
 
-/// What `decode()` does with a stream before it looks at anything else
-/// (Rule F, §5.6): two octets decide the mode, and nothing else can.
-pub fn framing_of(stream: &[u8]) -> Framing {
-    if stream.len() >= 2 && stream[0] == TILDE && stream[1] == b'A' {
-        Framing::Framed
-    } else {
-        // Including the empty stream, which carries no information and is
-        // valid in both modes; `plain` for it is a convention, not a
-        // derivation (§5.6).
-        Framing::Plain
-    }
-}
-
-/// Rule F, then the mode it names. The profile is the only parameter (§0.3).
+/// Rule F is gone with framing, so a decode takes a stream and a profile and
+/// nothing else (§0.3). What the stream chose about its alphabet and its
+/// padding still comes out of the stream and is reported back in [`Decoded`].
 pub fn decode(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    match framing_of(stream) {
-        Framing::Framed => decode_framed(stream, profile),
-        Framing::Plain => decode_plain(stream, profile),
-    }
+    run(stream, profile, false)
 }
 
 /// `decode`, but a `+` or `/` at an alphabet position ends it with
 /// `E_NON_URL_ALPHABET` (§5.5).
 pub fn decode_url_strict(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    match framing_of(stream) {
-        Framing::Framed => run(stream, profile, true, Framing::Framed),
-        Framing::Plain => run(stream, profile, true, Framing::Plain),
-    }
+    run(stream, profile, true)
 }
 
-/// Plain mode, whatever the stream looks like. A framed stream reaches
-/// `E_RESERVED_LEN` here, which is the correct answer for this entry point
-/// (§10.2, TV11).
-pub fn decode_plain(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    run(stream, profile, false, Framing::Plain)
-}
-
-/// Framed mode, whatever the stream looks like. A plain stream reaches
-/// `E_FRAME_SYNC` here.
-pub fn decode_framed(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    run(stream, profile, false, Framing::Framed)
-}
-
-fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Result<Decoded, Error> {
+fn run(stream: &[u8], profile: Profile, strict_url: bool) -> Result<Decoded, Error> {
     // The only allocation a decode does, and `stream.len()` is the bound that
     // holds for every stream: four characters carry three bytes, but a
     // literal's characters carry one byte each, so a literal-heavy stream
@@ -74,12 +44,11 @@ fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Resu
     // it made the shape base65t exists for, a short value that is one literal,
     // reallocate on every decode.
     let mut out = Vec::with_capacity(stream.len());
-    let meta = run_into(stream, profile, strict_url, mode, &mut out)?;
+    let meta = run_into(stream, profile, strict_url, &mut out)?;
     Ok(Decoded {
         bytes: out,
         alphabet_seen: meta.alphabet_seen,
         padding_seen: meta.padding_seen,
-        framing_seen: meta.framing_seen,
     })
 }
 
@@ -88,7 +57,6 @@ pub(crate) fn run_into(
     stream: &[u8],
     profile: Profile,
     strict_url: bool,
-    mode: Framing,
     out: &mut Vec<u8>,
 ) -> Result<Meta, Error> {
     let mut d = Decoder {
@@ -98,14 +66,10 @@ pub(crate) fn run_into(
         padding_seen: false,
         out,
     };
-    match mode {
-        Framing::Plain => d.plain(stream, Padding::Allowed)?,
-        Framing::Framed => d.framed(stream)?,
-    }
+    d.plain(stream)?;
     Ok(Meta {
         alphabet_seen: d.alphabet_seen,
         padding_seen: d.padding_seen,
-        framing_seen: mode,
     })
 }
 
@@ -178,17 +142,9 @@ fn variant_bits(hay: &[u8]) -> u8 {
 #[cfg(feature = "simd")]
 const SIMD_MIN: usize = 64;
 
-/// Whether Rule P (§5.3) reaches the end of this byte range: only the end of
-/// the whole stream is the end of the stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Padding {
-    Allowed,
-    Forbidden,
-}
-
-/// The three fields §5.5 requires in the result, carried while they are being
-/// found. Rule A and Rule P are stream-wide, so a framed stream threads one
-/// decoder through all its frames rather than one per frame.
+/// The two fields §5.5 requires in the result, carried while they are being
+/// found. Rule A and Rule P are statements about the whole stream, so one
+/// decoder threads through every segment rather than one per segment.
 struct Decoder<'a> {
     profile: Profile,
     strict_url: bool,
@@ -244,7 +200,7 @@ impl Decoder<'_> {
     /// ordinary base64 needs no changes (§1.1), and no such producer emits
     /// frames, so inside one it would be a parser-differential surface bought
     /// for nothing (TV15).
-    fn plain(&mut self, stream: &[u8], padding: Padding) -> Result<(), Error> {
+    fn plain(&mut self, stream: &[u8]) -> Result<(), Error> {
         let len = stream.len();
         let mut pos = 0;
         while pos < len {
@@ -254,8 +210,10 @@ impl Decoder<'_> {
                 }
                 let l1 = self.read_alphabet(stream[pos + 1])?;
                 if l1 == 0 {
-                    // Reserved in plain mode; in framed mode this is a frame
-                    // header, and that is the whole of Rule F (§5.6, §6.1).
+                    // §6.1 reserves length 0. v0.1 spent it on a frame header;
+                    // v0.4 removed framing and left the reservation, so the
+                    // one two-byte sequence a future revision can still claim
+                    // is `~A`.
                     return Err(Error::ReservedLen);
                 }
                 let l = if l1 == 63 {
@@ -284,7 +242,7 @@ impl Decoder<'_> {
                 let start = pos;
                 pos += find_tilde(&stream[pos..]).unwrap_or(len - pos);
                 let seg = &stream[start..pos];
-                let at_end = pos == len && padding == Padding::Allowed;
+                let at_end = pos == len;
                 self.base64_segment(seg, at_end)?;
             }
         }
@@ -342,7 +300,7 @@ impl Decoder<'_> {
         // either (§5.2). It also settles §5.5's strict variant, and rejects a
         // stream that mixes them -- all before a byte is decoded.
         //
-        // The library returns one opaque error where §10.4 names twelve
+        // The library returns one opaque error where §10.4 names ten
         // conditions, so a failure falls through to the loop below rather than
         // being translated. That is the slow path by definition: it runs once,
         // on a stream that is about to be rejected.
@@ -425,39 +383,6 @@ impl Decoder<'_> {
                 self.out.push((acc >> 2) as u8);
             }
             _ => unreachable!("n mod 4 == 1 was rejected above"),
-        }
-        Ok(())
-    }
-
-    /// §10.3. The order is normative: F′ is checked *before* the body is
-    /// decoded, and the body goes to `plain`, never back through Rule F.
-    fn framed(&mut self, stream: &[u8]) -> Result<(), Error> {
-        let len = stream.len();
-        let mut pos = 0;
-        while pos < len {
-            // Written as a slice comparison rather than two indexed reads: at
-            // pos = len-1 the second read would be past the end, and a decoder
-            // that parses attacker-controlled lengths (§14) should not have
-            // that shape anywhere.
-            if len - pos < 2 || &stream[pos..pos + 2] != b"~A" {
-                return Err(Error::FrameSync);
-            }
-            if pos + 5 > len {
-                return Err(Error::Truncated);
-            }
-            let a = self.read_alphabet(stream[pos + 2])? as usize;
-            let b = self.read_alphabet(stream[pos + 3])? as usize;
-            let c = self.read_alphabet(stream[pos + 4])? as usize;
-            let frame_len = (a << 12) | (b << 6) | c;
-            if pos + 5 + frame_len > len {
-                return Err(Error::Truncated);
-            }
-            let body = &stream[pos + 5..pos + 5 + frame_len];
-            if body.windows(2).any(|w| w == b"~A") {
-                return Err(Error::FrameRule);
-            }
-            self.plain(body, Padding::Forbidden)?;
-            pos += 5 + frame_len;
         }
         Ok(())
     }

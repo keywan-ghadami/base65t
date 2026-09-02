@@ -60,11 +60,8 @@ fn main() {
     let mix30 = mixed(&mut r, 30);
     let mix70 = mixed(&mut r, 70);
 
-    println!(
-        "Base65t density, {} KiB per input, dense preset\n",
-        N / 1024
-    );
-    println!("| input | base64 | profile U | profile T | profile B |");
+    println!("Base65t density, {} KiB per input\n", N / 1024);
+    println!("| input | base64 | profile U | profile T | mode |");
     println!("|---|---|---|---|---|");
     for (name, data) in [
         ("pure binary", &binary),
@@ -72,15 +69,14 @@ fn main() {
         ("70 % text / 30 % binary", &mix30),
         ("30 % text / 70 % binary", &mix70),
     ] {
-        let u = encode_dense(data, Profile::U).len();
-        let t = encode_dense(data, Profile::T).len();
-        let b = encode_dense(data, Profile::B).len();
+        let u = encode_with(data, Profile::U).len();
+        let t = encode_with(data, Profile::T).len();
         println!(
-            "| {name} | {:.3} | {:.3} | {:.3} | {:.3} |",
+            "| {name} | {:.3} | {:.3} | {:.3} | {:?} |",
             ratio(data, (4 * data.len()).div_ceil(3)),
             ratio(data, u),
             ratio(data, t),
-            ratio(data, b),
+            classify(data),
         );
     }
 
@@ -88,22 +84,20 @@ fn main() {
     let full = vec![b'a'; MAX_LITERAL];
     println!(
         "  one full literal segment: {}/{} = {:.5}",
-        encode_dense(&full, Profile::U).len(),
+        encode_with(&full, Profile::U).len(),
         MAX_LITERAL,
-        ratio(&full, encode_dense(&full, Profile::U).len())
+        ratio(&full, encode_with(&full, Profile::U).len())
     );
     println!(
         "  high-entropy binary:      {:.5} (base64 is {:.5})",
-        ratio(&binary, encode_dense(&binary, Profile::U).len()),
+        ratio(&binary, encode_with(&binary, Profile::U).len()),
         4.0 / 3.0
     );
 
-    println!("\nPresets on the mixed input (70 % text):");
+    println!("\nThe two entry points on the mixed input (70 % text):");
     for (name, out) in [
-        ("dense", encode_dense(&mix30, Profile::U)),
-        ("canonical", encode_canonical(&mix30, Profile::U)),
-        ("opaque", encode_opaque(&mix30)),
-        ("framed", encode_framed(&mix30, Profile::U)),
+        ("encode", encode_with(&mix30, Profile::U)),
+        ("base64url", encode_base64url(&mix30)),
     ] {
         println!("  {name:<10} {:.4}", ratio(&mix30, out.len()));
     }

@@ -29,31 +29,21 @@ fn samples() -> Vec<Vec<u8>> {
     v
 }
 
-const PRESETS: [Preset; 5] = [
-    Preset::Dense,
-    Preset::DenseFast,
-    Preset::Canonical,
-    Preset::Opaque,
-    Preset::Framed,
-];
-
 #[test]
 fn encode_into_appends_exactly_what_encode_with_returns() {
     for data in samples() {
-        for preset in PRESETS {
-            for profile in [Profile::U, Profile::T, Profile::B] {
-                let want = encode_with(&data, preset, profile);
-                // Into an empty buffer, and into one that already holds
-                // something: appending is the contract, not overwriting.
-                let mut fresh = Vec::new();
-                encode_into(&data, preset, profile, &mut fresh);
-                assert_eq!(fresh, want, "{preset:?}, {profile:?}, {} bytes", data.len());
+        for profile in [Profile::U, Profile::T] {
+            let want = encode_with(&data, profile);
+            // Into an empty buffer, and into one that already holds
+            // something: appending is the contract, not overwriting.
+            let mut fresh = Vec::new();
+            encode_into(&data, profile, &mut fresh);
+            assert_eq!(fresh, want, "{profile:?}, {} bytes", data.len());
 
-                let mut used = b"already here".to_vec();
-                encode_into(&data, preset, profile, &mut used);
-                assert_eq!(&used[..12], b"already here");
-                assert_eq!(&used[12..], &want[..], "{preset:?}, {profile:?}");
-            }
+            let mut used = b"already here".to_vec();
+            encode_into(&data, profile, &mut used);
+            assert_eq!(&used[..12], b"already here");
+            assert_eq!(&used[12..], &want[..], "{profile:?}");
         }
     }
 }
@@ -61,18 +51,16 @@ fn encode_into_appends_exactly_what_encode_with_returns() {
 #[test]
 fn decode_into_appends_exactly_what_decode_returns() {
     for data in samples() {
-        for preset in PRESETS {
-            for profile in [Profile::U, Profile::T, Profile::B] {
-                let stream = encode_with(&data, preset, profile);
+        for profile in [Profile::U, Profile::T] {
+            for stream in [encode_with(&data, profile), encode_base64url(&data)] {
                 let want = decode(&stream, profile).unwrap();
 
                 let mut used = b"already here".to_vec();
                 let meta = decode_into(&stream, profile, &mut used).unwrap();
                 assert_eq!(&used[..12], b"already here");
-                assert_eq!(&used[12..], &want.bytes[..], "{preset:?}, {profile:?}");
+                assert_eq!(&used[12..], &want.bytes[..], "{profile:?}");
                 assert_eq!(meta.alphabet_seen, want.alphabet_seen);
                 assert_eq!(meta.padding_seen, want.padding_seen);
-                assert_eq!(meta.framing_seen, want.framing_seen);
             }
         }
     }

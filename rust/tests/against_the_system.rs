@@ -159,10 +159,10 @@ fn nonzero_tail_bits_are_the_documented_disagreement() {
     assert_eq!(decode(b"YWxpY2U", Profile::U).unwrap().bytes, b"alice");
 }
 
-/// The other direction of §16.2: what this encoder writes with `opaque` is
+/// The other direction of §16.2: what `encode_base64url` writes is
 /// what base64(1) writes, minus the padding it is not allowed to write.
 #[test]
-fn opaque_is_base64_1_without_the_padding() {
+fn base64url_is_base64_1_without_the_padding() {
     if !have("base64") {
         eprintln!("skipping: no base64(1)");
         return;
@@ -178,6 +178,6 @@ fn opaque_is_base64_1_without_the_padding() {
                 c => c,
             })
             .collect();
-        assert_eq!(encode_opaque(&data), theirs_url);
+        assert_eq!(encode_base64url(&data), theirs_url);
     }
 }

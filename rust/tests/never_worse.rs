@@ -2,13 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §9.4 — `dense` is never longer than base64, and §12's two exact figures.
+//! §9.4 — the encoding is never longer than base64, and §12's two exact figures.
 //!
 //! The guarantee is what makes the format a drop-in rather than a trade, so it
 //! is checked over everything the round-trip corpus holds and not only over
-//! the cases it was designed for. §9.4 exempts only `framed`, and the test
-//! that measures that exemption says by how much.
+//! the cases it was designed for. There is no exemption left: v0.2 exempted
+//! `framed`, and v0.4 removed framing rather than keep a mode the guarantee
+//! did not cover.
 
+use base65t::internals::{costs, emit, segment_with, LiteralEnd, Rules};
 use base65t::*;
 
 fn base64_len(n: usize) -> usize {
@@ -70,78 +72,31 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
     v
 }
 
+/// §9.4, the sentence the whole case for switching rests on: the encoding is
+/// never longer than base64, per input rather than on average.
+///
+/// One encoder now, so this is a statement about the format and not about a
+/// preset. It holds in both modes §9.6 can pick — the exact programme keeps
+/// the all-base64 candidate in its search space, and the base64url mode *is*
+/// that candidate — so it is checked over everything the corpus holds rather
+/// than only over the cases it was designed for.
 #[test]
-fn dense_is_never_longer_than_base64() {
+fn the_encoding_is_never_longer_than_base64() {
     for (name, data) in corpus() {
-        for profile in [Profile::U, Profile::T, Profile::B] {
-            let out = encode_dense(&data, profile);
-            assert!(
-                out.len() <= base64_len(data.len()),
-                "{name}, {profile:?}: {} > {}",
-                out.len(),
-                base64_len(data.len())
-            );
-        }
-    }
-}
-
-/// §9.4 in v0.2 is a statement about the format, not about one preset: four of
-/// the five presets are never longer than base64, per input rather than on
-/// average. That is the whole of the case for switching, so it is checked for
-/// each of them rather than argued from the one that was measured.
-#[test]
-fn the_guarantee_covers_four_of_the_five_presets() {
-    for (name, data) in corpus() {
-        for profile in [Profile::U, Profile::T, Profile::B] {
-            for (preset, out) in [
-                ("dense", encode_dense(&data, profile)),
-                ("canonical", encode_canonical(&data, profile)),
-                ("opaque", encode_opaque(&data)),
+        for profile in [Profile::U, Profile::T] {
+            for (kind, out) in [
+                ("encode", encode_with(&data, profile)),
+                ("base64url", encode_base64url(&data)),
             ] {
                 assert!(
                     out.len() <= base64_len(data.len()),
-                    "{name}, {preset}, {profile:?}"
+                    "{name}, {kind}, {profile:?}: {} > {}",
+                    out.len(),
+                    base64_len(data.len())
                 );
             }
         }
     }
-}
-
-/// The fifth is `framed`, and its exemption is quantified rather than left as
-/// "does not hold": five characters per frame, and the base64 each frame body
-/// would have cost on its own.
-///
-/// It is an exemption, not a penalty — on data a literal can carry, `framed`
-/// is far shorter than base64 despite the headers. What it cannot do is
-/// *promise* to be shorter, and `framing_can_be_worse_than_base64` in
-/// tests/framed.rs is the case where it is not.
-#[test]
-fn only_framed_is_exempt_and_by_how_much() {
-    for n in [1usize, 100, 10_000, FRAME_BYTES + 1] {
-        for profile in [Profile::U, Profile::B] {
-            let data: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
-            let frames = n.div_ceil(FRAME_BYTES);
-            let bound: usize = data
-                .chunks(FRAME_BYTES)
-                .map(|c| base64_len(c.len()))
-                .sum::<usize>()
-                + 5 * frames;
-            let framed = encode_framed(&data, profile);
-            assert!(
-                framed.len() <= bound,
-                "n = {n}, {profile:?}: {} > {bound}",
-                framed.len()
-            );
-        }
-    }
-}
-
-/// `framed` does need its exemption: five characters a frame are five
-/// characters base64 does not spend.
-#[test]
-fn framed_needs_its_exemption() {
-    let data = b"alice.jones";
-    assert!(encode_framed(data, Profile::U).len() > base64_len(data.len()));
 }
 
 /// §12, second row: a literal segment carries 4158 bytes for 4162 characters,
@@ -151,44 +106,58 @@ fn framed_needs_its_exemption() {
 fn the_density_bound_for_pure_literal_text_is_exact() {
     let n = MAX_LITERAL;
     let data = vec![b'a'; n];
-    let out = encode_dense(&data, Profile::U);
+    let out = encode_with(&data, Profile::U);
     assert_eq!(out.len(), 4162);
     assert_eq!(out.len() as f64 / n as f64, 4162.0 / 4158.0);
 
+    // Four full segments back to back, which is also four window boundaries
+    // crossed without one of them costing a character.
     for k in 1..=4 {
         let data = vec![b'a'; k * n];
-        let out = encode_dense(&data, Profile::U);
+        let out = encode_with(&data, Profile::U);
         assert_eq!(out.len(), k * 4162, "{k} full literal segments");
     }
 }
 
 /// §12, first row: high-entropy input is base64 exactly, because nothing else
-/// is shorter.
+/// is shorter — and §9.6 reaches the same stream by not looking at all.
 #[test]
 fn high_entropy_input_encodes_at_the_base64_ratio() {
-    let mut s: u32 = 0x9e37_79b9;
-    let data: Vec<u8> = (0..10_000)
-        .map(|_| {
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            (s & 0xff) as u8
-        })
-        .collect();
-    let out = encode_dense(&data, Profile::U);
+    let data = noise(10_000);
+    let out = encode_with(&data, Profile::U);
     assert_eq!(out.len(), base64_len(data.len()));
-    assert_eq!(out, encode_opaque(&data));
+    assert_eq!(out, encode_base64url(&data));
+    assert_eq!(classify(&data), Mode::Base64);
+}
+
+/// §9.6 decides once, at the head, and the decision is a function of the
+/// input: the same bytes classify the same way whatever precedes the call.
+#[test]
+fn classification_is_a_function_of_the_head() {
+    // Compressed containers are named by their magic number, before entropy
+    // is even looked at -- a short gzip header is too little to measure.
+    let gzip = [b"\x1f\x8b\x08\x00".to_vec(), vec![b'a'; 40]].concat();
+    assert_eq!(classify(&gzip), Mode::Base64);
+    // Text is text at any length past the sample, and below it too.
+    assert_eq!(classify(b"alice.jones"), Mode::Exact);
+    assert_eq!(classify(&vec![b'a'; 100_000]), Mode::Exact);
+    // And the sample is a prefix: what follows it cannot change the answer.
+    let head = vec![b'a'; SAMPLE_BYTES];
+    let mut long = head.clone();
+    long.extend(noise(100_000));
+    assert_eq!(classify(&long), classify(&head));
 }
 
 /// The case the benchmark found within a minute of being pointed at a real
-/// file, kept as a regression although what caused it is gone.
+/// file, kept because the window boundary reopens exactly this door.
 ///
-/// `dense` used to run the exact programme over independent blocks, and a
-/// block whose last segment was a base64 run of `k` bytes with `k mod 3 != 0`
-/// left a partial quantum that the next block's run continued -- two adjacent
-/// base64 segments are one segment to a decoder (§4), so the seam decoded to
-/// what neither block meant. The linear rule needs no blocks at all, which
-/// removes the whole class; this holds the door shut.
+/// The exact programme runs over windows of [`WINDOW_BYTES`], and a window
+/// whose last segment is a base64 run of `k` bytes with `k mod 3 != 0` leaves
+/// a partial quantum that the next window's run continues -- two adjacent
+/// base64 segments are one segment to a decoder (§4), so a seam that is not
+/// merged decodes to what neither window meant. `segment_windowed` merges
+/// them; this holds the door shut, and the length assertion is the second
+/// half: an unmerged seam also costs a character, which §9.4 does not allow.
 ///
 /// Homogeneous input cannot show that class of bug: noise makes one base64
 /// run, and profile-legal text makes none. It needs a mixture, which is what
@@ -197,7 +166,7 @@ fn high_entropy_input_encodes_at_the_base64_ratio() {
 fn large_mixed_input_survives_every_seam() {
     let data = mixed(300_000);
     for profile in [Profile::U, Profile::T] {
-        let out = encode_dense(&data, profile);
+        let out = encode_with(&data, profile);
         let back = decode(&out, profile).unwrap_or_else(|e| panic!("{profile:?}: {e}"));
         assert_eq!(back.bytes, data, "{profile:?}");
         assert!(out.len() <= base64_len(data.len()), "{profile:?}");
@@ -205,54 +174,71 @@ fn large_mixed_input_survives_every_seam() {
     // High entropy leaves no literal worth taking, so the stream is base64url
     // exactly -- at any length.
     let noise = noise(200_000);
-    assert_eq!(encode_dense(&noise, Profile::U), encode_opaque(&noise));
+    assert_eq!(encode_with(&noise, Profile::U), encode_base64url(&noise));
 
-    for n in [65534, 65535, 65536, 131_071, 131_072] {
+    // Every offset around a window boundary, since the seam is where the two
+    // halves of the merge meet.
+    for n in [
+        WINDOW_BYTES - 2,
+        WINDOW_BYTES - 1,
+        WINDOW_BYTES,
+        WINDOW_BYTES + 1,
+        2 * WINDOW_BYTES - 1,
+        2 * WINDOW_BYTES,
+    ] {
         let d = &data[..n];
         assert_eq!(
-            decode(&encode_dense(d, Profile::U), Profile::U)
+            decode(&encode_with(d, Profile::U), Profile::U)
                 .unwrap()
                 .bytes,
-            d
+            d,
+            "n = {n}"
         );
+        assert!(encode_with(d, Profile::U).len() <= base64_len(n), "n = {n}");
     }
 }
 
-/// What the linear rule costs against the exact programme: it never absorbs a
-/// byte into a base64 run to align a quantum, so it can be a little longer.
+/// What windowing costs against the same programme run over the whole input.
 ///
-/// The number matters, because `dense` is what a caller gets by default and
-/// `canonical` is what the same input encodes to when every character counts.
-/// Both are bounded by base64, which is the guarantee; this bounds the gap
-/// between them.
+/// The windows are what make the encoder O(1) in memory on an input of any
+/// size, and the question that buys is how much density it spends. A literal
+/// cannot span a boundary, so the bound is one header per boundary -- four
+/// characters per 64 KiB, under 0,01 %. This measures the real figure, which
+/// is smaller still, and asserts the bound.
 #[test]
-fn the_linear_rule_costs_little_against_the_exact_one() {
+fn windowing_costs_almost_nothing() {
     for (name, data) in [
         ("mixed", mixed(300_000)),
         (
             "text",
-            (0..100_000)
+            (0..300_000)
                 .map(|i| b"abcdefghij"[i % 10])
                 .collect::<Vec<u8>>(),
         ),
-        ("noise", noise(100_000)),
     ] {
         for profile in [Profile::U, Profile::T] {
-            let fast = encode_dense(&data, profile).len();
-            let exact = encode_canonical(&data, profile).len();
-            assert!(fast >= exact, "{name}: the exact rule cannot be longer");
-            // §9.2.1 puts the gap at 0,224 % summed over the corpus, with one
-            // 22-byte file at 4,5 %. These inputs are long, so the bound here
-            // is the corpus figure with room, not the small-input worst case:
-            // a regression that took `dense` to several percent on a hundred
-            // kilobytes would be a different rule, not a rounding difference.
-            let over = (fast - exact) as f64 / exact as f64;
+            let windowed = encode_with(&data, profile).len();
+            // The same programme over the whole input, through the pieces the
+            // windowed encoder is built from: this compares the rule against
+            // itself, not against a second implementation of it.
+            let r = Rules::new(profile, Some(1));
+            let c = costs(&data, r);
+            let whole = emit(&data, &segment_with(&data, r, &c, LiteralEnd::KeyOrder)).len();
+
             assert!(
-                over < 0.01,
-                "{name}, {profile:?}: the linear rule costs {:.3} %",
-                100.0 * over
+                windowed >= whole,
+                "{name}: the whole-input rule cannot lose"
             );
-            assert!(fast <= base64_len(data.len()), "{name}, {profile:?}");
+            let boundaries = data.len() / WINDOW_BYTES;
+            assert!(
+                windowed - whole <= 4 * boundaries,
+                "{name}, {profile:?}: {} characters over {boundaries} boundaries",
+                windowed - whole
+            );
+            println!(
+                "{name} {profile:?}: {windowed} vs {whole}, {:.4} %",
+                100.0 * (windowed as f64 / whole as f64 - 1.0)
+            );
         }
     }
 }

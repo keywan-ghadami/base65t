@@ -49,7 +49,7 @@ fn main() {
         });
         let e1 = bench(n, || {
             buf.clear();
-            encode_into(&data, Preset::Dense, Profile::U, &mut buf);
+            encode_into(&data, Profile::U, &mut buf);
         });
         let d0 = bench(n, || {
             std::hint::black_box(decode(&stream, Profile::U).unwrap());

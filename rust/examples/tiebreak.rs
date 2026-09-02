@@ -20,7 +20,7 @@
 use std::path::Path;
 
 use base65t::internals::{c_vector, costs, segment_with, LiteralEnd, Rules};
-use base65t::{encode_canonical, Profile};
+use base65t::{encode_with, Profile};
 
 fn metrics(c: &str) -> (usize, usize) {
     let passthrough = c.chars().filter(|&x| x != 'B').count();
@@ -44,7 +44,6 @@ fn main() {
             profile = match p {
                 "U" => Profile::U,
                 "T" => Profile::T,
-                "B" => Profile::B,
                 _ => panic!("profile is U, T or B"),
             };
         } else if let Some(l) = arg.strip_prefix("--lmin=") {
@@ -58,7 +57,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let rules = Rules::preset(profile, Some(min_literal), false);
+    let rules = Rules::new(profile, Some(min_literal));
 
     println!("profile {profile:?}, L_min {min_literal}\n");
     println!(
@@ -81,7 +80,7 @@ fn main() {
 
         // Both are length-optimal: whatever else differs, the size does not.
         if min_literal == 1 && profile == Profile::U {
-            let canonical = encode_canonical(&data, profile);
+            let canonical = encode_with(&data, profile);
             assert_eq!(canonical.len(), data.len() + segment_cost(&key, &data));
         }
         assert_eq!(

@@ -2,37 +2,33 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! `encode_canonical`, §11.1: the shortest encoding, and among the shortest
-//! the smallest under the order `B < L < S`.
+//! The canonical order of §11.1, and the one other reading of it.
 //!
-//! The order is what makes `canonical` a function: `Key(S) = (|output(S)|,
-//! c(S))`, and the forward pass takes at every position the smallest symbol
-//! that still admits a length-optimal completion — `B` where a base64 segment
-//! can optimally open, otherwise `L` while the literal can optimally carry on,
-//! otherwise `S`.
+//! There is no `encode_canonical` any more, and its absence is the point: the
+//! encoder of §9 *is* the canonical rule. `Key(S) = (|output(S)|, c(S))` under
+//! `B < L < S`, and the forward pass takes at every position the smallest
+//! symbol that still admits a length-optimal completion — `B` where a base64
+//! segment can optimally open, otherwise `L` while the literal can optimally
+//! carry on, otherwise `S`. One encoder, one output, for every input.
 //!
 //! v0.1 described that computation as "otherwise the **longest** admissible
 //! literal" and claimed it was the minimum of `Key`. It is not: ending a
 //! literal early can align the base64 run behind it so that a later literal
 //! becomes length-optimal too, and `B < L` then decides for the shorter one.
-//! The correction is E1 of the errata and TV13 of §15; `LiteralEnd::Longest`
-//! below is v0.1's rule, kept unexported so the difference stays testable
-//! rather than remembered.
+//! The correction is E1 of the errata and TV13 of §15. This module is what is
+//! left of that argument: `LiteralEnd::Longest` is v0.1's rule, unexported,
+//! kept so the difference stays testable rather than remembered.
 
+#[cfg(test)]
 use crate::alphabet::Profile;
+#[cfg(test)]
 use crate::encode::{costs, emit, segment_with, LiteralEnd, Rules};
 
-/// §11.1: plain mode, URL alphabet, no padding, and no `L_min` — a literal is
-/// taken wherever it is shorter, down to seven bytes at a fortunate alignment.
+/// The rules the encoder runs under, so the tests below compare against what
+/// ships rather than against a copy of it.
+#[cfg(test)]
 fn rules(profile: Profile) -> Rules {
-    Rules::preset(profile, Some(1), false)
-}
-
-/// The minimum of `Key` over the segmentations the profile admits.
-pub fn encode_canonical(data: &[u8], profile: Profile) -> Vec<u8> {
-    let r = rules(profile);
-    let c = costs(data, r);
-    emit(data, &segment_with(data, r, &c, LiteralEnd::KeyOrder))
+    Rules::new(profile, Some(1))
 }
 
 /// The same length, under the rule §11.1's *Berechnung* paragraph gives.
@@ -69,7 +65,7 @@ mod tests {
         assert_eq!(cvec(data, LiteralEnd::KeyOrder), "SLLLLLLBBB");
         assert_eq!(cvec(data, LiteralEnd::Longest), "SLLLLLLLLB");
 
-        let by_order = encode_canonical(data, Profile::U);
+        let by_order = crate::encode_with(data, Profile::U);
         let by_construction = encode_canonical_longest_literal(data, Profile::U);
         assert_eq!(by_order.len(), by_construction.len(), "a length tie");
         assert_ne!(by_order, by_construction, "and two different streams");
@@ -155,9 +151,9 @@ mod tests {
         for _ in 0..4000 {
             let n = 1 + next() % 400;
             let data: Vec<u8> = (0..n).map(|_| b"aabbc.-_ ,;\n\x00"[next() % 13]).collect();
-            for profile in [Profile::U, Profile::T, Profile::B] {
+            for profile in [Profile::U, Profile::T] {
                 for lmin in [1usize, 4, 11] {
-                    let r = Rules::preset(profile, Some(lmin), false);
+                    let r = Rules::new(profile, Some(lmin));
                     let c = costs(&data, r);
                     let by_order = emit(&data, &seg(&data, r, &c, LiteralEnd::KeyOrder));
                     let by_longest = emit(&data, &seg(&data, r, &c, LiteralEnd::Longest));
@@ -194,7 +190,7 @@ mod tests {
         // Two literals of seven against one of eight, at equal length.
         let data = b"aaaaaaaa  aaaaaaa";
         assert_eq!(data.len(), 17);
-        let r = Rules::preset(Profile::U, Some(1), false);
+        let r = Rules::new(Profile::U, Some(1));
         let c = costs(data, r);
         let by_order = c_vector(&seg(data, r, &c, LiteralEnd::KeyOrder));
         let by_longest = c_vector(&seg(data, r, &c, LiteralEnd::Longest));
@@ -211,7 +207,7 @@ mod tests {
                     .map(|i| if bits >> i & 1 == 1 { b'a' } else { b' ' })
                     .collect();
                 for lmin in [1usize, 4, 11] {
-                    let r = Rules::preset(Profile::U, Some(lmin), false);
+                    let r = Rules::new(Profile::U, Some(lmin));
                     let c = costs(&d, r);
                     let k = c_vector(&seg(&d, r, &c, LiteralEnd::KeyOrder));
                     let l = c_vector(&seg(&d, r, &c, LiteralEnd::Longest));
@@ -226,7 +222,7 @@ mod tests {
     #[test]
     fn literals_reach_down_to_seven_bytes() {
         let data = b"abcdefg";
-        let out = encode_canonical(data, Profile::U);
+        let out = crate::encode_with(data, Profile::U);
         assert_eq!(out, b"~Habcdefg".to_vec());
         assert_eq!(out.len(), 9);
         assert_eq!((4 * data.len()).div_ceil(3), 10, "base64 would be longer");

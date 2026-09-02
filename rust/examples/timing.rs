@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Throughput of `dense` against plain base64, on one corpus file.
+//! Throughput of the encoding against plain base64, on one corpus file.
 //!
 //!     cargo run --release --example timing -- <path> [<path> ...]
 //!
@@ -29,26 +29,19 @@ fn bench<T>(label: &str, bytes: usize, mut f: impl FnMut() -> T) {
 fn main() {
     for path in std::env::args().skip(1) {
         let data = std::fs::read(&path).expect("read");
-        let dense = encode(&data);
-        let opaque = encode_opaque(&data);
+        let ours = encode(&data);
+        let base64 = encode_base64url(&data);
         println!(
-            "{path}  {} bytes, dense {:.1} % of base64",
+            "{path}  {} bytes, {:?} mode, {:.1} % of base64",
             data.len(),
-            100.0 * dense.len() as f64 / opaque.len() as f64
+            classify(&data),
+            100.0 * ours.len() as f64 / base64.len() as f64
         );
-        bench("encode dense", data.len(), || encode(&data));
-        bench("encode opaque", data.len(), || encode_opaque(&data));
-        bench("decode dense", data.len(), || {
-            decode(&dense, Profile::U).unwrap()
+        bench("encode", data.len(), || encode(&data));
+        bench("encode base64url", data.len(), || encode_base64url(&data));
+        bench("decode", data.len(), || decode(&ours, Profile::U).unwrap());
+        bench("decode base64url", data.len(), || {
+            decode(&base64, Profile::U).unwrap()
         });
-        bench("decode opaque", data.len(), || {
-            decode(&opaque, Profile::U).unwrap()
-        });
-        for t in [2usize, 4, 8] {
-            assert_eq!(encode_parallel(&data, Profile::U, t), dense);
-            bench(&format!("encode dense x{t}"), data.len(), || {
-                encode_parallel(&data, Profile::U, t)
-            });
-        }
     }
 }

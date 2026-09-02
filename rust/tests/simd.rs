@@ -71,22 +71,20 @@ fn samples() -> Vec<(String, Vec<u8>)> {
 #[test]
 fn the_base64_written_is_the_base64_of_rfc_4648() {
     for (name, data) in samples() {
-        assert_eq!(encode_opaque(&data), base64url(&data), "{name}");
+        assert_eq!(encode_base64url(&data), base64url(&data), "{name}");
     }
 }
 
 #[test]
-fn and_every_preset_still_round_trips_and_holds_section_9_4() {
+fn and_the_encoding_still_round_trips_and_holds_section_9_4() {
     for (name, data) in samples() {
-        for profile in [Profile::U, Profile::T, Profile::B] {
-            let dense = encode_dense(&data, profile);
-            assert_eq!(decode(&dense, profile).unwrap().bytes, data, "{name}");
+        for profile in [Profile::U, Profile::T] {
+            let out = encode_with(&data, profile);
+            assert_eq!(decode(&out, profile).unwrap().bytes, data, "{name}");
             assert!(
-                dense.len() <= (4 * data.len()).div_ceil(3),
+                out.len() <= (4 * data.len()).div_ceil(3),
                 "{name}, {profile:?}"
             );
-            let framed = encode_framed(&data, profile);
-            assert_eq!(decode(&framed, profile).unwrap().bytes, data, "{name}");
         }
     }
 }
@@ -130,7 +128,7 @@ fn a_long_run_is_judged_the_same_as_a_short_one() {
 #[test]
 fn a_long_run_reports_which_alphabet_it_was_written_in() {
     let data: Vec<u8> = (0..=255u8).chain(0..=255u8).collect();
-    let url = encode_opaque(&data);
+    let url = encode_base64url(&data);
     let classic: Vec<u8> = url
         .iter()
         .map(|&c| match c {

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Writes one long input and its `dense` encoding, so that the other
+//! Writes one long input and its encoding, so that the other
 //! implementation can check both against its own.
 //!
 //!     cargo run --release --example large_sample -- /tmp/in.bin /tmp/in.b65
@@ -10,7 +10,7 @@
 //! `docs/vectors.json` cannot reach here: every vector in it is under a
 //! kilobyte, and a hex dump of a quarter-megabyte input would be half a
 //! megabyte of repository. But a long stream is where a segmentation mistake
-//! hides -- one did, when `dense` still encoded in blocks and a block could
+//! hides -- one did, when the encoder still cut blocks whose seams could
 //! end on a partial quantum.
 //!
 //! The input is mixed on purpose. Homogeneous input shows nothing: noise makes
@@ -46,7 +46,7 @@ fn main() {
         }
     }
 
-    let stream = encode_dense(&data, Profile::U);
+    let stream = encode_with(&data, Profile::U);
     assert_eq!(
         decode(&stream, Profile::U).expect("its own output").bytes,
         data

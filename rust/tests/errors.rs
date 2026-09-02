@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §16.8 — every one of the twelve error codes in §10.4, raised on purpose.
+//! §16.8 — every one of the ten error codes in §10.4, raised on purpose.
 //!
 //! A table of error codes nothing produces is a table of error codes nobody
 //! has checked. The last test is the other half of the same concern: the
@@ -13,8 +13,8 @@
 use base65t::*;
 
 #[test]
-fn all_twelve_codes() {
-    let cases: [(Error, &str, Result<Decoded, Error>); 12] = [
+fn all_ten_codes() {
+    let cases: [(Error, &str, Result<Decoded, Error>); 10] = [
         (
             Error::TrailingTilde,
             "E_TRAILING_TILDE",
@@ -23,7 +23,7 @@ fn all_twelve_codes() {
         (
             Error::ReservedLen,
             "E_RESERVED_LEN",
-            decode_plain(b"~AAAA", Profile::U),
+            decode(b"~A", Profile::U),
         ),
         (Error::Truncated, "E_TRUNCATED", decode(b"~_A", Profile::U)),
         (Error::Profile, "E_PROFILE", decode(b"~Ca b", Profile::U)),
@@ -44,16 +44,6 @@ fn all_twelve_codes() {
             Error::NonUrlAlphabet,
             "E_NON_URL_ALPHABET",
             decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
-        ),
-        (
-            Error::FrameRule,
-            "E_FRAME_RULE",
-            decode(b"~AAAC~A", Profile::U),
-        ),
-        (
-            Error::FrameSync,
-            "E_FRAME_SYNC",
-            decode_framed(b"YWxpY2U", Profile::U),
         ),
     ];
     for (expected, code, got) in cases {
@@ -79,14 +69,15 @@ fn truncation_at_each_header_form() {
     assert_eq!(decode(&ok, Profile::U).unwrap().bytes.len(), 63);
 }
 
-/// A frame promises up to 262143 characters. Promising them is not the same as
+/// A header promises up to 4158 bytes. Promising them is not the same as
 /// having them, and a decoder that allocates on the promise is the bug §10.4
 /// warns about.
 #[test]
-fn a_frame_length_is_a_promise_not_an_allocation() {
-    // 'a' 'a' 'a' is 26 << 12 | 26 << 6 | 26 = 108186 characters claimed.
-    assert_eq!(decode(b"~Aaaa", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~A__-", Profile::U), Err(Error::Truncated));
+fn a_literal_length_is_a_promise_not_an_allocation() {
+    // `~__` is the largest header there is: 63 + 4095 = 4158 bytes claimed,
+    // and none of them present.
+    assert_eq!(decode(b"~___", Profile::U), Err(Error::Truncated));
+    assert_eq!(decode(b"~_aa", Profile::U), Err(Error::Truncated));
 }
 
 /// Arbitrary bytes in, an answer out. No panic, no overrun, no runaway.
@@ -105,11 +96,9 @@ fn arbitrary_input_decodes_or_errors() {
     for _ in 0..20_000 {
         let n = (next() % 40) as usize;
         let data: Vec<u8> = (0..n).map(|_| pool[next() as usize % pool.len()]).collect();
-        for profile in [Profile::U, Profile::T, Profile::B] {
+        for profile in [Profile::U, Profile::T] {
             for f in [
                 decode as fn(&[u8], Profile) -> Result<Decoded, Error>,
-                decode_plain,
-                decode_framed,
                 decode_url_strict,
             ] {
                 if let Ok(d) = f(&data, profile) {

@@ -2,27 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The encoder, §9 — two rules, and which preset gets which.
+//! The encoder, §9 — one rule, and a question asked before it runs.
 //!
-//! `dense` and `framed` use the linear rule of §9.2.1: one forward scan that
-//! takes every profile-legal run of eleven bytes or more. It is not
-//! length-optimal, and §9.1 shows it does not have to be — a literal that long
-//! cannot lose against base64 even after the worst rounding on both sides, so
-//! the never-worse guarantee of §9.4 holds without any optimisation at all.
-//! What it buys is the encoder running in constant memory at roughly base64's
-//! speed rather than at a twelfth of it.
+//! §9.2 derives an O(n) optimum, and the derivation is the interesting part,
+//! so it is implemented as derived rather than as a quadratic scan that would
+//! agree with it on small inputs: literals are edges, `h` has two bands, and
+//! each band is a sliding-window minimum over `D[i] − i` carried by one
+//! monotone deque. Admissibility never appears per edge — the profile moves
+//! the window's far end — which is what keeps the linear bound (§9.2,
+//! *Zulässigkeit der Kanten*).
 //!
-//! `canonical` and `opaque` use the exact programme of §9.2, which
-//! derives an O(n) optimum. The derivation is the interesting part, so it is
-//! implemented as derived rather than as a quadratic scan that would agree
-//! with it on small inputs: literals are edges, `h` has two bands, and each
-//! band is a sliding-window minimum over `D[i] − i` carried by one monotone
-//! deque. Admissibility never appears per edge — profile and F1 move the
-//! window's far end, F2 removes a position's literal transition outright —
-//! which is what keeps the linear bound (§9.2, *Zulässigkeit der Kanten*).
+//! What the encoder decides is not *how hard* to look but *whether*: §9.6
+//! classifies the head of the input, and a stream that a magic number or the
+//! entropy of its first bytes marks as already compressed goes through base64
+//! with nothing scanned at all. Everything else gets the programme.
 //!
-//! The recurrence here runs backwards, so that `encode_canonical` gets the
-//! `Restkosten[j]` §11.1 asks for from the same pass the presets use.
+//! The recurrence here runs backwards, so that the forward pass gets the
+//! `Restkosten[j]` §11.1 asks for out of the same table it minimises over.
 //!
 //! **Base64 runs are maximal (§4).** Two adjacent base64 segments are one
 //! segment to a decoder, and closing a segment mid-quantum and opening
@@ -33,25 +29,22 @@
 
 use std::collections::VecDeque;
 
-use crate::alphabet::{Profile, ALPHABET, MAX_FRAME_BODY, MAX_LITERAL, TILDE};
+use crate::alphabet::{Profile, ALPHABET, MAX_LITERAL, TILDE};
 
-/// What an encoding costs, as the pair the objective compares.
+/// What an encoding costs, in **thirds of a character**.
 ///
-/// The first component is characters **in thirds**, so that a readability
-/// bonus of a third of a character — what base64 wastes on a byte it could
-/// have passed through — stays integral. The second is negated passthrough
-/// bytes, and is held at zero unless the rules ask for readability; a
-/// lexicographic minimum over the pair is then "shortest, and among those the
-/// most readable".
-/// A cost in thirds of a character.
+/// Thirds rather than characters because a base64 quantum is four characters
+/// for three bytes, so a per-byte cost is integral only in thirds. There is no
+/// rounding anywhere in the programme, which is what lets the minimum be
+/// compared exactly.
 ///
-/// One number, not two. It carried a second component until `legible` was
-/// dropped -- the tie-break towards readability, which needed a lexicographic
-/// comparison -- and that comparison branches, five times per position, in the
-/// innermost loop of the programme. Removing it took the backward pass from 32
-/// to 51 MiB/s on a short input and from 10 to 29 on a megabyte, where it also
-/// halves the tables. One preset's tie-break was costing every preset that
-/// never used it between sixty and a hundred and ninety per cent.
+/// One number, not two. It was a pair until v0.4, the second component
+/// carrying negated passthrough bytes for a tie-break towards readability; the
+/// lexicographic comparison that needs branches, five times per position, in
+/// the innermost loop. Removing it took the backward pass from 32 to 51 MiB/s
+/// on a short input and from 10 to 29 on a megabyte, and halved the tables.
+/// One tie-break nobody had asked for was costing every encode between sixty
+/// and a hundred and ninety per cent.
 pub type Cost = i64;
 
 const INF: Cost = i64::MAX / 4;
@@ -73,10 +66,6 @@ fn is_inf(c: Cost) -> bool {
 fn add(a: Cost, b: Cost) -> Cost {
     a + b
 }
-
-/// Bytes per frame body in `encode_framed`, before encoding (§8.1): a fixed
-/// decoded size is what makes offset-to-frame O(1) without a trailer.
-pub const FRAME_BYTES: usize = 65536;
 
 /// Header cost of a literal of `m` bytes (§6.1): two bands, and no third one,
 /// because a run longer than `MAX_LITERAL` is several edges.
@@ -108,28 +97,26 @@ fn inc(p: usize) -> Cost {
     }
 }
 
-/// What the encoder is allowed to do, which is all a preset is (§9.0, §9.3).
+/// What the programme is allowed to do (§9.0).
+///
+/// Two fields, and neither is a choice about the encoding. The profile is a
+/// statement about the container (§7). `min_literal` is `Some(1)` for the
+/// encoding and `None` for [`crate::encode_base64url`], which is not a mode of
+/// the format but the way out of it (§14) — so the only value the format's own
+/// encoder ever passes is `Some(1)`, and there is no `L_min` left to tune.
 #[derive(Debug, Clone, Copy)]
 pub struct Rules {
     pub profile: Profile,
-    /// `L_min`: the shortest literal this preset will emit. `None` never emits
-    /// one, which is `opaque`.
+    /// `L_min`: the shortest literal to emit. `None` emits none at all, which
+    /// is base64url exactly.
     pub min_literal: Option<usize>,
-    /// F1 and F2 in force, for a stream that will be carried in frames (§8.2).
-    pub framed: bool,
-    /// §9.6: skip the scan over a window whose sample shows too little to
-    /// gain. `dense-fast` and nothing else.
-    pub fast: bool,
 }
 
 impl Rules {
-    /// A preset as §9.3 defines one.
-    pub fn preset(profile: Profile, min_literal: Option<usize>, framed: bool) -> Self {
+    pub fn new(profile: Profile, min_literal: Option<usize>) -> Self {
         Rules {
             profile,
             min_literal,
-            framed,
-            fast: false,
         }
     }
 
@@ -165,7 +152,7 @@ pub fn c_vector(segs: &[Seg]) -> String {
     v
 }
 
-/// Suffix costs, the table both the presets and §11.1 reconstruct from.
+/// Suffix costs, the table the forward pass and §11.1 both reconstruct from.
 ///
 /// * `r_l[j]` — cheapest encoding of `data[j..]` when a base64 segment *may*
 ///   start at `j`: the previous segment was a literal, or `j` is the start.
@@ -221,30 +208,20 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
 
     let key = |t: usize, r_l: &[Cost]| -> Cost { 3 * t as i64 + r_l[t] };
 
-    // `first_bad[j]` and `first_tilde_a[j]` as running values: both are
-    // monotone as `j` decreases, which is exactly why they can be window
-    // bounds instead of per-edge checks.
+    // `first_bad[j]` as a running value: it is monotone as `j` decreases,
+    // which is exactly why it can be a window bound instead of a per-edge
+    // check.
     let mut first_bad = n;
-    let mut first_tilde_a = usize::MAX;
 
     let lmin = rules.min_literal.unwrap_or(usize::MAX);
     for j in (0..n).rev() {
         if !rules.profile.allows(data[j]) {
             first_bad = j;
         }
-        if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
-            first_tilde_a = j;
-        }
 
         if rules.min_literal.is_some() {
-            // A literal ending at `t` is barred outright when its last byte is
-            // a tilde (F2) — a property of `t`, so such a `t` never enters a
-            // deque at all.
             let admit = |t: usize, dq: &mut VecDeque<(usize, Cost)>, r_l: &[Cost]| {
                 if t > n {
-                    return;
-                }
-                if rules.framed && data[t - 1] == TILDE {
                     return;
                 }
                 let k = key(t, r_l);
@@ -258,12 +235,9 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
                 dq.push_back((t, k));
             };
             // The far end of each window: the byte run must stay inside the
-            // profile, and inside F1 when framed. Computed before the
-            // candidates enter, because it decides whether they may.
-            let mut far = first_bad;
-            if rules.framed && first_tilde_a != usize::MAX {
-                far = far.min(first_tilde_a + 1);
-            }
+            // profile. Computed before the candidates enter, because it
+            // decides whether they may.
+            let far = first_bad;
             let hi1 = far.min(j + 62).min(n);
             let hi2 = far.min(j + MAX_LITERAL).min(n);
 
@@ -392,11 +366,7 @@ fn literal_end(data: &[u8], rules: Rules, c: &Costs, i: usize, end: LiteralEnd) 
         if !rules.profile.allows(data[t - 1]) {
             break;
         }
-        if rules.framed && t - i >= 2 && data[t - 2] == TILDE && data[t - 1] == b'A' {
-            break;
-        }
-        let barred_f2 = rules.framed && data[t - 1] == TILDE;
-        if t - i >= lmin && !barred_f2 && add(rules.literal_edge(t - i), c.r_l[t]) == best {
+        if t - i >= lmin && add(rules.literal_edge(t - i), c.r_l[t]) == best {
             cands.push(t);
         }
         t += 1;
@@ -504,423 +474,12 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
     }
 }
 
-/// The linear-time segmentation of §9.2.1: scan, and take every run the
-/// threshold admits.
-///
-/// This is what `dense` and `framed` use, and it is normative rather than
-/// "some greedy encoder": the rule is exact, so the output is a function of
-/// the input like every other preset's, and the published vectors stay
-/// byte-exact. What it is not is length-optimal — it never absorbs a byte into
-/// a base64 run to align a quantum, where the programme in §9.2.2 sometimes
-/// would.
-///
-/// It cannot lose against base64, and that is §9.1's derivation rather than a
-/// hope: a literal of `L >= 11` bytes saves `(L - 10)/3` characters *after*
-/// the worst-case rounding its two base64 neighbours can suffer. Every literal
-/// here is at least that long, and the saving composes over the stream.
-///
-/// One pass, no tables, no backpointers, constant memory. That is the whole
-/// point: the exact programme needs O(n) backpointers and about 80 bytes of
-/// state per input byte, which is what made encoding fifteen times the cost of
-/// base64.
-pub fn segment_greedy(data: &[u8], rules: Rules) -> Vec<Seg> {
-    let mut segs = Vec::new();
-    walk_greedy(data, rules, |seg| segs.push(seg));
-    segs
-}
-
-/// The linear rule itself, handing each segment to `take` as it is decided.
-///
-/// One place. `segment_greedy` collects the segments because the tests want
-/// them; `encode_greedy` writes them straight out because a caller wants the
-/// stream and not a list. Writing the rule twice would be writing it twice.
-fn walk_greedy(data: &[u8], rules: Rules, mut take: impl FnMut(Seg)) {
-    let n = data.len();
-    let Some(lmin) = rules.min_literal else {
-        // `opaque`: never a literal.
-        if n > 0 {
-            take(Seg::Base64(0, n));
-        }
-        return;
-    };
-    // A start is judged on the 128 bits covering its block and the next, so a
-    // threshold above 64 would look past what the word can see. The format's
-    // is 11 (§9.1) and `canonical`'s is 1; nothing else is reachable except
-    // through `internals`, and this says so rather than answering wrongly.
-    assert!(lmin <= 64, "a threshold above 64 bytes is not supported");
-
-    let profile = rules.profile;
-    let mut pending = 0; // start of the base64 run being accumulated
-    let mut i = 0; // first position not yet decided
-    let mut base = 0; // first byte of the block `lo` describes
-    let mut lo = block_mask(data, 0, profile);
-    let mut window = usize::MAX; // the window `scanning` was decided for
-    let mut scanning = true;
-
-    while base < n {
-        // §9.6. A window the sample writes off is not masked at all -- that is
-        // the whole saving, and it is why the test is on the window rather
-        // than on each block of it.
-        if rules.fast {
-            let w = base / FAST_WINDOW;
-            if w != window {
-                window = w;
-                scanning = worth_scanning(data, w, rules, lmin);
-            }
-            if !scanning {
-                let end = ((w + 1) * FAST_WINDOW).min(n);
-                i = i.max(end);
-                base = end;
-                lo = block_mask(data, base, profile);
-                continue;
-            }
-        }
-
-        // One pass over the input, two blocks in hand: the second is what
-        // lets a run that straddles the boundary be judged on the bytes that
-        // actually follow it.
-        let hi = block_mask(data, base + 64, profile);
-        // The double-width word is only needed where a run can straddle the
-        // boundary. On a short value -- a cache key, a token, most of what
-        // §0.1 names -- there is no next block, and paying for 128-bit shifts
-        // to shift in zeros is a quarter of the work of encoding it.
-        let wide = (lo as u128) | ((hi as u128) << 64);
-        let (all, width) = if hi == 0 {
-            (runs_at_least_64(lo, lmin), 64usize)
-        } else {
-            (runs_at_least(wide, lmin) as u64, 128usize)
-        };
-        let mut starts = mask_from(all, i, base);
-
-        while starts != 0 {
-            let s = base + starts.trailing_zeros() as usize;
-            let off = s - base;
-            let ones = if width == 64 {
-                (lo >> off).trailing_ones() as usize
-            } else {
-                (wide >> off).trailing_ones() as usize
-            };
-            // A run filling the rest of the word may continue past it.
-            let e = if off + ones >= width {
-                run_end(data, s + ones, profile)
-            } else {
-                (s + ones).min(n)
-            };
-
-            // The rule, once the run is known: literals of at most
-            // `MAX_LITERAL` from its start, until what is left is under the
-            // threshold and goes to base64 with everything else.
-            let mut t = s;
-            while e - t >= lmin {
-                let mut j = (t + MAX_LITERAL).min(e);
-                if rules.framed {
-                    // F1: the payload may not contain `~A` (§8.2). F2: it may
-                    // not end on a tilde. Both only ever shorten a piece, so
-                    // they are applied to the run rather than folded into
-                    // finding it.
-                    let mut k = t;
-                    while k < j {
-                        if data[k] == TILDE && k + 1 < n && data[k + 1] == b'A' {
-                            j = k;
-                            break;
-                        }
-                        k += 1;
-                    }
-                    while j > t && data[j - 1] == TILDE {
-                        j -= 1;
-                    }
-                    if j - t < lmin {
-                        t = j.max(t + 1);
-                        continue;
-                    }
-                }
-                if pending < t {
-                    take(Seg::Base64(pending, t));
-                }
-                take(Seg::Literal(t, j));
-                t = j;
-                pending = j;
-            }
-            // Nothing in `[t, e)` can start a literal -- it is shorter than
-            // the threshold, and the byte at `e` is one the profile rejects.
-            i = e.max(t).max(i + 1);
-            starts = mask_from(all, i, base);
-        }
-
-        if i > base + 64 {
-            base = i - (i % 64);
-            lo = block_mask(data, base, profile);
-        } else {
-            base += 64;
-            lo = hi;
-        }
-    }
-    if pending < n {
-        take(Seg::Base64(pending, n));
-    }
-}
-
-/// `starts` with everything before `i` cleared, where bit 0 is byte `base`.
-#[inline]
-fn mask_from(starts: u64, i: usize, base: usize) -> u64 {
-    if i <= base {
-        starts
-    } else if i - base < 64 {
-        starts & (u64::MAX << (i - base))
-    } else {
-        0
-    }
-}
-
-/// [`runs_at_least`] where one word is enough. Same doubling, half the
-/// instructions: a 128-bit shift is two or three of them.
-#[inline]
-fn runs_at_least_64(mut m: u64, k: usize) -> u64 {
-    let mut have = 1usize;
-    while have < k {
-        let step = (k - have).min(have);
-        m &= m >> step;
-        have += step;
-    }
-    m
-}
-
-/// §9.6. A window is decided as a whole, and the windows are cut at absolute
-/// offsets, so the decision is a function of the input and not of where an
-/// encoder happened to start.
-pub const FAST_WINDOW: usize = 65536;
-/// The bytes of a window the decision is taken on.
-pub const FAST_SAMPLE: usize = 1024;
-/// A window is scanned when at least this share of its sample goes into
-/// literals, as a fraction: one tenth.
-pub const FAST_SHARE: (usize, usize) = (1, 10);
-
-/// §9.6: is this window worth scanning?
-///
-/// A literal byte saves a third of a character against the four thirds base64
-/// spends on it, so a window whose sample puts a tenth of its bytes into
-/// literals is worth about two and a half per cent of its output -- and the
-/// scan costs about half the encoding time. Below that the trade is bad, and
-/// `dense-fast` declines it. The tenth is not derived from that arithmetic; it
-/// is read off the corpus, where it is the knee: prose gets 1.81x for half a
-/// point of density and a stylesheet, which has real density to lose, is not
-/// touched at all.
-fn worth_scanning(data: &[u8], window: usize, rules: Rules, lmin: usize) -> bool {
-    let start = window * FAST_WINDOW;
-    let end = (start + FAST_WINDOW).min(data.len());
-    let sample = &data[start..(start + FAST_SAMPLE).min(end)];
-    if sample.is_empty() {
-        return false;
-    }
-    let mut plain = rules;
-    plain.fast = false;
-    let mut literal = 0usize;
-    walk_greedy(sample, plain, |seg| {
-        if let Seg::Literal(i, j) = seg {
-            literal += j - i;
-        }
-    });
-    let _ = lmin;
-    literal * FAST_SHARE.1 >= sample.len() * FAST_SHARE.0
-}
-
-/// Bits where a run of at least `k` set bits starts. Doubling, so `log k`
-/// steps: after `m &= m >> s`, a set bit means the next `have + s` are set.
-#[inline]
-fn runs_at_least(mut m: u128, k: usize) -> u128 {
-    let mut have = 1usize;
-    while have < k {
-        let step = (k - have).min(have);
-        m &= m >> step;
-        have += step;
-    }
-    m
-}
-
-/// The mask of the 64 bytes at `at`, zero past the end of the input.
-#[inline]
-fn block_mask(data: &[u8], at: usize, profile: Profile) -> u64 {
-    if at >= data.len() {
-        return 0;
-    }
-    let rest = &data[at..];
-    match rest.as_chunks::<64>().0.first() {
-        Some(block) => profile.mask64(block),
-        None => profile.mask_short(rest),
-    }
-}
-
-/// Where a run that is still open at `at` ends: the first byte the profile
-/// rejects, or the end of the input.
-fn run_end(data: &[u8], at: usize, profile: Profile) -> usize {
-    let n = data.len();
-    let mut at = at;
-    loop {
-        let ones = block_mask(data, at, profile).trailing_ones() as usize;
-        if ones < 64 || at + 64 >= n {
-            return (at + ones).min(n);
-        }
-        at += 64;
-    }
-}
-
-/// One plain-mode stream under the linear rule of §9.2.1, over any input.
-///
-/// The scan and the writing are one pass. `segment_greedy` exists beside this
-/// for the tests, which need the segmentation itself rather than the stream,
-/// but going through it would mean a heap allocation proportional to the
-/// number of segments and a second walk over the input to write what the first
-/// one already knew. The rule is the same rule; only the list in between is
-/// gone.
-pub fn encode_greedy(data: &[u8], rules: Rules) -> Vec<u8> {
-    let n = data.len();
-    let mut out = Vec::with_capacity(n + n / 3 + 8);
-    encode_greedy_into(data, rules, &mut out);
-    out
-}
-
-/// The same, appending to a buffer the caller owns.
-pub fn encode_greedy_into(data: &[u8], rules: Rules, out: &mut Vec<u8>) {
-    let n = data.len();
-    out.reserve(n + n / 3 + 8);
-    walk_greedy(data, rules, |seg| match seg {
-        Seg::Base64(i, j) => emit_base64(&data[i..j], out),
-        Seg::Literal(i, j) => emit_literal(&data[i..j], out),
-    });
-}
-
-/// Below this many bytes, splitting the input costs more than it saves.
-const PARALLEL_MIN: usize = 1 << 20;
-
-/// How far past a target offset a cut point is looked for before giving up on
-/// it. Generous: a stream with no literal in a quarter-megabyte is a stream
-/// the encoder is already writing at base64 speed.
-const CUT_WINDOW: usize = 1 << 18;
-
-/// The offset of the first literal the rule takes at or after `from`, if it is
-/// near enough to be found without reading the rest of the input.
-///
-/// This is the whole of why `dense` can be split, so it is worth being exact
-/// about. Two facts:
-///
-/// * **A profile-illegal byte lies in no literal.** So the byte at `q` below
-///   is a position the encoder passes through with nothing open across it, and
-///   a walk started there decides exactly what a walk from the beginning of
-///   the input decides from `q` on. Starting anywhere else risks landing
-///   inside a literal, where the two walks disagree about what they are in the
-///   middle of.
-/// * **A base64 run never crosses a literal.** So a cut at a literal's first
-///   byte leaves the run before it entirely on one side, and the two halves
-///   concatenate to the byte the whole-input encoder would have written.
-///
-/// The window is what makes it local: a literal found well clear of the far
-/// edge was decided by bytes inside the window, so truncating there cannot
-/// have changed it.
-fn first_literal_from(data: &[u8], from: usize, rules: Rules) -> Option<usize> {
-    let n = data.len();
-    let q = (from..n).find(|&i| !rules.profile.allows(data[i]))?;
-    let w = n.min(q + CUT_WINDOW);
-    let mut found = None;
-    walk_greedy(&data[q..w], rules, |seg| {
-        if let Seg::Literal(a, b) = seg {
-            if found.is_none() && q + b + MAX_LITERAL < w {
-                found = Some(q + a);
-            }
-        }
-    });
-    found
-}
-
-/// Where `encode_parallel` splits, for `threads` workers: strictly increasing
-/// offsets strictly inside the input, each the first byte of a literal.
-pub fn cut_points(data: &[u8], rules: Rules, threads: usize) -> Vec<usize> {
-    let n = data.len();
-    let mut cuts: Vec<usize> = Vec::new();
-    for k in 1..threads {
-        let target = k * n / threads;
-        let last = cuts.last().copied().unwrap_or(0);
-        if target <= last {
-            continue;
-        }
-        if let Some(c) = first_literal_from(data, target, rules) {
-            if c > last {
-                cuts.push(c);
-            }
-        }
-    }
-    cuts
-}
-
-/// `dense` over several threads, writing what one thread would have written.
-///
-/// Not a second encoder and not an approximation: the workers run the same
-/// rule on adjacent ranges, and `first_literal_from` picks the boundaries so
-/// that no segment spans one. Any thread count, including a different one on
-/// the next call, produces the same bytes -- which it has to, because §11.1
-/// hangs cache keys on them.
-///
-/// Falls back to one thread for small inputs and for input the rule finds no
-/// literal in. The second case costs nothing: input with no literals is input
-/// the encoder is already writing at base64's speed, since it is base64.
-pub fn encode_parallel(data: &[u8], rules: Rules, threads: usize) -> Vec<u8> {
-    let n = data.len();
-    let threads = threads.max(1).min(n / PARALLEL_MIN.max(1) + 1);
-    if threads < 2 || rules.framed {
-        return encode_greedy(data, rules);
-    }
-
-    let mut cuts = vec![0usize];
-    cuts.extend(cut_points(data, rules, threads));
-    cuts.push(n);
-    if cuts.len() < 3 {
-        return encode_greedy(data, rules);
-    }
-
-    let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
-        let handles: Vec<_> = cuts
-            .windows(2)
-            .map(|w| scope.spawn(move || encode_greedy(&data[w[0]..w[1]], rules)))
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-
-    let mut out = Vec::with_capacity(parts.iter().map(Vec::len).sum());
-    for part in &parts {
-        out.extend_from_slice(part);
-    }
-    out
-}
-
-/// §8: fixed-size frames, so that a byte offset names a frame without a
-/// trailer. F1 and F2 hold inside each body, so `~A` occurs only where a frame
-/// starts (§8.2).
-pub fn encode_framed(data: &[u8], profile: Profile, min_literal: usize) -> Vec<u8> {
-    let rules = Rules::preset(profile, Some(min_literal), true);
-    let mut out = Vec::new();
-    for chunk in data.chunks(FRAME_BYTES) {
-        // Frames are for large streams, so the linear rule here too.
-        let body = encode_greedy(chunk, rules);
-        assert!(
-            body.len() <= MAX_FRAME_BODY,
-            "a frame body of {} chars does not fit 18 bits",
-            body.len()
-        );
-        out.push(TILDE);
-        out.push(b'A');
-        out.push(ALPHABET[(body.len() >> 12) & 63]);
-        out.push(ALPHABET[(body.len() >> 6) & 63]);
-        out.push(ALPHABET[body.len() & 63]);
-        out.extend_from_slice(&body);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn rules(min_literal: Option<usize>) -> Rules {
-        Rules::preset(Profile::U, min_literal, false)
+        Rules::new(Profile::U, min_literal)
     }
 
     /// The cost table has to agree with the string the emitter actually
@@ -956,5 +515,187 @@ mod tests {
             emit_base64(&data, &mut out);
             assert_eq!(out.len(), b64_chars(k));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// §9.6 — the question asked before the programme runs.
+
+/// Bytes of the head the entropy is measured over.
+pub const SAMPLE_BYTES: usize = 4096;
+
+/// Above this many bits per byte, nothing a literal can hold is in there.
+///
+/// A literal needs eleven consecutive bytes the profile admits, and profile U
+/// admits 66 of 256. At 7.4 bits per byte such a run is vanishingly rare, so
+/// the scan would read the whole input to find nothing. The number is read off
+/// the corpus, not derived: at that threshold the decision agrees with always
+/// scanning to within 0.00 % of size over 101 samples, and no file gives up
+/// more than half a point.
+pub const ENTROPY_LIMIT_MILLIBITS: u32 = 7400;
+
+/// Magic numbers of containers whose contents are already compressed.
+///
+/// Not a guess, unlike the entropy: a stream that opens with these bytes holds
+/// deflate, LZMA or an entropy-coded image, and no literal will be found in it
+/// at any length. Checking costs a few comparisons at the head.
+const MAGIC: [&[u8]; 9] = [
+    &[0x1f, 0x8b],                   // gzip
+    &[0x28, 0xb5, 0x2f, 0xfd],       // zstd
+    &[0xfd, b'7', b'z', b'X', b'Z'], // xz
+    b"BZh",                          // bzip2
+    b"PK\x03\x04",                   // zip
+    &[0xff, 0xd8, 0xff],             // JPEG
+    &[0x89, b'P', b'N', b'G'],       // PNG
+    b"OggS",                         // Ogg
+    &[0x1a, 0x45, 0xdf, 0xa3],       // Matroska / WebM
+];
+
+/// Shannon entropy of `data`, in thousandths of a bit per byte.
+///
+/// Integer arithmetic on purpose: this decides what the encoder writes, so two
+/// implementations have to agree on it exactly, and floating point is where
+/// two implementations stop agreeing. The logarithm is a 256-entry table of
+/// `-log2(k/n)` scaled by 1000, computed by integer bisection.
+fn entropy_millibits(data: &[u8]) -> u32 {
+    let n = data.len();
+    if n == 0 {
+        return 0;
+    }
+    let mut count = [0u32; 256];
+    for &b in data {
+        count[b as usize] += 1;
+    }
+    // Sum of k * log2(n/k), scaled by 1000, divided by n at the end.
+    let mut total: u64 = 0;
+    for &k in count.iter() {
+        if k == 0 {
+            continue;
+        }
+        total += k as u64 * log2_millibits(n as u64, k as u64);
+    }
+    (total / n as u64) as u32
+}
+
+/// `1000 * log2(a / b)` for `a >= b > 0`, by integer bisection.
+///
+/// Exact and reproducible: the same inputs give the same answer on every
+/// machine and in every language, which a `f64::log2` does not promise.
+fn log2_millibits(a: u64, b: u64) -> u64 {
+    // Integer part.
+    let mut whole = 0u64;
+    let mut x = a;
+    while x >= 2 * b {
+        x /= 2;
+        whole += 1;
+    }
+    // Fractional part by squaring: x/b is in [1, 2), and squaring it moves one
+    // bit of the fraction into the integer part each round.
+    let mut frac = 0u64;
+    let mut num = x;
+    let mut den = b;
+    for bit in 0..16 {
+        // num/den squared, kept from overflowing by dropping low bits.
+        while num > (1u64 << 31) || den > (1u64 << 31) {
+            num >>= 1;
+            den >>= 1;
+        }
+        num *= num;
+        den *= den;
+        if num >= 2 * den {
+            num /= 2;
+            frac += 1000 >> (bit + 1);
+        }
+    }
+    whole * 1000 + frac
+}
+
+/// What §9.6 decides for a stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Nothing to find: write base64url and do not scan.
+    Base64,
+    /// Run the programme of §9.2.
+    Exact,
+}
+
+/// §9.6, once at the head of the stream and carried through.
+pub fn classify(data: &[u8]) -> Mode {
+    if MAGIC.iter().any(|m| data.starts_with(m)) {
+        return Mode::Base64;
+    }
+    let sample = &data[..SAMPLE_BYTES.min(data.len())];
+    if entropy_millibits(sample) > ENTROPY_LIMIT_MILLIBITS {
+        Mode::Base64
+    } else {
+        Mode::Exact
+    }
+}
+
+/// Input bytes the programme is run over at a time (§9.2.3).
+///
+/// The programme needs about twenty-four bytes of table per input byte, so a
+/// gigabyte object cannot have it run over the whole of it. A window bounds
+/// that at 1.5 MB whatever the input is, and costs at most one extra literal
+/// header per boundary -- under 0.01 %. The windows are cut at absolute
+/// offsets, so the segmentation stays a function of the input.
+pub const WINDOW_BYTES: usize = 65536;
+
+/// The segmentation of the whole input: the programme per window, and adjacent
+/// base64 runs joined across the boundaries.
+///
+/// The joining is not a nicety. Two adjacent base64 segments are one segment to
+/// a decoder (§4), so emitting them separately writes a partial quantum into
+/// the middle of a run and the seam decodes to what neither window meant.
+/// Joining them first also makes the all-base64 case exactly base64, which is
+/// what §9.4 needs.
+fn segment_windowed(data: &[u8], rules: Rules) -> Vec<Seg> {
+    let mut segs: Vec<Seg> = Vec::new();
+    for start in (0..data.len()).step_by(WINDOW_BYTES) {
+        let end = (start + WINDOW_BYTES).min(data.len());
+        let window = &data[start..end];
+        let c = costs(window, rules);
+        for seg in segment_with(window, rules, &c, LiteralEnd::KeyOrder) {
+            let seg = match seg {
+                Seg::Base64(i, j) => Seg::Base64(start + i, start + j),
+                Seg::Literal(i, j) => Seg::Literal(start + i, start + j),
+            };
+            match (segs.last_mut(), seg) {
+                (Some(Seg::Base64(_, prev_end)), Seg::Base64(i, j)) if *prev_end == i => {
+                    *prev_end = j;
+                }
+                _ => segs.push(seg),
+            }
+        }
+    }
+    segs
+}
+
+/// The encoding of §9: classify, then either base64 or the programme.
+pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + data.len() / 3 + 8);
+    encode_rules_into(data, rules, &mut out);
+    out
+}
+
+/// The same, appending to a buffer the caller owns.
+pub fn encode_rules_into(data: &[u8], rules: Rules, out: &mut Vec<u8>) {
+    out.reserve(data.len() + data.len() / 3 + 8);
+    if data.is_empty() {
+        return;
+    }
+    match rules.min_literal {
+        None => emit_base64(data, out),
+        Some(_) => match classify(data) {
+            Mode::Base64 => emit_base64(data, out),
+            Mode::Exact => {
+                for seg in segment_windowed(data, rules) {
+                    match seg {
+                        Seg::Base64(i, j) => emit_base64(&data[i..j], out),
+                        Seg::Literal(i, j) => emit_literal(&data[i..j], out),
+                    }
+                }
+            }
+        },
     }
 }

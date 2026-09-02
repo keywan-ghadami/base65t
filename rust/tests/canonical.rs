@@ -2,8 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §16.3 — `encode_canonical` against an implementation that shares nothing
-//! with it.
+//! §11.1 — the encoder against an implementation that shares nothing with it.
 //!
 //! The specification asks for two independent implementations. This is the
 //! honest half of that: the encoder under test computes a minimum with a
@@ -16,7 +15,7 @@
 //! What it is not: a second implementation in another language, written by
 //! somebody else. FINDINGS.md says so where it counts §16.3.
 
-use base65t::{decode_plain, encode_canonical, Profile};
+use base65t::{decode, encode_with, Profile};
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
@@ -144,12 +143,12 @@ fn corpus(profile: Profile, alphabet: &[u8], max_len: usize) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn canonical_is_the_minimum_of_key_profile_u() {
+fn the_encoder_is_the_minimum_of_key_under_profile_u() {
     let alphabet = b"ab.~ -_9";
     let mut ties = 0usize;
     for data in corpus(Profile::U, alphabet, 12) {
         let (_, expected) = brute_force(&data, Profile::U);
-        let got = encode_canonical(&data, Profile::U);
+        let got = encode_with(&data, Profile::U);
         assert_eq!(
             String::from_utf8_lossy(&got),
             String::from_utf8_lossy(&expected),
@@ -167,15 +166,15 @@ fn canonical_is_the_minimum_of_key_profile_u() {
 }
 
 #[test]
-fn canonical_is_the_minimum_of_key_profiles_t_and_b() {
+fn the_encoder_is_the_minimum_of_key_under_profile_t() {
     for (profile, alphabet) in [
         (Profile::T, b"a=~\" x".as_slice()),
-        (Profile::B, b"a~\x00\xff".as_slice()),
+        (Profile::T, b"a~\x00\xff".as_slice()),
     ] {
         for data in corpus(profile, alphabet, 11) {
             let (_, expected) = brute_force(&data, profile);
             assert_eq!(
-                encode_canonical(&data, profile),
+                encode_with(&data, profile),
                 expected,
                 "profile {profile:?}, input {data:?}"
             );
@@ -183,12 +182,12 @@ fn canonical_is_the_minimum_of_key_profiles_t_and_b() {
     }
 }
 
-/// Whatever else canonical is, it has to decode back.
+/// Whatever else the minimum is, it has to decode back.
 #[test]
-fn canonical_round_trips() {
-    for data in corpus(Profile::B, b"a~ =\x00\xfe".as_slice(), 14) {
-        let out = encode_canonical(&data, Profile::B);
-        let d = decode_plain(&out, Profile::B).expect("decodes");
+fn the_minimum_round_trips() {
+    for data in corpus(Profile::T, b"a~ =\x00\xfe".as_slice(), 14) {
+        let out = encode_with(&data, Profile::T);
+        let d = decode(&out, Profile::T).expect("decodes");
         assert_eq!(d.bytes, data);
         assert!(!d.padding_seen);
     }
@@ -198,11 +197,11 @@ fn canonical_round_trips() {
 /// something to slide over. Brute force cannot reach here; the check is that
 /// the result decodes and is no longer than base64.
 #[test]
-fn canonical_on_long_inputs() {
+fn long_inputs_where_brute_force_cannot_reach() {
     for n in [62, 63, 64, 124, 125, 4157, 4158, 4159, 4300, 9000] {
         let data: Vec<u8> = (0..n).map(|i| b"abcdefghij"[i % 10]).collect();
-        let out = encode_canonical(&data, Profile::U);
-        assert_eq!(decode_plain(&out, Profile::U).expect("decodes").bytes, data);
+        let out = encode_with(&data, Profile::U);
+        assert_eq!(decode(&out, Profile::U).expect("decodes").bytes, data);
         assert!(out.len() <= (4 * n).div_ceil(3), "n = {n}");
         // A pure literal run costs its own length plus headers, and §6.1 caps
         // a segment at 4158 bytes.

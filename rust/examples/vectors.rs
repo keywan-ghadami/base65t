@@ -6,18 +6,18 @@
 //! form a second implementation can check itself against without reading any
 //! of this code.
 //!
-//! §16.3 wants `encode_canonical` to agree byte for byte across two
-//! independent implementations. One implementation cannot produce that
-//! agreement, but it can produce the half that is transferable: the bytes,
-//! written down, so that the second implementation costs an afternoon instead
-//! of a project.
+//! §16.3 wants two independent implementations to agree byte for byte. One
+//! implementation cannot produce that agreement, but it can produce the half
+//! that is transferable: the bytes, written down, so that the second
+//! implementation costs an afternoon instead of a project.
 //!
 //!     cargo run --release --example vectors > ../docs/vectors.json
 //!
-//! Everything is hex, because a profile-B stream is not text. Where a stream
-//! is printable ASCII it also carries `stream_ascii`, and `tests/vectors_json.rs`
-//! checks the two against each other — a redundancy that is verified is worth
-//! more than a field that is merely convenient.
+//! Both the input and the stream are hex, because an input is arbitrary bytes
+//! and a JSON string is not. Where a stream is printable ASCII it also carries
+//! `stream_ascii`, and `tests/vectors_json.rs` checks the two against each
+//! other — a redundancy that is verified is worth more than a field that is
+//! merely convenient.
 
 use base65t::*;
 
@@ -102,35 +102,35 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
 }
 
 fn main() {
-    let presets: [(&str, Preset); 5] = [
-        ("dense", Preset::Dense),
-        ("dense-fast", Preset::DenseFast),
-        ("canonical", Preset::Canonical),
-        ("opaque", Preset::Opaque),
-        ("framed", Preset::Framed),
+    // Two entry points, not five presets: the encoding, and the base64url
+    // way out §14 is about.
+    type Enc = fn(&[u8], Profile) -> Vec<u8>;
+    let kinds: [(&str, Enc); 2] = [
+        ("encode", encode_with as Enc),
+        ("base64url", (|d, _| encode_base64url(d)) as Enc),
     ];
-    let profiles: [(&str, Profile); 3] = [("U", Profile::U), ("T", Profile::T), ("B", Profile::B)];
+    let profiles: [(&str, Profile); 2] = [("U", Profile::U), ("T", Profile::T)];
 
     println!("{{");
-    println!("  \"spec\": \"base65t v0.2, docs/spec-v0.2.de.md\",");
+    println!("  \"spec\": \"base65t v0.4, docs/spec-v0.4.de.md\",");
     println!(
-        "  \"note\": \"Every entry is: encode(input, preset, profile) is exactly stream, and \
+        "  \"note\": \"Every entry is: the named entry point over (input, profile) is exactly stream, and \
          decode(stream, profile) is exactly input. Bytes are hex. A second implementation that \
-         reproduces the canonical entries byte for byte discharges conformance point 3 of \\u00a716.\","
+         reproduces these byte for byte discharges conformance point 3 of \\u00a716.\","
     );
     println!("  \"vectors\": [");
 
     let mut first = true;
     let mut count = 0usize;
     for (name, data) in inputs() {
-        for (sname, preset) in presets {
-            // A preset's stream depends on the profile only through which
+        for (sname, enc) in kinds {
+            // A stream depends on the profile only through which
             // bytes a literal may carry, so a wider profile often produces the
             // same stream as a narrower one. Those are one entry listing every
             // profile it holds for, rather than three that differ in a field.
             let mut groups: Vec<(Vec<u8>, Vec<&str>)> = Vec::new();
             for (pname, profile) in profiles {
-                let stream = encode_with(&data, preset, profile);
+                let stream = enc(&data, profile);
                 let back = decode(&stream, profile).expect("its own output");
                 assert_eq!(back.bytes, data);
                 match groups.iter_mut().find(|(s, _)| *s == stream) {
@@ -145,7 +145,7 @@ fn main() {
                 first = false;
                 count += 1;
                 print!(
-                    "    {{\"name\": {}, \"preset\": \"{sname}\", \"profiles\": [{}], \
+                    "    {{\"name\": {}, \"kind\": \"{sname}\", \"profiles\": [{}], \
                      \"input\": \"{}\", \"stream\": \"{}\"",
                     json_string(&format!("{name}/{sname}/{}", pnames.join(""))),
                     pnames

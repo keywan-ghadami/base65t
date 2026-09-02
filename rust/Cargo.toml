@@ -1,6 +1,6 @@
 [package]
 name = "base65t"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Base65t: Base64URL plus a 65th character introducing length-prefixed literal segments."

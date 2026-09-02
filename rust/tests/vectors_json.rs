@@ -46,13 +46,11 @@ fn the_published_vectors_are_what_this_encoder_writes() {
             continue;
         }
         let name = field(line, "name").expect("name");
-        let preset = match field(line, "preset").expect("preset") {
-            "dense" => Preset::Dense,
-            "dense-fast" => Preset::DenseFast,
-            "canonical" => Preset::Canonical,
-            "opaque" => Preset::Opaque,
-            "framed" => Preset::Framed,
-            other => panic!("{name}: unknown preset {other}"),
+        type Enc = fn(&[u8], Profile) -> Vec<u8>;
+        let encode: Enc = match field(line, "kind").expect("kind") {
+            "encode" => encode_with,
+            "base64url" => |d, _| encode_base64url(d),
+            other => panic!("{name}: unknown kind {other}"),
         };
         let input = unhex(field(line, "input").expect("input"));
         let stream = unhex(field(line, "stream").expect("stream"));
@@ -68,11 +66,10 @@ fn the_published_vectors_are_what_this_encoder_writes() {
             let profile = match p.trim().trim_matches('"') {
                 "U" => Profile::U,
                 "T" => Profile::T,
-                "B" => Profile::B,
                 other => panic!("{name}: unknown profile {other}"),
             };
             assert_eq!(
-                encode_with(&input, preset, profile),
+                encode(&input, profile),
                 stream,
                 "{name}: encoder and published vector disagree"
             );

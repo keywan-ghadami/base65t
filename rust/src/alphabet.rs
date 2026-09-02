@@ -13,16 +13,13 @@ pub const TILDE: u8 = b'~';
 /// Longest literal a single segment can carry (§6.1): `63 + 4095`.
 pub const MAX_LITERAL: usize = 4158;
 
-/// Shortest literal `dense` and `framed` will take (§9.1).
+/// Shortest literal that can never lose against base64 (§9.1).
 ///
 /// Not a tuning parameter: §9.1 derives it. A literal of `L` bytes saves
 /// `(L − 10)/3` characters against base64 once the worst rounding on both
 /// sides is charged to it, so eleven is the first length that cannot lose --
 /// which is the whole of why §9.4 holds for a rule that never looks ahead.
 pub const MIN_LITERAL: usize = 11;
-
-/// Longest frame body, in characters (§8.1): 18 bits of length.
-pub const MAX_FRAME_BODY: usize = 262_143;
 
 /// Which alphabet variant a character belongs to, as bits, so that Rule A
 /// (§5.4) costs one `or` per character and one test per segment instead of two
@@ -94,11 +91,9 @@ pub enum Profile {
     /// Printable ASCII without `"` and `\`, so a JSON string carries it
     /// unescaped. Not URL-safe and not CSV-safe.
     T,
-    /// Every octet. Leaves ASCII behind, and with it every text container.
-    B,
 }
 
-/// Profile membership as a table: bit 0 for U, bit 1 for T, bit 2 for B.
+/// Profile membership as a table: bit 0 for U, bit 1 for T.
 ///
 /// The encoder asks this of every input byte, so it is an inner loop like the
 /// decoder's value lookup, and for the same reason it is an indexed load
@@ -111,7 +106,7 @@ static MEMBERSHIP: [u8; 256] = {
         let unreserved =
             c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_' || c == TILDE;
         let text = 0x20 <= c && c <= 0x7E && c != b'"' && c != b'\\';
-        t[b] = (unreserved as u8) | ((text as u8) << 1) | 0b100;
+        t[b] = (unreserved as u8) | ((text as u8) << 1);
         b += 1;
     }
     t
@@ -187,7 +182,6 @@ impl Profile {
         let bit = match self {
             Profile::U => 0b001,
             Profile::T => 0b010,
-            Profile::B => 0b100,
         };
         MEMBERSHIP[b as usize] & bit != 0
     }

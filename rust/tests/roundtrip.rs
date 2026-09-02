@@ -68,8 +68,9 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
             .collect();
         v.push((format!("{percent}% untransportable"), data));
     }
-    // Tildes, and tilde-A in particular: the framed encoder has to break these
-    // out of literals (§8.2).
+    // Tildes, and tilde-A in particular: `~` is the one character a literal
+    // may carry that also opens a segment, so it is where a decoder that
+    // guesses instead of counting comes apart.
     v.push(("tilde A repeated".into(), b"~A".repeat(200)));
     v.push(("tildes".into(), b"~".repeat(200)));
     v.push((
@@ -77,75 +78,61 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         b"abcdefghijkl~Amnopqrstuvwx".repeat(30),
     ));
     v.push((
-        "frame boundary".into(),
-        (0..3 * FRAME_BYTES + 17).map(|i| (i % 251) as u8).collect(),
+        "window boundary".into(),
+        (0..3 * WINDOW_BYTES + 17)
+            .map(|i| (i % 251) as u8)
+            .collect(),
     ));
     v
 }
 
-const PROFILES: [Profile; 3] = [Profile::U, Profile::T, Profile::B];
-const PRESETS: [Preset; 4] = [
-    Preset::Dense,
-    Preset::Canonical,
-    Preset::Opaque,
-    Preset::Framed,
-];
+const PROFILES: [Profile; 2] = [Profile::U, Profile::T];
+
+/// The two entry points a caller has, so every claim below is checked of both.
+type Enc = fn(&[u8], Profile) -> Vec<u8>;
+
+fn kinds() -> [(&'static str, Enc); 2] {
+    [
+        ("encode", encode_with),
+        ("base64url", |d, _| encode_base64url(d)),
+    ]
+}
 
 #[test]
 fn decode_of_encode_is_the_identity() {
     for (name, data) in corpus() {
         for profile in PROFILES {
-            for preset in PRESETS {
-                let out = encode_with(&data, preset, profile);
+            for (kind, encode) in kinds() {
+                let out = encode(&data, profile);
                 let d = decode(&out, profile)
-                    .unwrap_or_else(|e| panic!("{name}, {preset:?}, {profile:?}: {e}"));
-                assert_eq!(d.bytes, data, "{name}, {preset:?}, {profile:?}");
+                    .unwrap_or_else(|e| panic!("{name}, {kind}, {profile:?}: {e}"));
+                assert_eq!(d.bytes, data, "{name}, {kind}, {profile:?}");
 
                 // An encoder never writes padding and never writes the classic
                 // alphabet (§5.1, §5.3), so a decoder never sees either.
-                assert!(!d.padding_seen, "{name}, {preset:?}");
-                assert_ne!(d.alphabet_seen, AlphabetSeen::Classic, "{name}, {preset:?}");
+                assert!(!d.padding_seen, "{name}, {kind}");
+                assert_ne!(d.alphabet_seen, AlphabetSeen::Classic, "{name}, {kind}");
 
-                // Rule F reads the encoder's own output correctly: a plain
-                // stream can never begin `~A`, because 0 is not a length.
-                let expect = if preset == Preset::Framed && !data.is_empty() {
-                    Framing::Framed
-                } else {
-                    Framing::Plain
-                };
-                assert_eq!(d.framing_seen, expect, "{name}, {preset:?}");
-
-                // And the strict entry points agree with the permissive one.
-                let strict = match expect {
-                    Framing::Plain => decode_plain(&out, profile),
-                    Framing::Framed => decode_framed(&out, profile),
-                };
-                assert_eq!(
-                    strict.map(|d| d.bytes),
-                    Ok(data.clone()),
-                    "{name}, {preset:?}"
-                );
+                // And the strict entry point agrees with the permissive one.
                 assert_eq!(
                     decode_url_strict(&out, profile).map(|d| d.bytes),
                     Ok(data.clone()),
-                    "{name}, {preset:?}"
+                    "{name}, {kind}"
                 );
             }
         }
     }
 }
 
-/// `opaque` is Base64URL and nothing else — that is its whole promise (§9.3),
-/// and the profile has no say in it because there are no literals to constrain.
+/// `encode_base64url` is Base64URL and nothing else — that is its whole
+/// promise (§14), and the profile has no say in it because there are no
+/// literals to constrain.
 #[test]
-fn opaque_leaks_nothing() {
+fn the_base64url_entry_point_leaks_nothing() {
     for (name, data) in corpus() {
-        let out = encode_opaque(&data);
+        let out = encode_base64url(&data);
         assert!(!out.contains(&b'~'), "{name}");
         assert_eq!(out.len(), (4 * data.len()).div_ceil(3), "{name}");
-        for profile in PROFILES {
-            assert_eq!(encode_with(&data, Preset::Opaque, profile), out, "{name}");
-        }
     }
 }
 
@@ -155,9 +142,7 @@ fn opaque_leaks_nothing() {
 #[test]
 fn a_wider_profile_reads_a_narrower_ones_stream() {
     for (name, data) in corpus() {
-        let out = encode_dense(&data, Profile::U);
-        for profile in [Profile::T, Profile::B] {
-            assert_eq!(decode(&out, profile).unwrap().bytes, data, "{name}");
-        }
+        let out = encode_with(&data, Profile::U);
+        assert_eq!(decode(&out, Profile::T).unwrap().bytes, data, "{name}");
     }
 }
