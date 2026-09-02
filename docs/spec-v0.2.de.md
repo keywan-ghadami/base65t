@@ -25,7 +25,8 @@ deren Anhang und in `PREREGISTRATION.md`.
 | 5.3 | Regel P gilt nur im Plain Mode. „Strom" ist immer der ganze Oktett-Strom, nie ein Frame-Body |
 | 5.4 | Regel A gilt über den ganzen Strom, auch über Framegrenzen |
 | 9.0 | Bei Längengleichstand ist die Segmentierung vorgeschrieben, nicht freigestellt |
-| 9.2 | Kein Greedy-Encoder mehr. `dense` kodiert blockweise, damit der exakte DP mit konstantem Speicher läuft |
+| 2, 13 | Durchsatz ist ein **Ziel**, kein Nicht-Ziel. Was das heißt und was nicht, steht in §13.2 |
+| 9.2, 9.2.1 | `dense` und `framed` sind durch eine **lineare Regel** definiert, nicht durch das Programm aus §9.2.2. Ein Durchlauf, konstanter Speicher, und §9.1 zeigt, dass sie §9.4 nicht verletzen kann |
 | 9.3 | `legible` hat eine Zielfunktion statt eines Schwellwerts. Die Spalte „Determinismus" wird zu „parameterfrei" |
 | 9.4 | Gilt für vier der fünf Presets statt für eines. Die Ausnahme `framed` ist beziffert |
 | 10.1 | Vierte Implementierungsfalle: die Marker-Prüfung aus §10.3 braucht eine Längenprüfung |
@@ -35,7 +36,7 @@ deren Anhang und in `PREREGISTRATION.md`.
 | 16 | Nachweis 3 und 6 sind erbracht, mit benannten Lücken; 5 ist nicht mehr bindend |
 | 7 | Profil T enthält das Leerzeichen — der Zusatz, den der Container-Test hervorgebracht hat |
 | 9.5 | Als Formatfrage geschlossen: eine Messung darf ein Preset nie ändern, nur eines hinzufügen |
-| 13.2 | Die erfundenen Durchsatz-Schwellwerte sind gestrichen, nicht vertagt |
+| 13.2 | Die erfundenen Durchsatz-Schwellwerte sind durch ein gemessenes Kriterium ersetzt |
 
 ---
 
@@ -48,9 +49,9 @@ Zielkontexte unterschiedliche Optimierungsziele haben.
 
 ```
 base65t                      # Format: Segmente, Alphabet, Profile, Framing
-├── dense       (Default)    # minimale Größe            -> URL, Header, allgemein
+├── dense       (Default)    # klein und schnell         -> URL, Header, allgemein
 ├── legible                  # bevorzugt Lesbarkeit      -> Logs, Debug
-├── canonical                # deterministisch, byte-identisch -> Cache-Keys, Dedup
+├── canonical                # minimale Größe, byte-identisch -> Cache-Keys, Dedup
 ├── opaque                   # garantiert keine Literale -> Tokens mit Geheimnisanteil
 └── framed                   # wahlfreier Zugriff        -> Storage, Streams
 ```
@@ -61,7 +62,7 @@ base65t                      # Format: Segmente, Alphabet, Profile, Framing
 | Cookie-Wert | `dense` | U | `cookie-octet`-Konformität (§7.1) |
 | HTTP-Header | `dense` | U oder T | ASCII, keine Trennzeichen |
 | Token mit Secret | `opaque` | — | keine Klartext-Leaks (§14) |
-| Cache-/Dedup-Key | `canonical` | wie Container | byteweiser Determinismus (§11.1) |
+| Cache-/Dedup-Key | `canonical` | wie Container | byteweiser Determinismus (§11.1), kürzeste Ausgabe |
 | Log-Feld | `legible` | T | Lesbarkeit vor Größe |
 
 ### 0.2 Was Base65t *ist*, in einem Satz
@@ -127,7 +128,9 @@ Differential-Fuzzing-Korpus (§16.2) als *erwartete Abweichung*, nicht als Bug.
 
 * **Kein Kompressionsformat.** Ab ca. 1 KB Text schlägt `gzip` + Base64 deutlich.
 * **Kein Dichte-Rekord.** Z85 (1,25), basE91 (1,23), Base85N sind binär dichter.
-* **Kein Durchsatz-Rekord.** §13.
+* **Kein Durchsatz-Rekord.** Durchsatz ist ein *Ziel* (§13.2) — Base64 ist
+  dabei der Maßstab, nicht die SIMD-Bestenliste, und Dichte wird nie gegen ihn
+  eingetauscht.
 * **Nicht kanonisch im Default.** §11; dafür gibt es `canonical` (§11.1).
 * **Kein Sicherheitsmechanismus.**
 
@@ -440,17 +443,25 @@ Folgesegment mit `A` beginnt. Ein F2-Verstoß, der F′ wahrt, MUSS akzeptiert w
 > Der Encoder optimiert über die Menge der **im jeweiligen Modus gültigen**
 > Segmentierungen — nicht über alle denkbaren.
 
-**Gleichstände sind entschieden, nicht freigestellt (normativ).**
+**Jedes Preset ist eine Funktion (normativ).**
+
+> Die Ausgabe eines Presets MUSS durch (Eingabe, Preset, Profil) eindeutig
+> bestimmt sein. Ein Preset, dessen Regel mehrere Segmentierungen zulässt, ist
+> keine Spezifikation, sondern eine Einladung.
+
+Es gibt zwei Wege dahin, und Base65t geht beide:
+
+* **Eine Regel, die nur eine Segmentierung erzeugt.** So sind `dense` und
+  `framed` definiert (§9.2.1): ein Vorwärtsdurchlauf ohne Wahlfreiheit.
+* **Eine Zielfunktion plus eine Ordnung für Gleichstände.** So sind
+  `canonical`, `legible` und `opaque` definiert. Für sie gilt:
 
 > Haben mehrere gültige Segmentierungen dieselbe Länge, MUSS ein Encoder die
 > nach der Ordnung aus §11.1 kleinste wählen. Ausgenommen ist `legible`, das
 > nach §9.3 eine eigene Zielfunktion hat.
 
-Damit ist die Ausgabe eines Presets eine **Funktion** von (Eingabe, Preset,
-Profil), und ein Testvektor kann Bytes prüfen statt nur Längen — was §16.8
-braucht, wenn der Vektorsatz auf 200 wächst. Gemessen kostet die Regel bei
-`dense` nichts: bei `L ≥ 11` liegen alle Kandidatenregeln innerhalb von 0,4
-Punkten Klartextanteil bei identischer Segmentzahl.
+Damit kann ein Testvektor Bytes prüfen statt nur Längen — was §16.8 braucht,
+wenn der Vektorsatz auf 200 wächst.
 
 ### 9.1 Schwellwert
 
@@ -462,9 +473,31 @@ Ersparnis_worst(L) = L/3 − 2 − 4/3 = (L − 10)/3
 ```
 
 `L ≤ 9` negativ, `L = 10` neutral, `L ≥ 11` immer ein Gewinn.
-**Normativ für `dense`:** Literale nur ab `L ≥ 11`.
+**Normativ für `dense` und `framed`:** Literale nur ab `L ≥ 11`.
+
+**Das ist mehr als ein Schwellwert — es ist der Grund, warum §9.4 ohne
+Optimierung gilt.** Die Rechnung oben lädt einem einzelnen Literal bereits die
+schlechteste Rundung auf beiden Seiten auf. Ein Encoder, der *nur* Literale ab
+11 Bytes nimmt, kann deshalb nicht verlieren, gleichgültig welche er nimmt und
+wie viele. Für `k ≥ 1` Literale mit Header `h_j ∈ {2, 4}` und Längen `L_j`
+(`L_j ≥ 11` bei `h_j = 2`, `L_j ≥ 63` bei `h_j = 4`) gilt gegenüber reinem
+Base64:
+
+```
+Differenz  ≤  Σ_j (h_j − L_j/3)  +  2(k+1)/3  ≤  −k + 2/3  <  0
+```
+
+Der zweite Term ist die Rundung der höchstens `k + 1` Base64-Läufe, der erste
+je Literal höchstens `2 − 11/3 = −5/3`. Deshalb braucht §9.4 **keine
+Optimalität**, sondern nur den Schwellwert — und deshalb darf §9.2.1 eine
+lineare Regel sein.
 
 ### 9.2 Optimale Segmentierung — Herleitung
+
+Dieser Abschnitt leitet die **längenoptimale** Segmentierung her. Sie ist die
+Definition von `canonical`, `legible` und `opaque`. `dense` und `framed`
+benutzen sie **nicht**; sie sind in §9.2.1 durch eine lineare Regel definiert,
+und §9.2.2 fasst zusammen, was sie dafür aufgeben und was nicht.
 
 **Literale werden nicht als Zustand, sondern als Kante modelliert.**
 
@@ -520,63 +553,100 @@ trägt auch im Framed Mode.
 **Speicher.** Kostenberechnung O(1) zusätzlich (zwei Deques der Breite 62 bzw. 4096
 → O(4158) konstant). **Rekonstruktion** der Segmentierung O(n) Backpointer.
 
-### 9.2.1 Blockweise Kodierung (normativ für `dense`)
+### 9.2.1 Die lineare Regel (normativ für `dense` und `framed`)
 
-Der DP ist O(n) in der Zeit, aber die Rekonstruktion braucht O(n) Backpointer.
-Für ein Gigabyte-Objekt ist das der Unterschied zwischen „läuft" und „läuft
-nicht". Ein Greedy-Encoder wäre die naheliegende Antwort, kann aber die Regel
-aus §9.0 nicht erfüllen — er ist nicht einmal längenoptimal. Deshalb:
+> **Regel.** Setze `p = 0` (Anfang des noch offenen Base64-Laufs) und `i = 0`.
+> Solange `i < n`:
+>
+> 1. Sei `j` die größte Position mit `j − i ≤ 4158`, so dass alle Bytes in
+>    `[i, j)` profil-legal sind; im Framed Mode zusätzlich so, dass `[i, j)`
+>    kein `~A` enthält (F1) und nicht auf `~` endet (F2).
+> 2. Ist `j − i ≥ 11`: schließe einen Base64-Lauf `[p, i)`, falls `p < i`,
+>    schreibe das Literal `[i, j)`, setze `i = p = j`.
+> 3. Sonst: setze `i = max(j, i + 1)`.
+>
+> Am Ende schließe `[p, n)`, falls `p < n`.
 
-> `dense` MUSS in unabhängigen Blöcken von **65535 Bytes** kodieren: der DP
-> läuft je Block, und über eine Blockgrenze hinweg wird nichts erinnert. Der
-> letzte Block ist kürzer. `framed` kodiert je Frame (§8.1) und ist damit
-> ebenfalls blockweise; `canonical`, `legible` und `opaque` sind über die
-> gesamte Eingabe definiert.
+Ein Vorwärtsdurchlauf, keine Rückwärtskosten, keine Backpointer: **O(n) Zeit,
+O(1) Speicher**, streamfähig ohne jede Zusatzkonstruktion. Die Ausgabe ist eine
+Funktion der Eingabe, denn die Regel trifft keine Wahl — Schritt 1 bestimmt `j`
+eindeutig.
 
-Damit ist `dense` bei **konstantem Speicher streamfähig und trotzdem
-byte-exakt** — beides zugleich, was ein Greedy-Encoder nie konnte.
+**Warum das erlaubt ist.** §9.1 zeigt, dass ein Literal ab 11 Bytes nach der
+schlechtesten Rundung auf beiden Seiten nicht verlieren kann. Die Regel nimmt
+nur solche Literale. Also gilt §9.4 für sie — nicht weil sie optimiert, sondern
+weil sie unter der Schwelle nichts anfasst. Eine Optimierung ist für die
+Nie-schlechter-Garantie gar nicht nötig; v0.2 hat das eine Zeit lang anders
+gesehen und dafür den Encoder in Blöcke geschnitten, die es jetzt nicht mehr
+gibt.
 
-**Die Blockgröße MUSS durch 3 teilbar sein.** Base64 eines Blocks von `b` Bytes
-kostet `ceil(4b/3)` Zeichen; für `b ≢ 0 (mod 3)` rundet jeder Block einzeln auf,
-und `k` Blöcke kosten bis zu `k − 1` Zeichen mehr als derselbe Strom am Stück.
-Bei 65536 wäre das ein Zeichen je 64 KiB — und §9.4 wäre verletzt. Bei
-65535 = 3 · 21845 fällt jede Blockgrenze auf eine Quantengrenze: die reine
-Base64-Kodierung über Blöcke ist **byteweise identisch** mit der über den ganzen
-Strom. Der Alles-Base64-Kandidat bleibt damit unberührt, und mit ihm die
-Garantie aus §9.4.
+**Was sie kostet.** Die Regel ist nicht längenoptimal: sie absorbiert nie ein
+Byte in einen Base64-Lauf, um ein Quantum auszurichten, und sie beendet ein
+Literal nie früh, um denselben Effekt zu erzielen. Gemessen über 110 Dateien
+einschließlich Silesia (202 MiB), gegen `canonical` auf denselben Eingaben:
 
-Dass `framed` eine Zweierpotenz verwendet, ist kein Widerspruch: dort ist der
-Zweck die Offset-Arithmetik (§8.1), und `framed` ist von §9.4 ohnehin
-ausgenommen.
+| | `dense` | `canonical` |
+|---|---|---|
+| Summe über den Korpus | 99,160 % von Base64 | 98,938 % |
+| Abstand zueinander | **+0,224 %** | — |
+| schlechteste Einzeldatei | **+4,545 %** (eine 22-Byte-Telefonnummer) | — |
 
-**Ein Block DARF NICHT mit einem angebrochenen Quantum enden.** Endet der
-letzte Lauf eines Blocks in Base64 und umfasst `k` Bytes mit `k mod 3 ≠ 0`, so
-bleibt ein Quantum offen; der erste Lauf des nächsten Blocks setzt es fort,
-denn zwei aneinandergrenzende Base64-Segmente sind für den Dekoder **ein**
-Segment (§4). Der Strom dekodiert dann zu etwas, das keiner der beiden Blöcke
-gemeint hat, oder zu `E_ALIGN`. Ein Encoder MUSS die Segmentierung eines
-Blocks deshalb so wählen, dass ein Base64-Lauf am Blockende auf einer
-Quantengrenze schließt; im DP aus §9.2 ist das eine Randbedingung am Blockende
-(`p = 0`) und kostet nichts weiter. Ein **Literal** darf einen Block beenden,
-wie es will — sein Längen-Header ist die Grenze.
+Der Worst Case ist eine kurze Eingabe, auf der ein einzelnes ausgerichtetes
+Quantum prozentual viel wiegt; über alles, was länger als ein paar Dutzend
+Bytes ist, verschwindet der Unterschied. Wer ihn trotzdem nicht will, nimmt
+`canonical` — das ist der Unterschied, für den es das Preset gibt. Der Abstand
+nach *unten* zu Base64 bleibt in beiden Fällen (§9.4).
 
-Dass die Blockgröße durch 3 teilbar ist, genügt dafür **nicht**: es sichert nur
-den Fall, dass ein Lauf am Blockanfang beginnt. Beginnt er nach einem Literal,
-hängt seine Länge von dessen Ende ab.
+**Was sie bringt.** Auf demselben Korpus, gegen dieselben Eingaben:
 
-**Kosten.** Ein Literal kann keine Blockgrenze überspannen, also höchstens ein
-zusätzlicher Header je Grenze — unter 0,01 %.
+| | `dense` alt (§9.2.2 über Blöcke) | `dense` neu (lineare Regel) |
+|---|---|---|
+| Kodieren | 1478 % der Base64-Zeit | **124 %** |
+| Dekodieren | 678 % | **158 %** |
+| Größe | 131,9 % der Eingabe | 132,0 % |
 
-**Kein Greedy.** v0.1 erlaubte Produktionsencodern, greedy zu arbeiten. Mit §9.0
-geht das nicht mehr: die Ausgabe eines Presets ist eine Funktion, und ein
-Greedy-Encoder trifft sie nicht. Wer streamen will, kodiert blockweise — was
-dasselbe Speicherverhalten hat und zusätzlich byte-exakt ist.
+Ein Zehntelpunkt Dichte gegen den Faktor 12 beim Kodieren. Die Richtung dieses
+Tauschs ist §2 und §13.2: Größe darf nie schlechter werden als Base64, und
+innerhalb dieser Schranke zählt Durchsatz.
+
+**Implementierungshinweis (nicht normativ).** Schritt 3 darf springen: Ein
+Literal von 11 Bytes, das irgendwo in `[i, i + 11)` beginnt, überdeckt
+notwendig `i + 10`. Ist `byte[i + 10]` nicht profil-legal, kommt kein Start in
+diesem Fenster in Frage, und `i` darf sofort auf `i + 11` springen. Auf
+hochentropen Daten — wo fast jedes Byte die Profilmenge verlässt — ist das der
+Unterschied zwischen einer Prüfung je Byte und einer je elf. Die gefundenen
+Literale sind dieselben: die Bedingung ist notwendig, nie hinreichend.
+
+### 9.2.2 Warum `dense` nicht das Programm aus §9.2 benutzt
+
+Der DP aus §9.2 ist O(n) in der Zeit, aber die Rekonstruktion braucht O(n)
+Backpointer, und die Konstanten sind zwei monotone Deques breit. Für ein
+Gigabyte-Objekt ist das der Unterschied zwischen „läuft" und „läuft nicht"; für
+alles andere ist es der Unterschied zwischen 124 % und 1478 % der Base64-Zeit.
+
+Der Ausweg, den v0.2 zuerst nahm, war Blockbildung: den DP je 65535 Bytes
+laufen lassen. Das löst den Speicher und nichts sonst. Es kostet den Durchsatz
+weiter, es setzt eine Blockgröße als Parameter in ein Preset, das keinen haben
+sollte, und es bringt eine eigene Fehlerklasse mit — ein Block, dessen letzter
+Base64-Lauf ein Quantum offen lässt, wird vom nächsten Block fortgesetzt, und
+die Naht dekodiert zu etwas, das keiner der beiden Blöcke gemeint hat (§4).
+Genau dieser Fehler ist in der Bench aufgetreten, nicht in den Testvektoren:
+die reichen nicht über einen Block hinaus.
+
+**Blöcke gibt es in v0.2 nicht.** Die lineare Regel ist streamfähig, ohne dass
+der Strom geschnitten werden müsste, und damit ist die Nahtstelle weg statt
+abgesichert.
+
+`framed` schneidet weiter in Frames à 65536 Bytes, aber aus einem anderen
+Grund: dort ist die Zweierpotenz der Zweck (§8.1, Offset → Frame in O(1)), und
+`framed` ist von §9.4 ohnehin ausgenommen. Ein Frame trägt seine Länge im
+Header, also gibt es dort keine offene Naht.
 
 ### 9.3 Presets
 
 | Preset | Zielfunktion | Framing | Alphabet | parameterfrei |
 |--------|--------------|---------|----------|---------------|
-| `dense` (Default) | kürzeste, Literale ab `L ≥ 11`, Blöcke à 65535 (§9.2.1) | Plain | URL | nein |
+| `dense` (Default) | die lineare Regel, Literale ab `L ≥ 11` (§9.2.1) | Plain | URL | nein |
 | `legible` | kürzeste, darunter die mit dem größten Klartextanteil | Plain | URL | **ja** |
 | `canonical` | kürzeste, darunter die kleinste nach §11.1 | Plain | URL | **ja** |
 | `opaque` | nie Literale (= Base64URL) | Plain | URL | **ja** |
@@ -587,11 +657,17 @@ eine parameterlose `encode`-Funktion exportieren.
 
 **Alle fünf sind deterministisch** — das folgt aus §9.0 und ist kein
 Unterscheidungsmerkmal mehr. Was sie trennt, ist die letzte Spalte: `dense` und
-`framed` tragen Parameter (`L ≥ 11`, Blockgröße, Framegröße), die §9.5 noch
-bewegen könnte; ihre Ausgabe ist deterministisch, **solange diese Parameter
-stehen**. `canonical`, `legible` und `opaque` haben keine, sind also
-eingefroren. Deshalb gehören Cache-Keys an `canonical` und nicht an `dense`
-(§11.1).
+`framed` tragen Parameter (`L ≥ 11`, Framegröße), die §9.5 noch bewegen könnte;
+ihre Ausgabe ist deterministisch, **solange diese Parameter stehen**.
+`canonical`, `legible` und `opaque` haben keine, sind also eingefroren. Deshalb
+gehören Cache-Keys an `canonical` und nicht an `dense` (§11.1).
+
+**`dense` ist nicht die kürzeste Ausgabe, `canonical` ist es.** Das ist neu in
+v0.2 und die einzige Stelle, an der ein Preset etwas aufgibt: `dense` tauscht
+0,2 % Dichte über den Korpus gegen den Faktor 12 im Durchsatz (§9.2.1). Wer die
+kürzeste Ausgabe braucht und die Eingabe klein ist — ein Cache-Key, ein
+Log-Feld, eine URL —, nimmt `canonical`. Die Nie-schlechter-Garantie aus §9.4
+gilt für beide.
 
 **`legible` hat keinen Schwellwert.** Ein Schwellwert kann Ausgaben nicht
 lesbarer machen: die Zielfunktion bleibt nach §9.0 die Länge, also wird ein
@@ -609,11 +685,16 @@ Für `dense`, `legible`, `canonical` und `opaque` MUSS gelten:
 len(encode(x)) <= ceil(4 * len(x) / 3)
 ```
 
-**Je Eingabe, nicht im Mittel.** Das folgt aus §9.0: die reine
-Base64-Segmentierung liegt immer in der Kandidatenmenge, und alle vier Presets
-minimieren die Länge über diese Menge — sie können also nichts Längeres wählen.
-Die Blockbildung aus §9.2.1 ändert daran nichts, weil eine Blockgrenze auf einer
-Quantengrenze liegt.
+**Je Eingabe, nicht im Mittel**, und aus zwei verschiedenen Gründen:
+
+* Für `legible`, `canonical` und `opaque` folgt sie aus §9.0: die reine
+  Base64-Segmentierung liegt immer in der Kandidatenmenge, und alle drei
+  minimieren die Länge über diese Menge — sie können also nichts Längeres
+  wählen.
+* Für `dense` folgt sie aus §9.1: die lineare Regel nimmt nur Literale ab 11
+  Bytes, und die dortige Rechnung zeigt, dass die schon einzeln nicht verlieren
+  können, unabhängig davon, wie viele es sind und wo sie liegen. `dense`
+  optimiert nichts und hält die Garantie trotzdem.
 
 **Schärfer, und der eigentliche Grund für die Umstellung:** auf hochentropen
 Daten findet kein Literal einen Platz, und `dense` schreibt dann nicht nur
@@ -693,9 +774,9 @@ genau diesen Bytes. Ein Preset, das sich später bewegt, bricht sie still.
 
 Für `dense` heißt das konkret: `L_min` bleibt bei **11**, hergeleitet in §9.1
 und nicht gemessen, und `B_min` bleibt **aus**. Ein `B_min > 1` erkauft
-Durchsatz — ein Nicht-Ziel nach §2 — mit Größe, die in §9.4 normativ ist; wer
-diesen Tausch will, muss ihn belegen, und das Ergebnis ist dann ein eigenes
-Preset. Damit sind **alle fünf Presets eingefroren**, und die Spalte in §9.3
+Durchsatz mit Größe. Durchsatz ist zwar ein Ziel (§13.2), aber Größe ist in §9.4
+normativ, und ein Tausch in diese Richtung braucht einen Beleg — das Ergebnis
+ist dann ein eigenes Preset. Damit sind **alle fünf Presets eingefroren**, und die Spalte in §9.3
 sagt nur noch, ob die Definition Parameter *enthält*, nicht ob sie sich noch
 bewegen kann.
 
@@ -823,9 +904,10 @@ Gesamtgrößen- und Laufzeitlimits anbieten.
 ## 11. Kanonizität und Signaturen
 
 **Der Encoder ist seit §9.0 eine Funktion**: (Eingabe, Preset, Profil) bestimmt
-den Strom eindeutig. Literal gegen Base64 ist entschieden, Greedy gegen DP gibt
-es nicht mehr, und ein Encoder schreibt nur URL-Alphabet und nie Padding (§5.1,
-§5.3).
+den Strom eindeutig. Jedes Preset ist entweder durch eine wahlfreie Regel
+festgelegt (`dense`, `framed`, §9.2.1) oder durch eine Zielfunktion samt
+Ordnung für Gleichstände (§11.1), und ein Encoder schreibt nur URL-Alphabet und
+nie Padding (§5.1, §5.3).
 
 Kanonisch ist das Format damit trotzdem nicht, aus zwei verbleibenden Gründen.
 Erstens ist das **Preset und das Profil eine Wahl**: derselbe Input ergibt unter
@@ -965,7 +1047,9 @@ zwei unabhängige Implementierungen, und es gibt eine.
   Fall spart dasselbe Literal 2 chars. Eine spätere Festlegung von `L_min` oder
   `B_min` (§9.5) DARF `canonical` deshalb nicht verändern — sonst änderten
   Messergebnisse rückwirkend bestehende Cache-Keys.
-* **kein Greedy.** Ein Greedy-Encoder DARF `canonical` nicht implementieren.
+* **nicht die lineare Regel.** §9.2.1 ist für `dense` und `framed` normativ und
+  für `canonical` unzulässig: sie ist nicht längenoptimal (§9.2.1, „Was sie
+  kostet"), und Längenoptimalität ist die halbe Definition von `canonical`.
 * **kein Framing, kein Classic-Alphabet, kein Padding.**
 
 **Verwendung:** Cache-Keys, Dedup-Keys, Content-Addressing, Testvektoren.
@@ -1008,13 +1092,30 @@ Der URL-Vorteil ist ein Vorteil **von Profil U**, nicht des Formats an sich.
 Base64 hat null datenabhängige Branches, Base65t einen pro Segmentwechsel. Bei fein
 durchmischten Daten ist Base65t deshalb langsamer.
 
-**[OFFEN: sämtlich unbelegt bis zur Messung]**
+Gemessen über den Korpus von `binary2textbench` (68 Proben, 6,5 MB, skalare
+Referenzimplementierungen, Base64 = 100 %):
 
-| Datencharakter | Erwarteter Durchsatz (Dekode) |
-|----------------|-------------------------------|
+| | Kodieren | Dekodieren | Größe |
+|---|---|---|---|
+| ohne Kompressor | 124 % | 158 % | 132,0 % (Base64: 133,3 %) |
+| mit zstd −5 davor | 108 % | 126 % | 56,1 % (Base64: 56,6 %) |
+| mit zstd 1 davor | 101 % | 113 % | 40,6 % (Base64: 40,6 %) |
+
+Die dritte Zeile ist der Normalfall in einem Protokoll, das komprimiert: dort
+ist die Eingabe hochentropisch, `dense` schreibt nach §9.4 **dieselben Bytes**
+wie Base64URL, und der Abstand ist das, was das Suchen nach Literalen kostet,
+die es nicht gibt.
+
+| Datencharakter | Durchsatz (Dekode) |
+|----------------|--------------------|
 | Lange Literalläufe (> 100 B) | schneller als Base64 — `memcpy` |
-| Lange Base64-Läufe | Base64-Parität |
-| Häufiger Wechsel | unter Base64; Höhe hängt an `L_min` und `B_min` |
+| Lange Base64-Läufe | Base64-Parität, bis auf den Scan nach `~` |
+| Häufiger Wechsel | unter Base64 |
+
+**Die Zahlen sind die einer skalaren Implementierung.** Die Base64-Referenz, gegen
+die gemessen wird, ist vektorisiert; §13.1 beschreibt, wie dieselbe
+Vektorisierung für Base65t aussieht. Der Abstand oben ist also eine obere
+Schranke für das, was das Format kostet, keine untere.
 
 ### 13.1 Die Vektor-Schleife
 
@@ -1045,25 +1146,33 @@ ausgerichtet; am Segmentende schließt `base64_decode_tail` das angebrochene Qua
 Wer den Shuffle über die Grenze laufen lässt, produziert stillschweigend falsche
 Bytes — kein Fehlercode fängt das ab.
 
-### 13.2 Es gibt kein Durchsatz-Kriterium
+### 13.2 Das Durchsatz-Kriterium
 
 v0.1 sah hier vier Schwellwerte *X*, *Y*, *Z* vor, „vor der Messung
-festzulegen". Sie sind gestrichen, und zwar nicht vertagt: eine Zahl wäre
-erfunden. Durchsatz ist nach §2 ein **Nicht-Ziel**, und ein Kriterium, das man
-aus keinem Ziel herleiten kann, ist eine Behauptung mit Prozentzeichen.
+festzulegen". Sie waren erfunden, und sie sind gestrichen. An ihre Stelle tritt
+eine Regel, die aus den Zielen folgt statt aus einer gewünschten Zahl:
 
-Was stattdessen gilt, folgt aus §9.4 und ist prüfbar:
+> **Durchsatz ist ein Ziel, Größe ist eine Zusicherung.** Eine Änderung an einem
+> Preset DARF die Zusicherung aus §9.4 nicht antasten. Innerhalb dieser
+> Schranke SOLL sie den Durchsatz verbessern; eine Änderung, die Durchsatz
+> gegen Dichte tauscht, ist ein **neues Preset** (§9.5), keine neue Fassung
+> eines bestehenden.
+
+Woran das gemessen wird:
 
 * **Auf hochentropen Daten schreibt `dense` dieselben Bytes wie Base64URL.**
-  Dort ist Parität keine Zusage, sondern Identität — es ist derselbe Strom.
-* **Für alles andere berichtet die Bench.** Die Segmentwechselrate ist exakt
-  und deterministisch (§9.5) und sagt dasselbe genauer als eine gemittelte
-  Durchsatzzahl von einem geteilten Runner.
-* **Ein Durchsatzergebnis rechtfertigt ein neues Preset, keinen Umbau eines
-  bestehenden** (§9.5).
+  Dort ist Parität keine Zusage, sondern Identität — es ist derselbe Strom. Was
+  bleibt, ist der Scan, der nach Literalen sucht, die es nicht gibt; §9.2.1
+  macht daraus eine Prüfung je elf Bytes statt je Byte.
+* **Für alles andere berichtet die Bench**, mit den Zahlen in §13 und einem
+  Korpus, der veröffentlicht ist. Die Segmentwechselrate ist exakt und
+  deterministisch (§9.5) und erklärt die Zahlen, ohne sie zu ersetzen.
+* **Skalar gegen vektorisiert ist kein Ergebnis.** Ein Vergleich zählt, wenn
+  beide Seiten denselben Grad an Handarbeit gesehen haben; §13.1 sagt, wie die
+  vektorisierte Seite für Base65t aussieht.
 
-Ein Encoder oder Dekoder ist also nicht deshalb unkonform, weil er langsamer
-ist als Base64. Er ist es, wenn er die falschen Bytes schreibt.
+Ein Encoder oder Dekoder ist nicht deshalb unkonform, weil er langsamer ist als
+Base64. Er ist es, wenn er die falschen Bytes schreibt.
 
 ## 14. Sicherheit
 
@@ -1090,7 +1199,7 @@ ist als Base64. Er ist es, wenn er die falschen Bytes schreibt.
 
 ```
 TV1  "alice.jones"                      -> ~Lalice.jones      (13 vs. 15 Base64)
-TV2  DE AD BE EF "session-eu-central"   -> 3q2-73Nl~Qssion-eu-central   (26 vs. 30)
+TV2  DE AD BE EF "session-eu-central"   -> 3q2-7w~Ssession-eu-central   (26 vs. 30)
 TV3  "sub~alice~jones"                  -> ~Psub~alice~jones  (17 vs. 20)
 TV4  Literal von 100 Bytes              -> Header ~_Al   (Classic: ~/Al)
      L1 = 63, V = 100 − 63 = 37 = 000000 100101 -> 'A'(0), 'l'(37)
@@ -1102,8 +1211,18 @@ Base64URL-Vergleichswerte: `YWxpY2Uuam9uZXM`,
 TV2 ist eine Byte-Zusicherung und keine Längenzusicherung: drei Segmentierungen
 sind 26 Zeichen lang, weil das Aufnehmen von ein oder zwei Textbytes in das
 Base64-Segment nichts kostet (`ceil(4k/3) + (22 − k) + 2 = 26` für k = 4, 5, 6).
-Die Regel aus §9.0 wählt k = 6, weil an Index 4 `B < S` gilt. In v0.1 stand hier
-die Variante mit k = 4, ohne dass eine Regel sie ausgezeichnet hätte.
+Die Zeile oben ist `dense`, also die lineare Regel aus §9.2.1: sie nimmt das
+Literal, sobald es beginnt, und wählt damit k = 4. `canonical` wählt k = 6, weil
+die Ordnung aus §11.1 an Index 4 `B < S` sieht:
+
+```
+dense     : 3q2-7w~Ssession-eu-central   (26 chars)
+canonical : 3q2-73Nl~Qssion-eu-central   (26 chars)
+```
+
+Gleich lang, verschiedene Bytes — der Fall, für den §9.0 verlangt, dass jedes
+Preset eine Funktion ist. v0.1 führte hier die `dense`-Zeile, ohne eine Regel zu
+nennen, die sie auszeichnet; v0.2 nennt sie.
 
 ### TV5 — F1/F2-Konflikt
 
@@ -1323,6 +1442,11 @@ belegt:
    Presets und alle drei Profile byteweise überein — 870 Paare — und über
    fünfzehn Fehlerfälle dazu, was ebenso zählt: wer sich über gültige Ströme
    einig ist und über ungültige nicht, ist sich über das Format nicht einig.
+   Über den Vektorsatz hinaus kodieren beide dieselbe Viertelmegabyte-Eingabe
+   und schreiben Zeichen für Zeichen denselben Strom
+   (`conformance/test_large.py`) — was erst möglich ist, seit `dense` nach
+   §9.2.1 linear ist; über den quadratischen DP war eine Eingabe dieser Größe
+   in Python nicht zu kodieren.
    Die Lücke: derselbe Autor. Eine dritte Implementierung von jemand anderem
    prüft sich gegen `docs/vectors.json`, ohne eine der beiden zu lesen.
 4. **Keine Fehlsynchronisation auf `~A` im Framed Mode**, auch bei adversarialen
@@ -1330,10 +1454,11 @@ belegt:
 
 Ergänzende Arbeiten, nicht normativ:
 
-5. Messen (§12, §13): `L_min`/`B_min`-Fläche und Korpusdichte über
-   binary2textbench. Akzeptanzkriterien gibt es nach §13.2 keine, und ein
-   Ergebnis kann nach §9.5 nur ein neues Preset begründen — die Messung ist
-   damit nützlich, aber für kein bestehendes Preset mehr bindend.
+5. Messen (§12, §13): Korpusdichte und Durchsatz über binary2textbench —
+   **erbracht**, die Zahlen stehen in §13. Base65t ist dort als siebter Codec
+   eingehängt und wird bei jeder Änderung mitgemessen. Das Kriterium steht in
+   §13.2; ein Ergebnis, das Dichte gegen Durchsatz tauschen will, begründet nach
+   §9.5 ein neues Preset und keine neue Fassung eines bestehenden.
 6. Container-Test mit echten Parsern — **erledigt für Pythons Parser**,
    `conformance/test_containers.py`: URL-Query gegen `urllib.parse`, Cookie gegen
    `http.cookies`, JSON gegen `json`, dazu Dateiname und Logzeile. Profil U

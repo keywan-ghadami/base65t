@@ -2,22 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Writes one input larger than a block and its `dense` encoding, so that the
-//! other implementation can check the seam.
+//! Writes one long input and its `dense` encoding, so that the other
+//! implementation can check both against its own.
 //!
 //!     cargo run --release --example large_sample -- /tmp/in.bin /tmp/in.b65
 //!
 //! `docs/vectors.json` cannot reach here: every vector in it is under a
 //! kilobyte, and a hex dump of a quarter-megabyte input would be half a
-//! megabyte of repository. But this is exactly where the interesting mistake
-//! lives -- a block whose last base64 run leaves a partial quantum is
-//! continued by the next block's run, and the seam decodes to what neither
-//! block meant. So the check that crosses implementations here is decoding,
-//! which is cheap in any language, rather than re-deriving the segmentation.
+//! megabyte of repository. But a long stream is where a segmentation mistake
+//! hides -- one did, when `dense` still encoded in blocks and a block could
+//! end on a partial quantum.
 //!
-//! The input is mixed on purpose. Homogeneous input cannot show the bug:
-//! noise makes one base64 run per block of exactly `BLOCK_BYTES` bytes, and
-//! profile-legal text makes no base64 run at all.
+//! The input is mixed on purpose. Homogeneous input shows nothing: noise makes
+//! one base64 run, and profile-legal text makes none.
 
 use base65t::*;
 
@@ -38,8 +35,9 @@ fn main() {
         s ^= s << 5;
         s
     };
-    let mut data: Vec<u8> = Vec::with_capacity(4 * BLOCK_BYTES);
-    while data.len() < 4 * BLOCK_BYTES + 777 {
+    const LEN: usize = 262_923;
+    let mut data: Vec<u8> = Vec::with_capacity(LEN);
+    while data.len() < LEN {
         let run = 1 + (next() % 60) as usize;
         if next() % 3 == 0 {
             data.extend((0..run).map(|_| (next() & 0xff) as u8));
@@ -56,9 +54,8 @@ fn main() {
     std::fs::write(input_path, &data).expect("write input");
     std::fs::write(stream_path, &stream).expect("write stream");
     println!(
-        "{} bytes over {} blocks -> {} chars ({:.4} of base64)",
+        "{} bytes -> {} chars ({:.4} of base64)",
         data.len(),
-        data.len().div_ceil(BLOCK_BYTES),
         stream.len(),
         stream.len() as f64 / (4 * data.len()).div_ceil(3) as f64
     );

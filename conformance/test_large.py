@@ -3,17 +3,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""The block seam, checked across implementations.
+"""A long stream, checked across implementations.
 
     cargo run --release --example large_sample -- in.bin in.b65
     python3 conformance/test_large.py in.bin in.b65
 
-The published vectors stop below a kilobyte, so the block rule of §9.2.1 is
-outside them -- and that is where the mistake this test exists for lived: a
-block whose last base64 run leaves a partial quantum is continued by the next
-block's run, and the seam decodes to what neither block meant. One
-implementation encodes, the other decodes; if they disagree about a boundary,
-this says so.
+The published vectors stop below a kilobyte. Everything a segmentation mistake
+needs is above that: many boundaries, and no vector watching them. One
+implementation encodes the input, this one encodes it again and decodes what
+the other wrote, and the three have to agree.
+
+Encoding both ways is affordable because §9.2.1 is linear. It was not, when
+`dense` still ran the programme of §9.2.2 over blocks -- and the mistake that
+lived here then was a block whose last base64 run left a partial quantum for
+the next block's run to continue, so that the seam decoded to what neither
+block meant. There are no blocks now, and no seams.
 """
 
 import hashlib
@@ -46,11 +50,16 @@ def main(argv) -> int:
         print(f"FAIL {len(stream)} chars is longer than base64 would be")
         return 1
 
-    blocks = -(-len(data) // base65t.BLOCK_BYTES)
+    mine = base65t.encode(data)
+    if mine != stream:
+        at = next(i for i, (a, b) in enumerate(zip(mine, stream)) if a != b)
+        print(f"FAIL the two encoders disagree at character {at}")
+        return 1
+
     print(
-        f"{len(data)} bytes over {blocks} blocks, "
-        f"sha256 {hashlib.sha256(data).hexdigest()[:16]}: "
-        f"{len(stream)} chars decode back exactly, and are no longer than base64"
+        f"{len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()[:16]}: "
+        f"both encoders write the same {len(stream)} chars, they decode back "
+        f"exactly, and they are no longer than base64"
     )
     return 0
 

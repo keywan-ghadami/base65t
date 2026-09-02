@@ -23,7 +23,6 @@ ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 TILDE = 0x7E
 MAX_LITERAL = 4158        # §6.1: 63 + 4095
 MAX_FRAME_BODY = 262143   # §8.1: 18 bits
-BLOCK_BYTES = 65535       # §9.2.1, a multiple of three
 FRAME_BYTES = 65536       # §8.1
 
 _VALUE = {}
@@ -229,9 +228,8 @@ def _b64(chunk: bytes) -> bytes:
     return bytes(out)
 
 
-def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool,
-              aligned_end: bool = False):
-    """Length-optimal segmentation under §9.0, quadratic and obvious.
+def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool):
+    """Length-optimal segmentation under §9.2.2, quadratic and obvious.
 
     Returns a list of ("B" | "L", start, end). `lmin` of None never takes a
     literal (`opaque`). Cost is (characters, -passthrough) when the preset asks
@@ -271,15 +269,8 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool,
             if literal_ok(j, t) and r_l[t] != INF:
                 best = min(best, add(lit_cost(t - j), r_l[t]))
         r_b[j] = best
-        # A base64 segment covering [j, t), then a literal must follow. A run
-        # that reaches the end of the input may only do so on a quantum
-        # boundary when something follows that carries no boundary of its own
-        # -- a block in §9.2.1. Two adjacent base64 segments are one segment to
-        # a decoder (§4), so a partial quantum at a block end is continued by
-        # the next block and decodes to what neither block meant.
+        # A base64 segment covering [j, t), then a literal must follow.
         for t in range(j + 1, n + 1):
-            if t == n and aligned_end and (t - j) % 3 != 0:
-                continue
             if r_b[t] != INF or t == n:
                 cand = add((-(-4 * (t - j) // 3), 0), r_b[t])
                 best = min(best, cand)
@@ -294,8 +285,6 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool,
             best_t = None
             for t in range(pos + 1, n + 1):
                 if r_b[t] == INF and t != n:
-                    continue
-                if t == n and aligned_end and (t - pos) % 3 != 0:
                     continue
                 if add((-(-4 * (t - pos) // 3), 0), r_b[t]) == r_l[pos]:
                     best_t = t
@@ -319,8 +308,7 @@ def _segments(data: bytes, profile: str, lmin, framed: bool, passthrough: bool,
                 opens = any(
                     add((-(-4 * (u - t) // 3), 0), r_b[u]) == r_l[t]
                     for u in range(t + 1, n + 1)
-                    if (r_b[u] != INF or u == n)
-                    and not (u == n and aligned_end and (u - t) % 3 != 0)
+                    if r_b[u] != INF or u == n
                 )
                 if opens and add(lit_cost(t - pos), r_l[t]) == target and r_l[t] != r_b[t]:
                     chosen = t
@@ -347,20 +335,47 @@ def _emit(data: bytes, segs) -> bytes:
     return bytes(out)
 
 
-def _encode_one(data, profile, lmin, framed=False, passthrough=False,
-                aligned_end=False) -> bytes:
-    return _emit(data, _segments(data, profile, lmin, framed, passthrough, aligned_end))
+def _linear_segments(data: bytes, profile: str, lmin: int, framed: bool):
+    """§9.2.1 read literally: one forward scan, no lookahead, no table.
+
+    Written out one byte at a time on purpose. The Rust encoder skips ahead in
+    windows of `lmin`, which is an argument about where a literal can start;
+    this is the sentence the argument is about.
+    """
+    n = len(data)
+    segs, pending, i = [], 0, 0
+    while i < n:
+        j = i
+        while j < n and j - i < MAX_LITERAL and allows(profile, data[j]):
+            if framed and data[j] == TILDE and j + 1 < n and data[j + 1] == ord("A"):
+                break                                       # F1
+            j += 1
+        if framed:
+            while j > i and data[j - 1] == TILDE:           # F2
+                j -= 1
+        if j - i >= lmin:
+            if pending < i:
+                segs.append(("B", pending, i))
+            segs.append(("L", i, j))
+            i = pending = j
+        else:
+            i = max(j, i + 1)
+    if pending < n:
+        segs.append(("B", pending, n))
+    return segs
+
+
+def _encode_one(data, profile, lmin, framed=False, passthrough=False) -> bytes:
+    return _emit(data, _segments(data, profile, lmin, framed, passthrough))
+
+
+def _encode_linear(data, profile, lmin, framed=False) -> bytes:
+    return _emit(data, _linear_segments(data, profile, lmin, framed))
 
 
 def encode_dense(data: bytes, profile: str = "U") -> bytes:
-    """§9.2.1: independent blocks, so memory is constant."""
-    if len(data) <= BLOCK_BYTES:
-        return _encode_one(data, profile, 11)
-    blocks = [data[i:i + BLOCK_BYTES] for i in range(0, len(data), BLOCK_BYTES)]
-    return b"".join(
-        _encode_one(b, profile, 11, aligned_end=(i + 1 < len(blocks)))
-        for i, b in enumerate(blocks)
-    )
+    """§9.2.1: the linear rule, in constant memory and one pass."""
+    return _encode_linear(data, profile, 11)
 
 
 def encode_legible(data: bytes, profile: str = "U") -> bytes:
@@ -372,13 +387,13 @@ def encode_canonical(data: bytes, profile: str = "U") -> bytes:
 
 
 def encode_opaque(data: bytes, profile: str = "U") -> bytes:
-    return _encode_one(data, "U", None)
+    return _b64(data)
 
 
 def encode_framed(data: bytes, profile: str = "U") -> bytes:
     out = bytearray()
     for i in range(0, len(data), FRAME_BYTES):
-        body = _encode_one(data[i:i + FRAME_BYTES], profile, 11, framed=True)
+        body = _encode_linear(data[i:i + FRAME_BYTES], profile, 11, framed=True)
         assert len(body) <= MAX_FRAME_BODY
         out += bytes((TILDE, ord("A"),
                       ALPHABET[(len(body) >> 12) & 63],

@@ -73,12 +73,12 @@ jobs:
       - name: Real parsers take what profile U writes
         run: python3 conformance/test_containers.py
 
-      # The published vectors stop below a kilobyte, so the block rule of
-      # §9.2.1 is outside them -- and that is where the one bug integration
-      # found was living. One implementation encodes across five blocks, the
-      # other decodes.
+      # The published vectors stop below a kilobyte, and a segmentation
+      # mistake hides above that -- one did. One implementation encodes a
+      # quarter-megabyte stream, the other encodes it again and decodes what
+      # the first wrote; §9.2.1 is linear, so both are cheap.
       - uses: dtolnay/rust-toolchain@stable
-      - name: The block seam, across implementations
+      - name: A long stream, across implementations
         run: |
           cd rust
           cargo run --release --quiet --example large_sample -- /tmp/in.bin /tmp/in.b65

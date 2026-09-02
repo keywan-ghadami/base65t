@@ -2,14 +2,23 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The encoder, §9 — the exact dynamic programme, not a greedy one.
+//! The encoder, §9 — two rules, and which preset gets which.
 //!
-//! §9.2 derives an O(n) optimum and the derivation is the interesting part, so
-//! it is implemented as derived rather than as a quadratic scan that would
-//! agree with it on small inputs: literals are edges, `h` has two bands, and
-//! each band is a sliding-window minimum over `D[i] − i` carried by one
-//! monotone deque. Admissibility never appears per edge — profile and F1 move
-//! the window's far end, F2 removes a position's literal transition outright —
+//! `dense` and `framed` use the linear rule of §9.2.1: one forward scan that
+//! takes every profile-legal run of eleven bytes or more. It is not
+//! length-optimal, and §9.1 shows it does not have to be — a literal that long
+//! cannot lose against base64 even after the worst rounding on both sides, so
+//! the never-worse guarantee of §9.4 holds without any optimisation at all.
+//! What it buys is the encoder running in constant memory at roughly base64's
+//! speed rather than at a twelfth of it.
+//!
+//! `canonical`, `legible` and `opaque` use the exact programme of §9.2, which
+//! derives an O(n) optimum. The derivation is the interesting part, so it is
+//! implemented as derived rather than as a quadratic scan that would agree
+//! with it on small inputs: literals are edges, `h` has two bands, and each
+//! band is a sliding-window minimum over `D[i] − i` carried by one monotone
+//! deque. Admissibility never appears per edge — profile and F1 move the
+//! window's far end, F2 removes a position's literal transition outright —
 //! which is what keeps the linear bound (§9.2, *Zulässigkeit der Kanten*).
 //!
 //! The recurrence here runs backwards, so that `encode_canonical` gets the
@@ -56,31 +65,6 @@ fn add(a: Cost, b: Cost) -> Cost {
 /// decoded size is what makes offset-to-frame O(1) without a trailer.
 pub const FRAME_BYTES: usize = 65536;
 
-/// Bytes per block in `dense` (§9.2), and why it is not a power of two.
-///
-/// Without a greedy encoder the exact dynamic programme is the only conforming
-/// one, and its backpointers are O(n) — which for a gigabyte object is the
-/// difference between running and not. So `dense` runs the programme over
-/// independent blocks: O(1) memory, streamable, and still byte-exact, which a
-/// greedy encoder could never be.
-///
-/// **The size has to be divisible by three.** Base64 of `b` bytes is
-/// `ceil(4b/3)` characters; for `b` not a multiple of three every block rounds
-/// up on its own and `k` blocks cost up to `k − 1` characters more than the
-/// same stream in one piece. At 65536 that would be one character per 64 KiB —
-/// and `len ≤ ceil(4n/3)` would be broken, which is the guarantee the whole
-/// case for the format rests on (§9.4). At 65535 = 3 · 21845 every block
-/// boundary is a quantum boundary: encoding blockwise as pure base64 is
-/// **byte-identical** to encoding the whole stream, so the all-base64
-/// candidate is untouched and so is the guarantee.
-///
-/// The cost is that a literal cannot span a block boundary — at most one extra
-/// header per boundary, under 0.01 %.
-///
-/// `FRAME_BYTES` stays a power of two for the opposite reason: there the point
-/// is offset arithmetic (§8.1), and `framed` is exempt from §9.4 anyway.
-pub const BLOCK_BYTES: usize = 65535;
-
 /// Header cost of a literal of `m` bytes (§6.1): two bands, and no third one,
 /// because a run longer than `MAX_LITERAL` is several edges.
 #[inline]
@@ -124,17 +108,6 @@ pub struct Rules {
     /// Whether ties in length are broken towards readability rather than left
     /// to the reconstruction rule. This is the second component of `Cost`.
     pub prefer_passthrough: bool,
-    /// Whether a base64 segment reaching the end of this input must end on a
-    /// quantum boundary.
-    ///
-    /// It must, whenever something else follows that the decoder will not see
-    /// a boundary in front of — which is exactly a block in §9.2.1. Two
-    /// adjacent base64 segments are one segment to a decoder (§4), so a block
-    /// whose last segment is a base64 run of `k` bytes with `k mod 3 != 0`
-    /// leaves a partial quantum, the next block's run continues it, and the
-    /// two decode to something neither block meant. A literal may end a block
-    /// freely: its length header is the boundary.
-    pub aligned_end: bool,
 }
 
 impl Rules {
@@ -146,7 +119,6 @@ impl Rules {
             framed,
             bonus: 0,
             prefer_passthrough: false,
-            aligned_end: false,
         }
     }
 
@@ -220,14 +192,7 @@ pub fn costs(data: &[u8], rules: Rules) -> Costs {
     let mut g = vec![[INF; 3]; n + 1];
     r_l[n] = (0, 0);
     r_b[n] = (0, 0);
-    // A base64 segment may close at the end of the input from any quantum
-    // offset -- unless something follows that carries no boundary of its own,
-    // and then only `p = 0` will do. See `Rules::aligned_end`.
-    g[n] = if rules.aligned_end {
-        [(0, 0), INF, INF]
-    } else {
-        [(0, 0); 3]
-    };
+    g[n] = [(0, 0); 3];
 
     // Deques over candidate end positions `t`. A literal edge [j, t) costs
     // `(3 − λ)(t − j) + 3h + r_l[t]` in thirds, and buys `t − j` passthrough
@@ -489,12 +454,17 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
     // it belongs in the type where the compiler can see it rather than in a
     // runtime length the indexing below has to be trusted against.
     let (groups, remainder) = bytes.as_chunks::<3>();
+    out.reserve(groups.len() * 4 + 4);
     for c in groups {
         let n = (c[0] as u32) << 16 | (c[1] as u32) << 8 | c[2] as u32;
-        out.push(ALPHABET[(n >> 18) as usize & 63]);
-        out.push(ALPHABET[(n >> 12) as usize & 63]);
-        out.push(ALPHABET[(n >> 6) as usize & 63]);
-        out.push(ALPHABET[n as usize & 63]);
+        // Four characters written at once: the bounds check and the length
+        // update happen once per quantum instead of four times.
+        out.extend_from_slice(&[
+            ALPHABET[(n >> 18) as usize & 63],
+            ALPHABET[(n >> 12) as usize & 63],
+            ALPHABET[(n >> 6) as usize & 63],
+            ALPHABET[n as usize & 63],
+        ]);
     }
     match remainder {
         [a] => {
@@ -512,6 +482,90 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
     }
 }
 
+/// The linear-time segmentation of §9.2.1: scan, and take every run the
+/// threshold admits.
+///
+/// This is what `dense` and `framed` use, and it is normative rather than
+/// "some greedy encoder": the rule is exact, so the output is a function of
+/// the input like every other preset's, and the published vectors stay
+/// byte-exact. What it is not is length-optimal — it never absorbs a byte into
+/// a base64 run to align a quantum, where the programme in §9.2.2 sometimes
+/// would.
+///
+/// It cannot lose against base64, and that is §9.1's derivation rather than a
+/// hope: a literal of `L >= 11` bytes saves `(L - 10)/3` characters *after*
+/// the worst-case rounding its two base64 neighbours can suffer. Every literal
+/// here is at least that long, and the saving composes over the stream.
+///
+/// One pass, no tables, no backpointers, constant memory. That is the whole
+/// point: the exact programme needs O(n) backpointers and about 80 bytes of
+/// state per input byte, which is what made encoding fifteen times the cost of
+/// base64.
+pub fn segment_greedy(data: &[u8], rules: Rules) -> Vec<Seg> {
+    let n = data.len();
+    let Some(lmin) = rules.min_literal else {
+        // `opaque`: never a literal.
+        return if n == 0 {
+            Vec::new()
+        } else {
+            vec![Seg::Base64(0, n)]
+        };
+    };
+
+    let mut segs = Vec::new();
+    let mut pending = 0; // start of the base64 run being accumulated
+    let mut i = 0;
+    while i < n {
+        // A literal of `lmin` bytes starting anywhere in `[i, i + lmin)` has
+        // to cover `i + lmin - 1`, so one disallowed byte there rules out
+        // every start in that window at once. The scan below would reach the
+        // same place one byte at a time; on data whose bytes are mostly
+        // outside the profile -- compressed, encrypted, most binary formats --
+        // that is the whole of the encoder's work, and this does it in a
+        // lookup per `lmin` bytes instead of one per byte. The literals found
+        // are the same ones: the test is necessary, never sufficient, and the
+        // framed constraints below only ever shorten a run.
+        if i + lmin <= n && !rules.profile.allows(data[i + lmin - 1]) {
+            i += lmin;
+            continue;
+        }
+        // The longest literal a run starting here could carry.
+        let mut j = i;
+        while j < n && j - i < MAX_LITERAL && rules.profile.allows(data[j]) {
+            // F1: the payload may not contain `~A` (§8.2).
+            if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
+                break;
+            }
+            j += 1;
+        }
+        // F2: the payload may not end on a tilde.
+        if rules.framed {
+            while j > i && data[j - 1] == TILDE {
+                j -= 1;
+            }
+        }
+
+        if j - i >= lmin {
+            if pending < i {
+                segs.push(Seg::Base64(pending, i));
+            }
+            segs.push(Seg::Literal(i, j));
+            i = j;
+            pending = i;
+        } else {
+            // Too short to pay for its header: these bytes go to base64. No
+            // run starting inside a rejected one can be longer than it was,
+            // so the scan resumes at its end rather than at the next byte --
+            // which is what keeps this linear.
+            i = j.max(i + 1);
+        }
+    }
+    if pending < n {
+        segs.push(Seg::Base64(pending, n));
+    }
+    segs
+}
+
 /// One plain-mode stream under the given rules, over the whole input.
 pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
     let c = costs(data, rules);
@@ -519,26 +573,9 @@ pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
     emit(data, &segs)
 }
 
-/// The same, in independent blocks of `block` bytes (§9.2).
-///
-/// A block is simply its own input: the dynamic programme is untouched, and
-/// what bounds the memory is that nothing has to be remembered across a
-/// boundary. `block` MUST be a multiple of three — see `BLOCK_BYTES`.
-pub fn encode_blocked(data: &[u8], rules: Rules, block: usize) -> Vec<u8> {
-    assert_eq!(block % 3, 0, "a block boundary must be a quantum boundary");
-    if data.len() <= block {
-        return encode_rules(data, rules);
-    }
-    let mut inner = rules;
-    inner.aligned_end = true;
-    let last = (data.len() - 1) / block;
-    let mut out = Vec::with_capacity(data.len() + data.len() / 3 + 8);
-    for (i, chunk) in data.chunks(block).enumerate() {
-        // Only the final block may leave a partial quantum open: after it
-        // nothing follows to be merged with.
-        out.extend_from_slice(&encode_rules(chunk, if i == last { rules } else { inner }));
-    }
-    out
+/// One plain-mode stream under the linear rule of §9.2.1, over any input.
+pub fn encode_greedy(data: &[u8], rules: Rules) -> Vec<u8> {
+    emit(data, &segment_greedy(data, rules))
 }
 
 /// §8: fixed-size frames, so that a byte offset names a frame without a
@@ -548,7 +585,8 @@ pub fn encode_framed(data: &[u8], profile: Profile, min_literal: usize) -> Vec<u
     let rules = Rules::preset(profile, Some(min_literal), true);
     let mut out = Vec::new();
     for chunk in data.chunks(FRAME_BYTES) {
-        let body = encode_rules(chunk, rules);
+        // Frames are for large streams, so the linear rule here too.
+        let body = encode_greedy(chunk, rules);
         assert!(
             body.len() <= MAX_FRAME_BODY,
             "a frame body of {} chars does not fit 18 bits",

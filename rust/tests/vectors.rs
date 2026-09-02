@@ -32,27 +32,37 @@ fn tv1_literal_beats_base64() {
     assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
 }
 
-/// Absorbing one or two text bytes into the base64 segment costs nothing:
-/// `ceil(4k/3) + (22-k) + 2` is 26 for k = 4, 5 and 6 alike. §9.0 decides
-/// between them — `B < S` at index 4 picks k = 6 — which is what makes this a
-/// byte assertion rather than a length assertion. v0.1 named the k = 4 variant
-/// without a rule that picked it; it is still a valid stream.
+/// Three segmentations are 26 characters here: absorbing one or two text bytes
+/// into the base64 segment costs nothing, since `ceil(4k/3) + (22-k) + 2` is 26
+/// for k = 4, 5 and 6 alike. Which one comes out is not a matter of taste but
+/// of which rule ran.
+///
+/// `dense` scans and takes the run whole (§9.2.1), so it stops the base64
+/// segment at the first admissible byte: k = 4. `canonical` minimises and then
+/// breaks the tie by the order of §11.1, where `B < S` at index 4 picks k = 6.
+/// Both are 26 characters and both decode to the input.
+///
+/// The `dense` stream is the one v0.1 printed here. The vector was written for
+/// a scanning encoder all along, which is worth knowing: the exact programme
+/// arrived later and took the vector with it.
 #[test]
 fn tv2_binary_prefix_then_text() {
     let input = [b"\xde\xad\xbe\xef".as_slice(), b"session-eu-central"].concat();
     let ours = dense(&input);
-    assert_eq!(ours, b"3q2-73Nl~Qssion-eu-central");
+    assert_eq!(ours, b"3q2-7w~Ssession-eu-central");
     assert_eq!(ours.len(), 26);
     assert_eq!(base64_len(input.len()), 30);
 
-    // One rule for the whole format (§9.0): the presets that reach the same
-    // length reach the same bytes.
-    assert_eq!(encode_canonical(&input, Profile::U), ours);
-
-    // The variant v0.1 named decodes to the same bytes and is legal to read.
-    let v01 = b"3q2-7w~Ssession-eu-central";
-    assert_eq!(v01.len(), 26);
-    assert_eq!(decode(v01, Profile::U).unwrap().bytes, input);
+    let canonical = encode_canonical(&input, Profile::U);
+    assert_eq!(canonical, b"3q2-73Nl~Qssion-eu-central");
+    assert_eq!(
+        canonical.len(),
+        ours.len(),
+        "the same length, a different rule"
+    );
+    for s in [&ours, &canonical] {
+        assert_eq!(decode(s, Profile::U).unwrap().bytes, input);
+    }
 }
 
 #[test]

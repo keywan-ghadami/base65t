@@ -221,7 +221,7 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // for them rather than a transcribed copy.
     m.add("MAX_LITERAL", base65t::MAX_LITERAL)?;
     m.add("MAX_FRAME_BODY", base65t::MAX_FRAME_BODY)?;
-    m.add("BLOCK_BYTES", base65t::BLOCK_BYTES)?;
+    m.add("MIN_LITERAL", base65t::MIN_LITERAL)?;
     m.add("FRAME_BYTES", base65t::FRAME_BYTES)?;
     m.add("PRESETS", vec!["dense", "legible", "canonical", "opaque", "framed"])?;
     m.add("PROFILES", vec!["U", "T", "B"])?;
@@ -240,7 +240,7 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "PROFILES",
             "MAX_LITERAL",
             "MAX_FRAME_BODY",
-            "BLOCK_BYTES",
+            "MIN_LITERAL",
             "FRAME_BYTES",
             "SPEC_VERSION",
             "__version__",

@@ -74,15 +74,17 @@ stream, while the profile is a statement about the container the stream is
 going into and cannot be derived from it.
 
 **Five presets**, all the same format and all read by the same decoder:
-`dense` (the default, encoded in blocks so that memory is constant), `legible`
+`dense` (the default: one forward scan, constant memory, 0.2 % off the shortest
+encoding over the corpus and about ten times faster to produce), `legible`
 (readability at no cost in size: the shortest encoding, and among the shortest
-the one that leaves the most bytes readable), `canonical` (for cache keys),
+the one that leaves the most bytes readable), `canonical` (the shortest
+encoding, for cache keys),
 `opaque` (never a literal, byte-identical to unpadded base64url, for tokens
 that carry a secret) and `framed` (fixed-size frames, for random access).
 
 All five are deterministic — the output of a preset is a function of input,
 preset and profile (§9.0). What separates them is whether that function carries
-parameters: `dense` and `framed` do (`L ≥ 11`, block and frame size), and §9.5
+parameters: `dense` and `framed` do (`L ≥ 11`, frame size), and §9.5
 may still move them; `canonical`, `legible` and `opaque` do not and are frozen.
 That is why cache keys belong to `canonical` and not to `dense`.
 
@@ -109,7 +111,7 @@ chooses the mode, and §14 of the specification says so at more length.
 |---|---|---|---|
 | pure binary | 1.333 | 1.333 | 1.333 |
 | pure profile-legal text | 1.333 | 1.001 | 1.001 |
-| 70 % text / 30 % binary | 1.333 | 1.113 | 1.112 |
+| 70 % text / 30 % binary | 1.333 | 1.113 | 1.113 |
 | 30 % text / 70 % binary | 1.333 | 1.244 | 1.243 |
 
 Binary data is base64 exactly — that is the guarantee in §9.4, and it is
@@ -118,8 +120,18 @@ bytes, which is the header of one literal segment. Everything between is
 between.
 
 These are generated inputs of a stated shape, not a corpus. The corpus
-measurement — throughput as well as size, against the other encodings — is
-binary2textbench's job and has not been run yet.
+measurement is binary2textbench's, where base65t is the seventh codec:
+
+| | encode | decode | size |
+|---|---|---|---|
+| no compressor | 124 % of base64's time | 158 % | 132.0 % (base64: 133.3 %) |
+| zstd −5 in front | 108 % | 126 % | 56.1 % (base64: 56.6 %) |
+| zstd 1 in front | 101 % | 113 % | 40.6 % (base64: 40.6 %) |
+
+The last row is what a protocol that compresses actually sees: the input is
+high-entropy by then, `dense` writes the same bytes base64url would, and the
+difference is what it costs to look for literals that are not there. Both sides
+are scalar; the base64 the runner measures against is not.
 
 ## Building and testing
 
@@ -129,7 +141,11 @@ cargo test --release
 cargo clippy --all-targets --release -- -D warnings
 cargo run --release --example density
 cargo run --release --example tiebreak -- --profile=U --lmin=1 <file>...
+cargo run --release --example timing -- <file>...
 ```
+
+`timing` is the throughput instrument: `dense` and `opaque`, encode and decode,
+on files you name, so that a change meant to be faster can be shown to be.
 
 `tiebreak` is the instrument for the open question in FINDINGS.md item 1: it
 runs both readings of §11.1 over the same files and reports what separates

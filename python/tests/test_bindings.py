@@ -99,6 +99,6 @@ def test_the_error_carries_the_code_the_vectors_use(stream, code):
 def test_the_constants_come_from_the_crate():
     assert base65t.MAX_LITERAL == 4158
     assert base65t.MAX_FRAME_BODY == 262143
-    assert base65t.BLOCK_BYTES == 65535 and base65t.BLOCK_BYTES % 3 == 0
+    assert base65t.MIN_LITERAL == 11
     assert base65t.FRAME_BYTES == 65536
     assert base65t.SPEC_VERSION == "0.2"

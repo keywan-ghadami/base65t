@@ -137,81 +137,6 @@ fn only_framed_is_exempt_and_by_how_much() {
     }
 }
 
-/// `dense` encodes in blocks so that memory is constant (§9.2), and the block
-/// size is a multiple of three so that this costs nothing at the boundary.
-///
-/// Both halves are checked, because the second is the one that is easy to get
-/// wrong: at 65536 rather than 65535 each block would round up on its own, the
-/// guarantee above would fail by a character per 64 KiB, and the output on
-/// high-entropy input would stop being base64url byte for byte.
-#[test]
-fn blocking_costs_neither_the_guarantee_nor_the_base64_identity() {
-    assert_eq!(BLOCK_BYTES % 3, 0);
-    let mut s: u32 = 0x1234_9e37;
-    let mut next = move || {
-        s ^= s << 13;
-        s ^= s >> 17;
-        s ^= s << 5;
-        s
-    };
-    // Lengths either side of one, two and three boundaries, and one that ends
-    // exactly on one.
-    for n in [
-        BLOCK_BYTES - 1,
-        BLOCK_BYTES,
-        BLOCK_BYTES + 1,
-        2 * BLOCK_BYTES,
-        2 * BLOCK_BYTES + 7,
-        3 * BLOCK_BYTES + 4159,
-    ] {
-        let noise: Vec<u8> = (0..n).map(|_| (next() & 0xff) as u8).collect();
-        let text: Vec<u8> = (0..n).map(|i| b"abcdefghij"[i % 10]).collect();
-        for (what, data) in [("noise", &noise), ("text", &text)] {
-            for profile in [Profile::U, Profile::B] {
-                let out = encode_dense(data, profile);
-                assert!(out.len() <= base64_len(n), "{what} {n} {profile:?}");
-                assert_eq!(
-                    decode(&out, profile).expect("decodes").bytes,
-                    *data,
-                    "{what} {n} {profile:?}"
-                );
-            }
-        }
-        // High entropy under profile U leaves no literal worth taking, so the
-        // stream must be base64url exactly -- across block boundaries too.
-        assert_eq!(
-            encode_dense(&noise, Profile::U),
-            encode_opaque(&noise),
-            "n = {n}"
-        );
-    }
-}
-
-/// What blocking does cost: a literal cannot span a boundary, so at most one
-/// extra header per boundary. Measured against the same encoder run over the
-/// whole input in one piece.
-#[test]
-fn blocking_costs_less_than_a_hundredth_of_a_percent() {
-    use base65t::internals::{costs, emit, segment_with, LiteralEnd, Rules};
-    let n = 3 * BLOCK_BYTES + 1000;
-    let data: Vec<u8> = (0..n)
-        .map(|i| {
-            if i % 97 == 0 {
-                b' '
-            } else {
-                b"abcdefghij"[i % 10]
-            }
-        })
-        .collect();
-    let rules = Rules::preset(Profile::U, Some(11), false);
-    let c = costs(&data, rules);
-    let whole = emit(&data, &segment_with(&data, rules, &c, LiteralEnd::KeyOrder));
-    let blocked = encode_dense(&data, Profile::U);
-    assert!(blocked.len() >= whole.len());
-    let overhead = (blocked.len() - whole.len()) as f64 / whole.len() as f64;
-    assert!(overhead < 0.0001, "blocking cost {:.4} %", 100.0 * overhead);
-}
-
 /// §9.4 does not extend the guarantee to `legible`, but under §9.0's objective
 /// — the shortest of the valid segmentations — `legible` cannot exceed it
 /// either: pure base64 is always a candidate. The exemption is only needed by
@@ -334,18 +259,85 @@ fn legible_is_readability_at_no_cost_in_size() {
     assert_eq!(ahead, 0, "{ahead} of {inputs} inputs were less readable");
 }
 
-/// The case the block tests missed, and the benchmark found within a minute of
-/// being pointed at a real file.
+/// The case the benchmark found within a minute of being pointed at a real
+/// file, kept as a regression although what caused it is gone.
 ///
-/// A block whose last segment is a base64 run of `k` bytes with `k mod 3 != 0`
-/// leaves a partial quantum open. The next block's run continues it — two
-/// adjacent base64 segments are one segment to a decoder (§4) — and the seam
-/// decodes to something neither block meant, or to `E_ALIGN`. It cannot happen
-/// on homogeneous input: pure noise makes one run per block of exactly
-/// `BLOCK_BYTES` bytes, and pure profile-legal text makes no base64 run at all.
-/// It needs a mixture, which is what every real file is.
+/// `dense` used to run the exact programme over independent blocks, and a
+/// block whose last segment was a base64 run of `k` bytes with `k mod 3 != 0`
+/// left a partial quantum that the next block's run continued -- two adjacent
+/// base64 segments are one segment to a decoder (§4), so the seam decoded to
+/// what neither block meant. The linear rule needs no blocks at all, which
+/// removes the whole class; this holds the door shut.
+///
+/// Homogeneous input cannot show that class of bug: noise makes one base64
+/// run, and profile-legal text makes none. It needs a mixture, which is what
+/// every real file is.
 #[test]
-fn a_block_never_ends_on_a_partial_quantum() {
+fn large_mixed_input_survives_every_seam() {
+    let data = mixed(300_000);
+    for profile in [Profile::U, Profile::T] {
+        let out = encode_dense(&data, profile);
+        let back = decode(&out, profile).unwrap_or_else(|e| panic!("{profile:?}: {e}"));
+        assert_eq!(back.bytes, data, "{profile:?}");
+        assert!(out.len() <= base64_len(data.len()), "{profile:?}");
+    }
+    // High entropy leaves no literal worth taking, so the stream is base64url
+    // exactly -- at any length.
+    let noise = noise(200_000);
+    assert_eq!(encode_dense(&noise, Profile::U), encode_opaque(&noise));
+
+    for n in [65534, 65535, 65536, 131_071, 131_072] {
+        let d = &data[..n];
+        assert_eq!(
+            decode(&encode_dense(d, Profile::U), Profile::U)
+                .unwrap()
+                .bytes,
+            d
+        );
+    }
+}
+
+/// What the linear rule costs against the exact programme: it never absorbs a
+/// byte into a base64 run to align a quantum, so it can be a little longer.
+///
+/// The number matters, because `dense` is what a caller gets by default and
+/// `canonical` is what the same input encodes to when every character counts.
+/// Both are bounded by base64, which is the guarantee; this bounds the gap
+/// between them.
+#[test]
+fn the_linear_rule_costs_little_against_the_exact_one() {
+    for (name, data) in [
+        ("mixed", mixed(300_000)),
+        (
+            "text",
+            (0..100_000)
+                .map(|i| b"abcdefghij"[i % 10])
+                .collect::<Vec<u8>>(),
+        ),
+        ("noise", noise(100_000)),
+    ] {
+        for profile in [Profile::U, Profile::T] {
+            let fast = encode_dense(&data, profile).len();
+            let exact = encode_canonical(&data, profile).len();
+            assert!(fast >= exact, "{name}: the exact rule cannot be longer");
+            // §9.2.1 puts the gap at 0,224 % summed over the corpus, with one
+            // 22-byte file at 4,5 %. These inputs are long, so the bound here
+            // is the corpus figure with room, not the small-input worst case:
+            // a regression that took `dense` to several percent on a hundred
+            // kilobytes would be a different rule, not a rounding difference.
+            let over = (fast - exact) as f64 / exact as f64;
+            assert!(
+                over < 0.01,
+                "{name}, {profile:?}: the linear rule costs {:.3} %",
+                100.0 * over
+            );
+            assert!(fast <= base64_len(data.len()), "{name}, {profile:?}");
+        }
+    }
+}
+
+/// Deterministic inputs the tests above share.
+fn mixed(n: usize) -> Vec<u8> {
     let mut s: u32 = 0x51ce_1234;
     let mut next = move || {
         s ^= s << 13;
@@ -353,10 +345,8 @@ fn a_block_never_ends_on_a_partial_quantum() {
         s ^= s << 5;
         s
     };
-    // Text runs of varying length with binary between them, so that the
-    // segmentation lands differently at every block boundary.
-    let mut data: Vec<u8> = Vec::with_capacity(4 * BLOCK_BYTES);
-    while data.len() < 4 * BLOCK_BYTES {
+    let mut data: Vec<u8> = Vec::with_capacity(n);
+    while data.len() < n {
         let run = 1 + (next() % 60) as usize;
         if next() % 3 == 0 {
             data.extend((0..run).map(|_| (next() & 0xff) as u8));
@@ -364,23 +354,18 @@ fn a_block_never_ends_on_a_partial_quantum() {
             data.extend((0..run).map(|i| b"abcdefghij"[i % 10]));
         }
     }
-    for profile in [Profile::U, Profile::T] {
-        let out = encode_dense(&data, profile);
-        let back = decode(&out, profile)
-            .unwrap_or_else(|e| panic!("{profile:?}: {e} at the seam of a block"));
-        assert_eq!(back.bytes, data, "{profile:?}");
-        assert!(out.len() <= base64_len(data.len()), "{profile:?}");
-    }
+    data.truncate(n);
+    data
+}
 
-    // And the same for every offset around a boundary, where the seam moves
-    // through all three quantum phases.
-    for extra in 0..6 {
-        let d = &data[..2 * BLOCK_BYTES + extra];
-        let out = encode_dense(d, Profile::U);
-        assert_eq!(
-            decode(&out, Profile::U).expect("decodes").bytes,
-            d,
-            "extra {extra}"
-        );
-    }
+fn noise(n: usize) -> Vec<u8> {
+    let mut s: u32 = 0x9e37_79b9;
+    (0..n)
+        .map(|_| {
+            s ^= s << 13;
+            s ^= s >> 17;
+            s ^= s << 5;
+            (s & 0xff) as u8
+        })
+        .collect()
 }

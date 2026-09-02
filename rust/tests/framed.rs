@@ -151,27 +151,17 @@ fn the_entry_points_do_not_bleed_into_each_other() {
 
 /// Framing costs five characters a frame and nothing else (§8.1), and §9.4
 /// does not cover the difference. Measured against the plain encoding of the
-/// same chunks, built here from the same rules the framed encoder uses —
-/// `encode_dense` is not the comparison, because it encodes in blocks of
-/// `BLOCK_BYTES` while a frame is `FRAME_BYTES`, and the two constants exist
-/// for different reasons (§9.2, §8.1).
+/// same chunks under the same rules — `encode_dense` is the right comparison
+/// now that both use the linear rule, on input without a tilde where F1 and F2
+/// have nothing to forbid.
 #[test]
 fn framing_costs_five_characters_a_frame() {
-    use base65t::internals::{costs, emit, segment_with, LiteralEnd, Rules};
-    let rules = {
-        let mut r = Rules::preset(Profile::U, Some(11), true);
-        r.bonus = 0;
-        r
-    };
     for n in [0usize, 1, 100, FRAME_BYTES, FRAME_BYTES + 1] {
         let data: Vec<u8> = (0..n).map(|i| b"abcdefghij"[i % 10]).collect();
         let frames = n.div_ceil(FRAME_BYTES);
         let plain: usize = data
             .chunks(FRAME_BYTES)
-            .map(|c| {
-                let cost = costs(c, rules);
-                emit(c, &segment_with(c, rules, &cost, LiteralEnd::KeyOrder)).len()
-            })
+            .map(|c| encode_dense(c, Profile::U).len())
             .sum();
         assert_eq!(
             encode_framed(&data, Profile::U).len(),

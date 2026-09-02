@@ -43,7 +43,7 @@ mod canonical;
 mod decode;
 mod encode;
 
-pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL};
+pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL, MIN_LITERAL};
 
 /// Not the format's API, and not stable: the pieces §11.1's two readings have
 /// to be compared through.
@@ -56,11 +56,13 @@ pub use alphabet::{AlphabetSeen, Profile, MAX_FRAME_BODY, MAX_LITERAL};
 /// is what this exists for. Nothing else should use it.
 #[doc(hidden)]
 pub mod internals {
-    pub use crate::encode::{c_vector, costs, emit, segment_with, LiteralEnd, Rules, Seg};
+    pub use crate::encode::{
+        c_vector, costs, emit, segment_greedy, segment_with, LiteralEnd, Rules, Seg,
+    };
 }
 pub use canonical::encode_canonical;
 pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
-pub use encode::{BLOCK_BYTES, FRAME_BYTES};
+pub use encode::FRAME_BYTES;
 
 use alphabet::Profile as P;
 use encode::Rules;
@@ -186,12 +188,16 @@ pub fn encode_with(data: &[u8], preset: Preset, profile: Profile) -> Vec<u8> {
 
 /// Literals from eleven bytes up, where §9.1 shows they can never cost.
 ///
-/// Encoded in independent blocks of [`BLOCK_BYTES`], so that a stream of any
-/// size needs constant memory (§9.2). The block size is a multiple of three,
-/// which is what keeps §9.4 exact across boundaries and keeps the output on
-/// high-entropy input byte-identical to base64url.
+/// One forward scan, constant memory, no backpointers: the linear rule of
+/// §9.2.1 rather than the exact programme of §9.2.2. It is not length-optimal
+/// — it never absorbs a byte into a base64 run to align a quantum — but it is
+/// exactly specified, so its output is a function like every other preset's,
+/// and §9.1's derivation makes it impossible for it to lose against base64.
+///
+/// This is what a caller gets from [`encode`], so it is the one that has to be
+/// fast.
 pub fn encode_dense(data: &[u8], profile: Profile) -> Vec<u8> {
-    encode::encode_blocked(data, Rules::preset(profile, Some(11), false), BLOCK_BYTES)
+    encode::encode_greedy(data, Rules::preset(profile, Some(MIN_LITERAL), false))
 }
 
 /// Readability at no cost in size: the shortest encoding, and among the
@@ -215,11 +221,17 @@ pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
 
 /// Base64URL and nothing else. The profile does not enter into it: there are
 /// no literals for it to constrain.
+///
+/// It used to reach the same answer through the programme of §9.2.2, which
+/// then had one candidate to choose between and O(n) memory to do it in. The
+/// answer was never in doubt: with no threshold there is no literal, so the
+/// segmentation is the single base64 run, and writing it is the whole of the
+/// work.
 pub fn encode_opaque(data: &[u8]) -> Vec<u8> {
-    encode::encode_rules(data, Rules::preset(P::U, None, false))
+    encode::encode_greedy(data, Rules::preset(P::U, None, false))
 }
 
 /// Frames of [`FRAME_BYTES`] decoded bytes each, `dense` inside (§8.1).
 pub fn encode_framed(data: &[u8], profile: Profile) -> Vec<u8> {
-    encode::encode_framed(data, profile, 11)
+    encode::encode_framed(data, profile, MIN_LITERAL)
 }

@@ -17,7 +17,9 @@
 //!    stream, and is never stripped in advance. In profile T `=` is a legal
 //!    payload byte, and `~Ea=b=` decodes to `a=b=` (TV10).
 
-use crate::alphabet::{value, AlphabetSeen, Profile, TILDE};
+use crate::alphabet::{
+    AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
+};
 use crate::{Decoded, Error, Framing};
 
 /// What `decode()` does with a stream before it looks at anything else
@@ -106,25 +108,26 @@ impl Decoder {
     /// Rule A (§5.4), and the strict variant from §5.5 in the same place: both
     /// are questions about a character at an alphabet position, and there is
     /// no other place where such a character is read.
+    ///
+    /// Takes the *classes seen* rather than a character, so that a base64
+    /// segment can `or` a table entry per character and settle the rule once
+    /// for the whole segment. Header positions pass a single character's bits.
     #[inline]
-    fn note_alphabet(&mut self, c: u8) -> Result<(), Error> {
-        match c {
-            b'+' | b'/' => {
-                if self.strict_url {
-                    return Err(Error::NonUrlAlphabet);
-                }
-                if self.alphabet_seen == AlphabetSeen::Url {
-                    return Err(Error::MixedAlphabet);
-                }
-                self.alphabet_seen = AlphabetSeen::Classic;
+    fn note_classes(&mut self, bits: u8) -> Result<(), Error> {
+        if bits & CLASSIC_BIT != 0 {
+            if self.strict_url {
+                return Err(Error::NonUrlAlphabet);
             }
-            b'-' | b'_' => {
-                if self.alphabet_seen == AlphabetSeen::Classic {
-                    return Err(Error::MixedAlphabet);
-                }
-                self.alphabet_seen = AlphabetSeen::Url;
+            if self.alphabet_seen == AlphabetSeen::Url {
+                return Err(Error::MixedAlphabet);
             }
-            _ => {}
+            self.alphabet_seen = AlphabetSeen::Classic;
+        }
+        if bits & URL_BIT != 0 {
+            if self.alphabet_seen == AlphabetSeen::Classic {
+                return Err(Error::MixedAlphabet);
+            }
+            self.alphabet_seen = AlphabetSeen::Url;
         }
         Ok(())
     }
@@ -132,9 +135,12 @@ impl Decoder {
     /// One alphabet position: check (1), then Rule A, then the value.
     #[inline]
     fn read_alphabet(&mut self, c: u8) -> Result<u8, Error> {
-        let v = value(c).ok_or(Error::Charset)?;
-        self.note_alphabet(c)?;
-        Ok(v)
+        let w = WORDS[c as usize];
+        if w & WORD_BAD != 0 {
+            return Err(Error::Charset);
+        }
+        self.note_classes(((w & WORD_CLASS) >> 8) as u8)?;
+        Ok((w & 63) as u8)
     }
 
     /// §10.1.
@@ -183,9 +189,13 @@ impl Decoder {
                 pos += l;
             } else {
                 let start = pos;
-                while pos < len && stream[pos] != TILDE {
-                    pos += 1;
-                }
+                // The scan for the next segment boundary is the decoder's hot
+                // loop on data that holds few literals: `position` reduces to a
+                // vectorised search, where an indexed `while` does not.
+                pos += stream[pos..]
+                    .iter()
+                    .position(|&b| b == TILDE)
+                    .unwrap_or(len - pos);
                 let seg = &stream[start..pos];
                 let at_end = pos == len && padding == Padding::Allowed;
                 self.base64_segment(seg, at_end)?;
@@ -222,31 +232,78 @@ impl Decoder {
             return Err(Error::Align);
         }
 
+        // The inner loop: one indexed load per character, four quanta written
+        // at a time. Neither the character check nor Rule A branches here --
+        // both are properties of the *set* of characters in the segment, so
+        // the loop only accumulates the bits and the questions are asked once,
+        // afterwards, for the whole segment.
         let body = &seg[..n];
-        let mut acc: u32 = 0;
-        let mut have = 0u32;
-        for &c in body {
-            let v = self.read_alphabet(c)? as u32;
-            acc = (acc << 6) | v;
-            have += 6;
-            if have == 24 {
-                self.out.push((acc >> 16) as u8);
-                self.out.push((acc >> 8) as u8);
-                self.out.push(acc as u8);
-                acc = 0;
-                have = 0;
+        let mut seen = 0u16;
+        self.out.reserve(n / 4 * 3 + 2);
+        let (blocks, rest) = body.as_chunks::<16>();
+        for b in blocks {
+            let mut wide = [0u8; 12];
+            for k in 0..4 {
+                let q = &b[4 * k..4 * k + 4];
+                let (w0, w1, w2, w3) = (
+                    WORDS[q[0] as usize],
+                    WORDS[q[1] as usize],
+                    WORDS[q[2] as usize],
+                    WORDS[q[3] as usize],
+                );
+                seen |= w0 | w1 | w2 | w3;
+                let v = ((w0 & 63) as u32) << 18
+                    | ((w1 & 63) as u32) << 12
+                    | ((w2 & 63) as u32) << 6
+                    | (w3 & 63) as u32;
+                wide[3 * k] = (v >> 16) as u8;
+                wide[3 * k + 1] = (v >> 8) as u8;
+                wide[3 * k + 2] = v as u8;
             }
+            self.out.extend_from_slice(&wide);
         }
-        match have {
+        let (quanta, tail) = rest.as_chunks::<4>();
+        for q in quanta {
+            let (w0, w1, w2, w3) = (
+                WORDS[q[0] as usize],
+                WORDS[q[1] as usize],
+                WORDS[q[2] as usize],
+                WORDS[q[3] as usize],
+            );
+            seen |= w0 | w1 | w2 | w3;
+            let v = ((w0 & 63) as u32) << 18
+                | ((w1 & 63) as u32) << 12
+                | ((w2 & 63) as u32) << 6
+                | (w3 & 63) as u32;
+            self.out
+                .extend_from_slice(&[(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+        }
+        // One character outside the alphabet set the bit, and the bytes
+        // written for its quantum are dropped along with the error.
+        if seen & WORD_BAD != 0 {
+            return Err(Error::Charset);
+        }
+
+        let mut acc: u32 = 0;
+        for &c in tail {
+            let w = WORDS[c as usize];
+            if w & WORD_BAD != 0 {
+                return Err(Error::Charset);
+            }
+            seen |= w;
+            acc = (acc << 6) | (w & 63) as u32;
+        }
+        self.note_classes(((seen & WORD_CLASS) >> 8) as u8)?;
+        match tail.len() {
             0 => {}
-            12 => {
+            2 => {
                 // Two characters, one byte: four bits are unused (§5).
                 if acc & 0x0F != 0 {
                     return Err(Error::NonzeroTail);
                 }
                 self.out.push((acc >> 4) as u8);
             }
-            18 => {
+            3 => {
                 // Three characters, two bytes: two bits are unused.
                 if acc & 0x03 != 0 {
                     return Err(Error::NonzeroTail);

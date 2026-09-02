@@ -9,7 +9,8 @@ is visible.
 
 **All nine are decided and folded into `docs/spec-v0.2.de.md`.**
 `docs/errata-v0.1.de.md` says what holds instead, entry by entry; this file
-stays as the record of how each one was found. Six of
+stays as the record of how each one was found — including the one decision that
+was later reversed, at the end. Six of
 the nine needed no measurement at all — the specification's own ranking of its
 goals settled them. The two that did, and the run that decided them, are in
 `PREREGISTRATION.md` and the appendix of the errata.
@@ -400,24 +401,73 @@ profile-legal text makes no base64 run at all. It takes a mixture — which is
 what every real file is, and what a corpus assembled by somebody else for
 another purpose supplies without being asked.
 
-Fixed by requiring a base64 run that ends a block to close on a quantum
-boundary, which in the dynamic programme is one boundary condition. The
-regression test uses mixed input across four blocks and every offset around a
-boundary, `conformance/test_large.py` checks the seam from the other implementation,
-and §9.2.1 now says the rule outright.
+It was first fixed by requiring a base64 run that ends a block to close on a
+quantum boundary — one boundary condition in the dynamic programme. Then the
+blocks went away entirely, and with them the seam. What follows is why.
+
+## What the benchmark's second number found
+
+The seam was the round trip. The next thing the benchmark said was the price:
+
+| | encode | decode | size |
+|---|---|---|---|
+| `dense`, exact programme over blocks | 1478 % of base64 | 678 % | 131,9 % |
+| `dense`, linear rule (§9.2.1) | **124 %** | **158 %** | 132,0 % |
+
+A twelvefold difference in encoding, for a tenth of a point of density.
+
+This is the one decision in the repository that was made and then reversed. It
+is worth setting out plainly, because the reversal is not "the measurement came
+out differently" — the measurement was never taken before the decision.
+
+**What was decided, and on what.** v0.1 permitted a greedy encoder alongside
+the exact programme without saying which one a conforming encoder runs. That is
+a real defect: two implementations can then write different streams for the
+same input and both be conforming, and no byte-exact test vector is possible.
+The fix chosen was to strike greedy and make the exact programme the only
+conforming encoder — which fixes the defect, and costs the encoder O(n) memory,
+which is why blocks followed, and the seam bug followed from the blocks.
+
+**What was wrong with it.** The defect was never *greedy*. It was
+*unspecified*. A greedy rule written out as a rule — this is §9.2.1 now — is a
+function like any other: deterministic, byte-exact, testable. Striking it threw
+away the property that mattered (a scanning encoder streams in constant memory
+and runs at base64's speed) to fix a property it never had to lose.
+
+The second mistake was reading §2's "no throughput record" as "throughput is
+not a goal". It is a goal; what §2 declines is the record. Reading it the other
+way made a twelvefold cost look like it cost nothing, because nothing in the
+document was counting.
+
+**What holds instead.** §9.2.1 states the linear rule normatively, and §9.1 —
+which was in v0.1 all along — proves it cannot lose against base64: a literal
+of eleven bytes or more wins even after the worst rounding on both sides, so an
+encoder that takes only those cannot produce a longer stream than base64, and
+never needed to optimise to promise it. §9.4 now derives the guarantee that way
+for `dense` and from the candidate set for the other presets. Blocks are gone.
+`conformance/test_large.py` no longer checks a seam; it checks that two
+independent encoders write the same quarter-megabyte stream character for
+character, which the quadratic Python reference could not have done while
+`dense` was defined by the dynamic programme.
+
+Three things carried the reversal, and all three were already in the
+repository: a specification section that proved more than it was being asked to
+(§9.1), a benchmark on somebody else's corpus, and the fact that the earlier
+decision had been written down in enough detail to be checked against.
 
 ## What was not done
 
-* **§16.5** — the throughput measurements and the `L_min`/`B_min` surface. That
-  is binary2textbench's job and needs the codec wired into it. Since v0.2 it is
-  no longer binding on anything: §13.2 has no acceptance gate to fail, and §9.5
-  lets a result add a preset but never change one.
+* **The `L_min`/`B_min` surface of §9.5.** The throughput measurement itself is
+  done — base65t is the seventh codec in binary2textbench and the numbers are in
+  §13 — but the two-parameter sweep is not, and §9.5 has closed it as a format
+  question: a result there can add a preset, never change one.
 * **§16.6** — done for Python's parsers (`conformance/test_containers.py`), which is
   where the profile-T whitespace caveat in §7 came from. Browsers, proxies and
   frameworks are still unchecked. (`python/` is the shipped binding over the
   same Rust and is not part of this: a binding cannot disagree with what it
   wraps.)
-* **§16.8** — the vector set is 17 tests over §15's twelve vectors, not the 200
-  the section asks for.
+* **§16.8** — `docs/vectors.json` carries 456 vectors, past what the section
+  asks for; §15 itself still names fifteen, and those are the ones written out
+  in a form a reader can check by hand.
 * **The SIMD decoder of §13.1.** This implementation is scalar and is meant to
   be read.
