@@ -335,8 +335,8 @@ profiles and every input up to twelve bytes over adversarial alphabets. It
 shares no code with the encoder and it disagreed with it while finding item 1
 above, which is the useful property.
 
-**Since then there is a second implementation.** `python/base65t.py` is written
-from v0.2 rather than from the Rust, with a quadratic dynamic programme instead
+**Since then there is a second implementation.** `conformance/reference.py` is
+written from v0.2 rather than from the Rust, with a quadratic dynamic programme instead
 of the sliding windows and no shared code; the two agree over all 456 vectors
 and all three profiles, 870 pairs, plus fifteen error cases. That discharges
 most of point 3. What it does not discharge is the part the section is really
@@ -403,7 +403,7 @@ another purpose supplies without being asked.
 Fixed by requiring a base64 run that ends a block to close on a quantum
 boundary, which in the dynamic programme is one boundary condition. The
 regression test uses mixed input across four blocks and every offset around a
-boundary, `python/test_large.py` checks the seam from the other implementation,
+boundary, `conformance/test_large.py` checks the seam from the other implementation,
 and §9.2.1 now says the rule outright.
 
 ## What was not done
@@ -412,9 +412,11 @@ and §9.2.1 now says the rule outright.
   is binary2textbench's job and needs the codec wired into it. Since v0.2 it is
   no longer binding on anything: §13.2 has no acceptance gate to fail, and §9.5
   lets a result add a preset but never change one.
-* **§16.6** — done for Python's parsers (`python/test_containers.py`), which is
+* **§16.6** — done for Python's parsers (`conformance/test_containers.py`), which is
   where the profile-T whitespace caveat in §7 came from. Browsers, proxies and
-  frameworks are still unchecked.
+  frameworks are still unchecked. (`python/` is the shipped binding over the
+  same Rust and is not part of this: a binding cannot disagree with what it
+  wraps.)
 * **§16.8** — the vector set is 17 tests over §15's twelve vectors, not the 200
   the section asks for.
 * **The SIMD decoder of §13.1.** This implementation is scalar and is meant to

@@ -1316,7 +1316,8 @@ belegt:
 3. **`encode_canonical(x)` byte-identisch über zwei unabhängige Implementierungen**,
    über den gesamten Vektorsatz. Ohne diesen Test ist §11.1 eine Behauptung.
    **Erbracht, mit einer benannten Lücke.** Zwei Implementierungen liegen bei:
-   `rust/` und `python/base65t.py`, die zweite aus diesem Dokument geschrieben,
+   `rust/` und `conformance/reference.py`, die zweite aus diesem Dokument
+   geschrieben,
    mit einem quadratischen DP statt der Schiebefenster aus §9.2 und ohne eine
    Zeile gemeinsamen Code. Sie stimmen über alle 456 Vektoren, alle fünf
    Presets und alle drei Profile byteweise überein — 870 Paare — und über
@@ -1334,7 +1335,7 @@ Ergänzende Arbeiten, nicht normativ:
    Ergebnis kann nach §9.5 nur ein neues Preset begründen — die Messung ist
    damit nützlich, aber für kein bestehendes Preset mehr bindend.
 6. Container-Test mit echten Parsern — **erledigt für Pythons Parser**,
-   `python/test_containers.py`: URL-Query gegen `urllib.parse`, Cookie gegen
+   `conformance/test_containers.py`: URL-Query gegen `urllib.parse`, Cookie gegen
    `http.cookies`, JSON gegen `json`, dazu Dateiname und Logzeile. Profil U
    geht durch alle unverändert; Profil T braucht in einer URL Prozent-Encoding
    und enthält das Leerzeichen — beides Negativkontrollen, und die zweite hat
@@ -1343,7 +1344,10 @@ Ergänzende Arbeiten, nicht normativ:
 7. API-Form je Zielsprache: `encode` / `decode` analog zum dortigen `base64`;
    zusätzlich `decode_url_strict`, `decode_plain`, `decode_framed`,
    `encode_canonical`, `encode_opaque`, `encode_legible`, `encode_framed`.
-   Rust und Python liegen bei und exportieren beide genau diese Menge.
+   Rust liegt bei; `python/` ist ein PyO3-Binding darüber und exportiert
+   dieselbe Menge, damit ein Python-Aufrufer byteweise dasselbe bekommt wie ein
+   Rust-Aufrufer. Ein Binding ist ausdrücklich **keine** zweite Implementierung
+   im Sinne von Nachweis 3 — es kann der ersten gar nicht widersprechen.
 8. Vektorsatz auf ≥ 200 ausbauen — **erledigt**: `docs/vectors.json` führt 456
    Vektoren über alle fünf Presets und alle drei Profile, jeder als Eingabe und
    erwarteter Strom in Hex. Der Fuzzing-Korpus für alle zwölf Fehlercodes

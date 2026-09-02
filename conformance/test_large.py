@@ -6,7 +6,7 @@
 """The block seam, checked across implementations.
 
     cargo run --release --example large_sample -- in.bin in.b65
-    python3 python/test_large.py in.bin in.b65
+    python3 conformance/test_large.py in.bin in.b65
 
 The published vectors stop below a kilobyte, so the block rule of §9.2.1 is
 outside them -- and that is where the mistake this test exists for lived: a
@@ -21,7 +21,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import base65t  # noqa: E402
+import reference as base65t  # noqa: E402
 
 
 def main(argv) -> int:

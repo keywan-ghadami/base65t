@@ -54,7 +54,10 @@ jobs:
   # specification, shares no code with the Rust crate, and checks itself
   # against the published vectors the Rust crate writes. Point 6 is the
   # container test, against Python's own URL, cookie and JSON parsers.
-  second-implementation:
+  #
+  # This is `conformance/`, not `python/`. The latter is a binding over the
+  # same Rust and therefore cannot disagree with it about anything.
+  conformance:
     name: The second implementation, and the containers
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -65,10 +68,10 @@ jobs:
           python-version: "3.x"
 
       - name: It agrees with the published vectors
-        run: python3 python/test_vectors.py
+        run: python3 conformance/test_vectors.py
 
       - name: Real parsers take what profile U writes
-        run: python3 python/test_containers.py
+        run: python3 conformance/test_containers.py
 
       # The published vectors stop below a kilobyte, so the block rule of
       # §9.2.1 is outside them -- and that is where the one bug integration
@@ -80,4 +83,32 @@ jobs:
           cd rust
           cargo run --release --quiet --example large_sample -- /tmp/in.bin /tmp/in.b65
           cd ..
-          python3 python/test_large.py /tmp/in.bin /tmp/in.b65
+          python3 conformance/test_large.py /tmp/in.bin /tmp/in.b65
+
+  # The shipped Python distribution is a PyO3 layer over the same crate, so
+  # what it can get wrong is the layer: argument types, the preset and profile
+  # names, the fields of the result, the error code. That is what its tests
+  # are about, and the vectors are in them only to catch a binding that
+  # silently encodes everything as `dense`.
+  python-bindings:
+    name: The Python bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the wheel
+        working-directory: python
+        run: |
+          python -m pip install --upgrade pip maturin pytest
+          maturin build --release --out dist
+
+      - name: Install it and test what the layer is responsible for
+        working-directory: python
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -m pytest tests -q

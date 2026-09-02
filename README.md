@@ -31,14 +31,19 @@ path follows from that.
 * **`rust/`** — the reference implementation. No dependencies, no unsafe, and
   written to be read against the specification rather than to be fast: the
   section numbers are in the comments.
-* **`python/base65t.py`** — the second implementation §16.3 asks for, written
-  from the specification rather than from the Rust: a plain quadratic dynamic
-  programme instead of the sliding windows of §9.2, no shared code, no shared
-  tables. The two agree byte for byte over all 456 vectors, all five presets
-  and all three profiles — 870 pairs — and over fifteen error cases, which
-  counts as much: agreeing about valid streams and not about invalid ones is
-  not agreeing about the format. The gap that stays open is that both have the
-  same author.
+* **`python/`** — the Python distribution: a PyO3 extension over the same
+  crate, packaged with maturin, so what Python runs is byte for byte what a
+  Rust caller gets. There is no Python implementation of the format in it, and
+  its tests are about what a binding can get wrong on its own — argument types,
+  the preset and profile names, the fields of the result, the error code.
+* **`conformance/reference.py`** — the second implementation §16.3 asks for,
+  which is a different thing from a binding: written from the specification
+  rather than from the Rust, a plain quadratic dynamic programme instead of the
+  sliding windows of §9.2, no shared code and no shared tables. The two agree
+  byte for byte over all 456 vectors, all five presets and all three profiles —
+  870 pairs — and over fifteen error cases, which counts as much: agreeing
+  about valid streams and not about invalid ones is not agreeing about the
+  format. The gap that stays open is that both have the same author.
 * **`FINDINGS.md`** — what implementing it turned up. Nine places where the
   specification says something the code cannot do or does not say enough for
   two implementations to agree, each with the test that holds it in place. One
@@ -140,8 +145,11 @@ error codes of §10.4 on purpose. `tests/against_the_system.rs` needs
 `base64(1)` and Python and skips itself where they are missing.
 
 ```sh
-python3 python/test_vectors.py       # the two implementations against each other
-python3 python/test_containers.py    # §16.6, against Python's own parsers
+python3 conformance/test_vectors.py     # the two implementations against each other
+python3 conformance/test_containers.py  # §16.6, against Python's own parsers
+
+cd python && maturin build --release --out dist   # the wheel
+python -m pip install dist/*.whl && python -m pytest tests -q
 ```
 
 ## Licence

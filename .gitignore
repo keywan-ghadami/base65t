@@ -1,1 +1,4 @@
 rust/target/
+python/target/
+python/dist/
+__pycache__/

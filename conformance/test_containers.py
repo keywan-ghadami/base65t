@@ -14,7 +14,7 @@ The negative controls matter as much as the positive ones. Profile T is *not*
 URL-safe and §7 says so; a test that only showed U passing would not have
 established that the profile distinction is real.
 
-    python3 python/test_containers.py
+    python3 conformance/test_containers.py
 """
 
 import http.cookies
@@ -24,7 +24,7 @@ import sys
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import base65t  # noqa: E402
+import reference as base65t  # noqa: E402
 
 # Two samples, because one would make the negative control vacuous: text that
 # is entirely unreserved encodes identically under U and T, and then "T is not

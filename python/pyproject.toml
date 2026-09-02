@@ -1,0 +1,54 @@
+# Packaging for the Python bindings.
+#
+# The wheel is a compiled extension module: maturin builds `src/lib.rs`, which
+# is a PyO3 layer over the `base65t` crate in ../rust. There is no Python
+# implementation of the format in this distribution -- the one under
+# ../conformance is a checking implementation and is not shipped.
+[build-system]
+requires = ["maturin>=1.8.2,<2"]
+build-backend = "maturin"
+
+[project]
+name = "base65t"
+# The major and minor track the specification version, like the crate does --
+# the wire format is what a caller depends on -- and the patch level is this
+# distribution's own.
+version = "0.2.0"
+description = "Base65t: Base64URL plus a 65th character introducing raw runs - Python bindings for the Rust implementation"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Keywan Ghadami" }]
+keywords = ["base65t", "base64", "encoding", "binary-to-text", "url", "json"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Repository = "https://github.com/keywan-ghadami/base65t"
+Specification = "https://github.com/keywan-ghadami/base65t/blob/main/docs/spec-v0.2.de.md"
+Issues = "https://github.com/keywan-ghadami/base65t/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.maturin]
+module-name = "base65t.base65t"
+# The wheel is a package -- `base65t/{__init__.py,__init__.pyi,py.typed}` from
+# `pysrc/`, plus the extension built into it -- rather than a bare `.so`,
+# because PEP 561 defines the marker file for a package and type checkers look
+# for it there.
+python-source = "pysrc"
+features = ["pyo3/extension-module"]
+strip = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

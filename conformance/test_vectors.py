@@ -10,7 +10,7 @@ against an implementation written from the specification instead, sharing no
 code with it: every vector must encode to exactly those bytes and decode back
 to exactly that input.
 
-    python3 python/test_vectors.py
+    python3 conformance/test_vectors.py
 """
 
 import json
@@ -18,7 +18,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import base65t  # noqa: E402
+import reference as base65t  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
