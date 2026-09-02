@@ -124,9 +124,30 @@ measurement is binary2textbench's, where base65t is the seventh codec:
 
 | | encode | decode | size |
 |---|---|---|---|
-| no compressor | 113 % of base64's time | 112 % | 132.0 % (base64: 133.3 %) |
-| zstd −5 in front | 104 % | 104 % | 56.1 % (base64: 56.6 %) |
-| zstd 1 in front | 101 % | 99 % | 40.6 % (base64: 40.6 %) |
+| no compressor | 114 % of base64's time | 107 % | 132.0 % (base64: 133.3 %) |
+| zstd −5 in front | 103 % | 103 % | 56.1 % (base64: 56.6 %) |
+| zstd 1 in front | 101 % | 100 % | 40.6 % (base64: 40.6 %) |
+
+That corpus is weighted by bytes, so megabyte files decide it. On the values
+the format is for — the ones §0.1 names, and the 55 samples the benchmark
+keeps as `short/` — base65t is **faster than base64 as well as smaller**:
+
+| sample | bytes | size | encode | decode |
+|---|--:|--:|--:|--:|
+| SHA-256 digest, hex | 64 | 77 % | **73 %** | **75 %** |
+| JWT, three segments | 155 | 76 % | **74 %** | **65 %** |
+| session id, 40 alnum | 40 | 75 % | **77 %** | **80 %** |
+| UUID v4 | 36 | 79 % | **78 %** | **87 %** |
+| 64 random bytes | 64 | 98 % | 96 % | 100 % |
+| a log line | 93 | 95 % | 113 % | 132 % |
+| **all 55, as time** | | | **88 %** | **98 %** |
+
+The throughput advantage *is* the density advantage, near enough one for one,
+and the arithmetic says why: base64 reads a byte, looks up four characters and
+writes four, per three bytes. A literal reads a byte, tests it against the
+profile set and writes **one** — the writing is a `memcpy`. Write less, write
+faster. The converse is in the same rows: where the output is the same size as
+base64, base65t is slower by exactly what the looking costs.
 
 The last row is what a protocol that compresses actually sees: the input is
 high-entropy by then, `dense` writes the same bytes base64url would, and what

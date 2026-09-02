@@ -601,8 +601,8 @@ nach *unten* zu Base64 bleibt in beiden Fällen (§9.4).
 
 | | `dense` alt (§9.2.2 über Blöcke) | `dense` neu (lineare Regel) |
 |---|---|---|
-| Kodieren | 1478 % der Base64-Zeit | **113 %** |
-| Dekodieren | 678 % | **112 %** |
+| Kodieren | 1478 % der Base64-Zeit | **114 %** |
+| Dekodieren | 678 % | **107 %** |
 | Größe | 131,9 % der Eingabe | 132,0 % |
 
 Ein Zehntelpunkt Dichte gegen den Faktor 12 beim Kodieren. Die Richtung dieses
@@ -1142,9 +1142,13 @@ Gemessen über den Korpus von `binary2textbench` (68 Proben, 6,5 MB, Base64 =
 
 | | Kodieren | Dekodieren | Größe |
 |---|---|---|---|
-| ohne Kompressor | 113 % | 112 % | 132,0 % (Base64: 133,3 %) |
-| mit zstd −5 davor | 104 % | 104 % | 56,1 % (Base64: 56,6 %) |
-| mit zstd 1 davor | 101 % | 99 % | 40,6 % (Base64: 40,6 %) |
+| ohne Kompressor | 114 % | 107 % | 132,0 % (Base64: 133,3 %) |
+| mit zstd −5 davor | 103 % | 103 % | 56,1 % (Base64: 56,6 %) |
+| mit zstd 1 davor | 101 % | 100 % | 40,6 % (Base64: 40,6 %) |
+
+Der Korpus ist nach Bytes gewichtet, also von Dateien im Megabyte-Bereich
+bestimmt. Auf kurzen Werten — dem, wofür §0.1 das Format vorsieht — sieht es
+anders herum aus; die Tabelle dafür steht weiter unten.
 
 Alles einthreadig gemessen, wie der Bench jeden Codec misst. §9.2.1.1 sagt,
 warum `dense` sich aufteilen lässt, ohne dass sich ein Byte ändert; auf vier
@@ -1181,7 +1185,50 @@ Je Datei: Eingabebytes je Segment, Größe gegen Base64, Zeit gegen Base64
 Segment ist es Base64-Parität oder besser, darunter steigt es mit der Zahl der
 Wechsel.
 
-**Kodieren folgt ihr nicht** — und das ist der interessantere Befund.
+### Auf kurzen Werten ist Base65t schneller als Base64
+
+Die Tabelle oben misst Dateien von mehreren Megabyte. Dafür ist das Format
+nicht gemacht: §0.1 nennt URL-Query, Cookie-Wert, HTTP-Header und Cache-Key,
+und keiner davon ist acht Megabyte groß. Bei acht Megabyte sind beide Codecs
+durch die Speicherbandbreite begrenzt und nicht durch das, was sie rechnen — der
+Quotient misst dann den Scan. Bei vierundsechzig Byte misst er das Format.
+
+Dieselben 55 kurzen Proben, die `binary2textbench` als `short/` führt, Profil U,
+Base64 = 100 %:
+
+| Probe | Bytes | Größe | Kodieren | Dekodieren |
+|---|--:|--:|--:|--:|
+| SHA-256-Digest, hex | 64 | 77 % | **73 %** | **75 %** |
+| SHA-512-Digest, hex | 128 | 77 % | **76 %** | **68 %** |
+| AES-256-Schlüssel, hex | 64 | 77 % | **73 %** | **75 %** |
+| JWT, drei Segmente | 155 | 76 % | **74 %** | **65 %** |
+| Session-ID, 40 alnum | 40 | 75 % | **77 %** | **80 %** |
+| UUID v4 | 36 | 79 % | **78 %** | **87 %** |
+| ULID, Crockford | 26 | 78 % | **81 %** | **85 %** |
+| zufällige 64 Bytes | 64 | 98 % | 96 % | 100 % |
+| IPv6-Adresse | 28 | 95 % | 97 % | 120 % |
+| SQL-Statement | 118 | 98 % | 117 % | 99 % |
+| Logzeile | 93 | 95 % | 113 % | 132 % |
+| **alle 55 Proben, als Zeit** | | | **88 %** | **98 %** |
+
+**Der Durchsatzvorteil *ist* der Dichtevorteil**, und zwar fast eins zu eins:
+wo die Ausgabe 77 % der Base64-Länge hat, kostet das Kodieren 73–77 % der Zeit.
+Das ist kein Zufall, sondern die Arbeitsbilanz. Base64 liest ein Byte, schlägt
+vier Zeichen nach und schreibt vier — je drei Bytes. Ein Literal liest ein Byte,
+prüft es gegen die Profilmenge und schreibt **ein** Zeichen; das Schreiben ist
+ein `memcpy`. Wer weniger schreibt, schreibt schneller.
+
+Die Umkehrung gilt genauso und steht in denselben Zeilen: wo die Ausgabe
+gleich groß ist wie Base64 (95–98 %), ist Base65t langsamer, und zwar genau um
+das, was das Suchen kostet. Ein Literal, das nicht zustande kommt, ist Arbeit
+ohne Gegenwert.
+
+> **Als Faustregel, aus der Bilanz und nicht aus einer Messung:** Base65t ist
+> auf einem Wert ungefähr so viel schneller, wie es kürzer ist — und wo es
+> nicht kürzer ist, ist es um den Scan langsamer.
+
+**Kodieren auf großen Dateien folgt der Wechselrate nicht** — und das ist der
+interessantere Befund.
 `commonmark-spec.txt` und `countries.json` haben fast dieselbe Wechselrate und
 unterscheiden sich beim Kodieren um den Faktor 1,4. Was den Encoder kostet,
 sind nicht die Segmente, die entstehen, sondern die Läufe, die er **prüft und

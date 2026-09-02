@@ -71,11 +71,14 @@ fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Resu
         strict_url,
         alphabet_seen: AlphabetSeen::None,
         padding_seen: false,
-        // A stream is at least 4/3 of what it decodes to, so this is an
-        // upper bound and the only allocation a decode does. `stream.len()`
-        // would also be an upper bound, and was one, at a third more memory
-        // and a third more pages to fault in.
-        out: Vec::with_capacity(stream.len() / 4 * 3 + 3),
+        // The only allocation a decode does, and `stream.len()` is the bound
+        // that holds for every stream: four characters carry three bytes, but
+        // a literal's characters carry one byte each, so a literal-heavy
+        // stream decodes to almost its own length. `3/4` of it was briefly
+        // here as a tighter bound. It is the bound for base64 and wrong for
+        // this format -- it made the shape base65t exists for, a short value
+        // that is one literal, reallocate on every decode.
+        out: Vec::with_capacity(stream.len()),
     };
     match mode {
         Framing::Plain => d.plain(stream, Padding::Allowed)?,

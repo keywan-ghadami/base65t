@@ -504,6 +504,16 @@ Both were the same instinct -- replace an unpredictable branch with arithmetic
   slice, to skip the zero fill. Within the noise, and §14 names memory safety
   as what pays for parsing attacker-controlled lengths. Not a trade worth
   making for nothing.
+* **The profile test as arithmetic instead of a table**, so that the run scan
+  would vectorise -- profile U is four ranges and four constants, which
+  compiles to comparisons rather than an indexed load. It made everything
+  slower again (prose 205 % -> 261 %, JSON 136 % -> 185 %), and this time the
+  reason names itself: the runs on the files that are slow are shorter than a
+  vector register, so the chunked path never runs, and what is left is eight
+  comparisons per byte where there was one load. Three attempts at the same
+  instinct, three losses. The lesson is not "branchless is a myth" but that on
+  this data the runs are too short for anything with a higher per-byte constant
+  to pay, however well it vectorises.
 
 ### What the encoder's remaining cost is, and the probe that halved it
 
@@ -527,6 +537,47 @@ every rejected run before it. Prose 209 % -> 193 %, JavaScript 250 % -> 196 %,
 CSS 213 % -> 189 %, and over the corpus 119 % -> 113 %. The rule is unchanged
 and `linear_rule.rs` is what says so: it still transcribes §9.2.1 one byte at a
 time, with no probe and no window, and requires the encoder to agree.
+
+### Can it beat base64? On what it is for, yes — and one line was hiding it
+
+The corpus figures say 114 % and 107 %, and they are weighted by bytes, so
+megabyte files decide them. §0.1 does not name a megabyte file anywhere: it
+names URL queries, cookie values, headers and cache keys. At eight megabytes
+both codecs are bound by memory bandwidth rather than by what they compute, so
+that ratio measures the scan. At sixty-four bytes it measures the format.
+
+On the benchmark's 55 `short/` samples, profile U, against the same base64:
+
+| sample | bytes | size | encode | decode |
+|---|--:|--:|--:|--:|
+| SHA-256 digest, hex | 64 | 77 % | 73 % | 75 % |
+| SHA-512 digest, hex | 128 | 77 % | 76 % | 68 % |
+| JWT, three segments | 155 | 76 % | 74 % | 65 % |
+| session id, 40 alnum | 40 | 75 % | 77 % | 80 % |
+| UUID v4 | 36 | 79 % | 78 % | 87 % |
+| 64 random bytes | 64 | 98 % | 96 % | 100 % |
+| an IPv6 address | 28 | 95 % | 97 % | 120 % |
+| a log line | 93 | 95 % | 113 % | 132 % |
+| **all 55, summed as time** | | | **88 %** | **98 %** |
+
+The throughput advantage is the density advantage, close to one for one, and
+the work says why rather than the measurement: base64 reads a byte, looks up
+four characters and writes four, per three bytes; a literal reads a byte, tests
+it against a set and writes one, and the writing is a `memcpy`. The converse is
+in the same rows -- where the output is the same size, base65t is slower by
+what the looking costs, and a literal that does not come off is work with
+nothing to show.
+
+**One line was hiding half of this.** The decoder allocated
+`stream.len() / 4 * 3 + 3` for its output: four characters carry three bytes,
+so that is the bound -- for base64. A literal's characters carry one byte each,
+so a short value that is one literal decodes to almost the stream's own length,
+and the "tighter" bound made it reallocate on every decode. It was reasoned
+from base64's ratio and checked against base64-shaped data, where it is right.
+On the shape the format exists for it turned a decode that beats base64 into
+one that loses to it: a UUID went from 132 % to 87 %, a JWT from 79 % to 65 %,
+a hex digest from 124 % to 80 %. `stream.len()` is the bound that holds for
+every stream, and it was what stood there before.
 
 ### Splitting `dense` across threads changes nothing in the output
 
