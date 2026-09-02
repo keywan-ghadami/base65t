@@ -525,72 +525,165 @@ fn walk_greedy(data: &[u8], rules: Rules, mut take: impl FnMut(Seg)) {
         }
         return;
     };
+    // A start is judged on the 128 bits covering its block and the next, so a
+    // threshold above 64 would look past what the word can see. The format's
+    // is 11 (§9.1) and `canonical`'s is 1; nothing else is reachable except
+    // through `internals`, and this says so rather than answering wrongly.
+    assert!(lmin <= 64, "a threshold above 64 bytes is not supported");
 
+    let profile = rules.profile;
     let mut pending = 0; // start of the base64 run being accumulated
-    let mut i = 0;
-    while i < n {
-        // The probe. A literal of `lmin` bytes starting anywhere in
-        // `[i, i + lmin)` has to cover `i + lmin - 1`, so this one byte
-        // answers for the whole window: outside the profile, and no start in
-        // it is possible. On data whose bytes mostly are outside -- compressed,
-        // encrypted, most binary formats -- this is the encoder's whole job,
-        // and it costs one lookup per `lmin` bytes instead of one per byte.
-        let p = i + lmin - 1;
-        if p >= n {
-            break; // fewer than `lmin` bytes left: no literal can start here
-        }
-        if !rules.profile.allows(data[p]) {
-            i = p + 1;
-            continue;
-        }
+    let mut i = 0; // first position not yet decided
+    let mut base = 0; // first byte of the block `lo` describes
+    let mut lo = block_mask(data, 0, profile);
 
-        // The probe landed inside a run, so find that run rather than
-        // rediscovering it from `i` forwards. Every literal that could start
-        // in `[i, p]` contains `p` and therefore lies in this run, so scanning
-        // outwards from `p` reads the run and nothing else -- where a scan
-        // from `i` also reads every rejected run before it. That is most of
-        // the reading on text whose profile-illegal bytes are dense: English
-        // prose in profile U has a space every five characters, and the scan
-        // from `i` read all of them to establish, five bytes at a time, what
-        // one probe and one run establish here.
-        let mut s = p;
-        while s > i && rules.profile.allows(data[s - 1]) {
-            s -= 1;
-        }
-        // `[s, p]` is known legal, so the forward scan resumes past it --
-        // except in framed mode, where F1 has to see those bytes too.
-        let mut j = if rules.framed { s } else { p + 1 };
-        while j < n && j - s < MAX_LITERAL && rules.profile.allows(data[j]) {
-            // F1: the payload may not contain `~A` (§8.2).
-            if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
-                break;
-            }
-            j += 1;
-        }
-        // F2: the payload may not end on a tilde.
-        if rules.framed {
-            while j > s && data[j - 1] == TILDE {
-                j -= 1;
-            }
-        }
-
-        if j - s >= lmin {
-            if pending < s {
-                take(Seg::Base64(pending, s));
-            }
-            take(Seg::Literal(s, j));
-            i = j;
-            pending = i;
+    while base < n {
+        // One pass over the input, two blocks in hand: the second is what
+        // lets a run that straddles the boundary be judged on the bytes that
+        // actually follow it.
+        let hi = block_mask(data, base + 64, profile);
+        // The double-width word is only needed where a run can straddle the
+        // boundary. On a short value -- a cache key, a token, most of what
+        // §0.1 names -- there is no next block, and paying for 128-bit shifts
+        // to shift in zeros is a quarter of the work of encoding it.
+        let wide = (lo as u128) | ((hi as u128) << 64);
+        let (all, width) = if hi == 0 {
+            (runs_at_least_64(lo, lmin), 64usize)
         } else {
-            // Too short to pay for its header: these bytes go to base64. No
-            // run starting inside a rejected one can be longer than it was,
-            // so the scan resumes at its end rather than at the next byte --
-            // which is what keeps this linear.
-            i = j.max(s + 1);
+            (runs_at_least(wide, lmin) as u64, 128usize)
+        };
+        let mut starts = mask_from(all, i, base);
+
+        while starts != 0 {
+            let s = base + starts.trailing_zeros() as usize;
+            let off = s - base;
+            let ones = if width == 64 {
+                (lo >> off).trailing_ones() as usize
+            } else {
+                (wide >> off).trailing_ones() as usize
+            };
+            // A run filling the rest of the word may continue past it.
+            let e = if off + ones >= width {
+                run_end(data, s + ones, profile)
+            } else {
+                (s + ones).min(n)
+            };
+
+            // The rule, once the run is known: literals of at most
+            // `MAX_LITERAL` from its start, until what is left is under the
+            // threshold and goes to base64 with everything else.
+            let mut t = s;
+            while e - t >= lmin {
+                let mut j = (t + MAX_LITERAL).min(e);
+                if rules.framed {
+                    // F1: the payload may not contain `~A` (§8.2). F2: it may
+                    // not end on a tilde. Both only ever shorten a piece, so
+                    // they are applied to the run rather than folded into
+                    // finding it.
+                    let mut k = t;
+                    while k < j {
+                        if data[k] == TILDE && k + 1 < n && data[k + 1] == b'A' {
+                            j = k;
+                            break;
+                        }
+                        k += 1;
+                    }
+                    while j > t && data[j - 1] == TILDE {
+                        j -= 1;
+                    }
+                    if j - t < lmin {
+                        t = j.max(t + 1);
+                        continue;
+                    }
+                }
+                if pending < t {
+                    take(Seg::Base64(pending, t));
+                }
+                take(Seg::Literal(t, j));
+                t = j;
+                pending = j;
+            }
+            // Nothing in `[t, e)` can start a literal -- it is shorter than
+            // the threshold, and the byte at `e` is one the profile rejects.
+            i = e.max(t).max(i + 1);
+            starts = mask_from(all, i, base);
+        }
+
+        if i > base + 64 {
+            base = i - (i % 64);
+            lo = block_mask(data, base, profile);
+        } else {
+            base += 64;
+            lo = hi;
         }
     }
     if pending < n {
         take(Seg::Base64(pending, n));
+    }
+}
+
+/// `starts` with everything before `i` cleared, where bit 0 is byte `base`.
+#[inline]
+fn mask_from(starts: u64, i: usize, base: usize) -> u64 {
+    if i <= base {
+        starts
+    } else if i - base < 64 {
+        starts & (u64::MAX << (i - base))
+    } else {
+        0
+    }
+}
+
+/// [`runs_at_least`] where one word is enough. Same doubling, half the
+/// instructions: a 128-bit shift is two or three of them.
+#[inline]
+fn runs_at_least_64(mut m: u64, k: usize) -> u64 {
+    let mut have = 1usize;
+    while have < k {
+        let step = (k - have).min(have);
+        m &= m >> step;
+        have += step;
+    }
+    m
+}
+
+/// Bits where a run of at least `k` set bits starts. Doubling, so `log k`
+/// steps: after `m &= m >> s`, a set bit means the next `have + s` are set.
+#[inline]
+fn runs_at_least(mut m: u128, k: usize) -> u128 {
+    let mut have = 1usize;
+    while have < k {
+        let step = (k - have).min(have);
+        m &= m >> step;
+        have += step;
+    }
+    m
+}
+
+/// The mask of the 64 bytes at `at`, zero past the end of the input.
+#[inline]
+fn block_mask(data: &[u8], at: usize, profile: Profile) -> u64 {
+    if at >= data.len() {
+        return 0;
+    }
+    let rest = &data[at..];
+    match rest.as_chunks::<64>().0.first() {
+        Some(block) => profile.mask64(block),
+        None => profile.mask_short(rest),
+    }
+}
+
+/// Where a run that is still open at `at` ends: the first byte the profile
+/// rejects, or the end of the input.
+fn run_end(data: &[u8], at: usize, profile: Profile) -> usize {
+    let n = data.len();
+    let mut at = at;
+    loop {
+        let ones = block_mask(data, at, profile).trailing_ones() as usize;
+        if ones < 64 || at + 64 >= n {
+            return (at + ones).min(n);
+        }
+        at += 64;
     }
 }
 

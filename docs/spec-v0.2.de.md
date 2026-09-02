@@ -662,6 +662,47 @@ sowohl parallel kodierbar als auch — anders als der Plain Mode — parallel
 davor war. Wer wahlfreien Zugriff oder parallele Dekodierung braucht, nimmt
 `framed`; genau dafür ist es da.
 
+### 9.2.1.2 Die Maske (nicht normativ)
+
+Die Regel aus §9.2.1 sucht Läufe profil-legaler Bytes von mindestens `L_min`
+Länge. Byteweise gelesen ist die Frage „geht dieser Lauf noch weiter" eine
+datenabhängige Verzweigung, und für gemischte Daten ist sie nicht vorhersagbar:
+je Lauf eine Fehlvorhersage. Auf Prosa in Profil U, wo alle fünf Zeichen ein
+Leerzeichen steht, kostete das mehr als das Base64-Schreiben selbst.
+
+Verzweigungsfrei geht es so:
+
+1. **64 Bytes zu 64 Bits.** Ein Bit je Byte, gesetzt, wenn das Profil es
+   zulässt. Keine Verzweigung, ein Tabellenzugriff je Byte.
+2. **Läufe ab `k` finden, durch Verdoppeln.** `m &= m >> 1` lässt die Bits
+   stehen, hinter denen zwei gesetzte folgen; `m &= m >> 2` macht vier daraus,
+   dann acht, dann elf. Vier Schritte, und `m` trägt danach genau dort ein Bit,
+   wo ein Lauf von 11 beginnt.
+3. **Ist das Wort danach null, sind 64 Bytes erledigt.** Das ist der Normalfall
+   auf komprimierten oder verschlüsselten Daten.
+4. **Lauflängen kommen aus dem Wort**, nicht aus dem Datenstrom: `trailing_ones`
+   ab der Startposition.
+
+Ein Lauf kann eine Blockgrenze überschreiten, deshalb wird über *zwei* Blöcke
+gerechnet — ein Start im ersten wird dann an den Bytes gemessen, die ihm
+tatsächlich folgen.
+
+Gemessen: der Scan läuft mit 1352 MiB/s **unabhängig von den Daten**, wo er
+byteweise zwischen 473 (Prosa) und 1594 (Binär) schwankte. Über acht Megabyte
+Prosa heißt das 205 % → 113 % der Base64-Zeit; auf einem 64-Byte-Digest 73 % →
+58 %. Die Spanne über alle Datenarten fällt damit von 103–205 % auf 108–174 %.
+
+Das ist eine Implementierungsfrage und keine Formatfrage: die gefundene
+Segmentierung ist dieselbe, byteweise wie maskiert, und `tests/linear_rule.rs`
+verlangt genau das — es schreibt §9.2.1 ein Byte nach dem anderen ab und
+fordert Übereinstimmung über alle Profile, Schwellwerte und Framing-Modi.
+
+**Was hier nicht steht.** SIMD. Der nächste Schritt wäre, Schritt 1 mit
+Vektorvergleichen statt mit einer Tabelle zu machen (32 oder 64 Bytes je
+Befehlsgruppe statt einem) und das Base64-Schreiben selbst zu vektorisieren
+(§13.1). Beides ist bekannte Technik und beides ist zielabhängig; die
+Referenzimplementierung bleibt skalar und lesbar (§13, §14).
+
 ### 9.2.2 Warum `dense` nicht das Programm aus §9.2 benutzt
 
 Der DP aus §9.2 ist O(n) in der Zeit, aber die Rekonstruktion braucht O(n)
@@ -1181,9 +1222,19 @@ Je Datei: Eingabebytes je Segment, Größe gegen Base64, Zeit gegen Base64
 | `requests-2.32.3.tar` | 40 | 96,9 % | 180 % | 131 % |
 | `bootstrap.css` | 19 | 93,2 % | 189 % | 161 % |
 
-**Dekodieren folgt der Rate,** wie §9.5 es nahelegt: bis etwa 150 Bytes je
-Segment ist es Base64-Parität oder besser, darunter steigt es mit der Zahl der
-Wechsel.
+**Beide Richtungen folgen der Rate**, und beide liegen bis etwa 150 Bytes je
+Segment nahe an der Base64-Parität. Darunter steigen sie mit der Zahl der
+Wechsel — was §9.5 vorhersagt und wofür es dort auch den Hebel gibt (`B_min`,
+als **eigenes** Preset).
+
+Das war einmal anders, und der Weg dahin ist der eigentliche Befund. Der
+Encoder las die Eingabe byteweise und fragte je Byte, ob das Profil es zulässt.
+Auf Prosa in Profil U — Leerzeichen alle fünf Zeichen, also lauter fünf Byte
+lange Läufe, von denen keiner die Schwelle aus §9.1 erreicht — ist diese Frage
+für den Sprungvorhersager nicht zu erraten, und es fällt eine Fehlvorhersage je
+Lauf an. `dickens` kostete so 205 % statt der 113 % oben, bei nahezu derselben
+Wechselrate wie `countries.json` mit 136 %. Aufgelöst hat das die Bitmaske aus
+§9.2.1.2.
 
 ### Auf kurzen Werten ist Base65t schneller als Base64
 
@@ -1194,25 +1245,27 @@ durch die Speicherbandbreite begrenzt und nicht durch das, was sie rechnen — d
 Quotient misst dann den Scan. Bei vierundsechzig Byte misst er das Format.
 
 Dieselben 55 kurzen Proben, die `binary2textbench` als `short/` führt, Profil U,
-Base64 = 100 %:
+Base64 = 100 % (bestes von fünf Läufen; die Dekodierspalte streut auf so kurzen
+Werten um mehrere Punkte zwischen Läufen, die Kodierspalte kaum):
 
 | Probe | Bytes | Größe | Kodieren | Dekodieren |
 |---|--:|--:|--:|--:|
-| SHA-256-Digest, hex | 64 | 77 % | **73 %** | **75 %** |
-| SHA-512-Digest, hex | 128 | 77 % | **76 %** | **68 %** |
-| AES-256-Schlüssel, hex | 64 | 77 % | **73 %** | **75 %** |
-| JWT, drei Segmente | 155 | 76 % | **74 %** | **65 %** |
-| Session-ID, 40 alnum | 40 | 75 % | **77 %** | **80 %** |
-| UUID v4 | 36 | 79 % | **78 %** | **87 %** |
-| ULID, Crockford | 26 | 78 % | **81 %** | **85 %** |
-| zufällige 64 Bytes | 64 | 98 % | 96 % | 100 % |
-| IPv6-Adresse | 28 | 95 % | 97 % | 120 % |
-| SQL-Statement | 118 | 98 % | 117 % | 99 % |
-| Logzeile | 93 | 95 % | 113 % | 132 % |
-| **alle 55 Proben, als Zeit** | | | **88 %** | **98 %** |
+| SHA-256-Digest, hex | 64 | 77 % | **58 %** | **82 %** |
+| SHA-512-Digest, hex | 128 | 77 % | **87 %** | **69 %** |
+| AES-256-Schlüssel, hex | 64 | 77 % | **57 %** | **80 %** |
+| JWT, drei Segmente | 155 | 76 % | **63 %** | **71 %** |
+| Session-ID, 40 alnum | 40 | 75 % | **69 %** | **89 %** |
+| UUID v4 | 36 | 79 % | **80 %** | **89 %** |
+| ULID, Crockford | 26 | 78 % | **83 %** | **90 %** |
+| zufällige 64 Bytes | 64 | 98 % | 102 % | 108 % |
+| IPv6-Adresse | 28 | 95 % | 111 % | 125 % |
+| SQL-Statement | 118 | 98 % | 108 % | 109 % |
+| Logzeile | 93 | 95 % | 110 % | 137 % |
+| **alle 55 Proben, als Zeit** | | | **86 %** | **~100 %** |
 
 **Der Durchsatzvorteil *ist* der Dichtevorteil**, und zwar fast eins zu eins:
-wo die Ausgabe 77 % der Base64-Länge hat, kostet das Kodieren 73–77 % der Zeit.
+wo die Ausgabe 75–79 % der Base64-Länge hat, kostet das Kodieren 57–83 % der
+Zeit.
 Das ist kein Zufall, sondern die Arbeitsbilanz. Base64 liest ein Byte, schlägt
 vier Zeichen nach und schreibt vier — je drei Bytes. Ein Literal liest ein Byte,
 prüft es gegen die Profilmenge und schreibt **ein** Zeichen; das Schreiben ist

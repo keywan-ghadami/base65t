@@ -118,6 +118,69 @@ static MEMBERSHIP: [u8; 256] = {
 };
 
 impl Profile {
+    /// Which of these 64 bytes the profile admits, one bit each, bit 0 first.
+    ///
+    /// The encoder's inner loop over its input, and the reason it is a mask
+    /// rather than a loop with a condition in it: the question "where does
+    /// this run end" is a branch the predictor cannot guess on mixed data, and
+    /// it pays for one per run. Sixty-four lookups with no branch at all cost
+    /// less than ten lookups and two mispredictions -- measured on English
+    /// prose, 473 MiB/s scanning byte at a time against 1352 here, and the
+    /// 1352 does not depend on the data.
+    ///
+    /// Packed a byte at a time and then assembled, which is worth a word: the
+    /// obvious `m |= bit << k` over all sixty-four is one dependency chain
+    /// sixty-four long and runs at 926 MiB/s. Eight chains of eight, each
+    /// shifting by a constant, run at 1352.
+    #[inline]
+    pub fn mask64(self, block: &[u8; 64]) -> u64 {
+        let (groups, _) = block.as_chunks::<8>();
+        let mut m = 0u64;
+        for (i, w) in groups.iter().enumerate() {
+            m |= (self.pack8(w) as u64) << (8 * i);
+        }
+        m
+    }
+
+    /// The same for fewer than 64 bytes: whole groups packed, then the rest.
+    ///
+    /// A short value is the case §0.1 names, so the last block must not cost
+    /// what a full one costs. Padding it out to sixty-four reads sixty-four
+    /// bytes to answer for four.
+    #[inline]
+    pub fn mask_short(self, data: &[u8]) -> u64 {
+        debug_assert!(data.len() <= 64);
+        let (groups, tail) = data.as_chunks::<8>();
+        let mut m = 0u64;
+        for (i, w) in groups.iter().enumerate() {
+            m |= (self.pack8(w) as u64) << (8 * i);
+        }
+        let done = groups.len() * 8;
+        for (k, &b) in tail.iter().enumerate() {
+            m |= (self.allows(b) as u64) << (done + k);
+        }
+        m
+    }
+
+    /// Eight bytes to eight bits, bit 0 first.
+    ///
+    /// Written out rather than looped, and that is the whole trick: the
+    /// obvious `m |= bit << k` over sixty-four bytes is one dependency chain
+    /// sixty-four long and runs at 926 MiB/s. Eight chains of eight, each
+    /// shifting by a constant, run at 1352 -- and unlike the byte-at-a-time
+    /// scan it replaces, that number does not depend on the data.
+    #[inline]
+    fn pack8(self, w: &[u8; 8]) -> u8 {
+        (self.allows(w[0]) as u8)
+            | ((self.allows(w[1]) as u8) << 1)
+            | ((self.allows(w[2]) as u8) << 2)
+            | ((self.allows(w[3]) as u8) << 3)
+            | ((self.allows(w[4]) as u8) << 4)
+            | ((self.allows(w[5]) as u8) << 5)
+            | ((self.allows(w[6]) as u8) << 6)
+            | ((self.allows(w[7]) as u8) << 7)
+    }
+
     /// Whether this byte may appear in a literal payload.
     #[inline]
     pub fn allows(self, b: u8) -> bool {

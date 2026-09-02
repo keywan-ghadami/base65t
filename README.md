@@ -124,9 +124,9 @@ measurement is binary2textbench's, where base65t is the seventh codec:
 
 | | encode | decode | size |
 |---|---|---|---|
-| no compressor | 114 % of base64's time | 107 % | 132.0 % (base64: 133.3 %) |
-| zstd −5 in front | 103 % | 103 % | 56.1 % (base64: 56.6 %) |
-| zstd 1 in front | 101 % | 100 % | 40.6 % (base64: 40.6 %) |
+| no compressor | 105 % of base64's time | 108 % | 132.0 % (base64: 133.3 %) |
+| zstd −5 in front | 102 % | 102 % | 56.1 % (base64: 56.6 %) |
+| zstd 1 in front | 99 % | 98 % | 40.6 % (base64: 40.6 %) |
 
 That corpus is weighted by bytes, so megabyte files decide it. On the values
 the format is for — the ones §0.1 names, and the 55 samples the benchmark
@@ -134,13 +134,13 @@ keeps as `short/` — base65t is **faster than base64 as well as smaller**:
 
 | sample | bytes | size | encode | decode |
 |---|--:|--:|--:|--:|
-| SHA-256 digest, hex | 64 | 77 % | **73 %** | **75 %** |
-| JWT, three segments | 155 | 76 % | **74 %** | **65 %** |
-| session id, 40 alnum | 40 | 75 % | **77 %** | **80 %** |
-| UUID v4 | 36 | 79 % | **78 %** | **87 %** |
-| 64 random bytes | 64 | 98 % | 96 % | 100 % |
-| a log line | 93 | 95 % | 113 % | 132 % |
-| **all 55, as time** | | | **88 %** | **98 %** |
+| SHA-256 digest, hex | 64 | 77 % | **58 %** | **82 %** |
+| JWT, three segments | 155 | 76 % | **63 %** | **71 %** |
+| session id, 40 alnum | 40 | 75 % | **69 %** | **89 %** |
+| UUID v4 | 36 | 79 % | **80 %** | **89 %** |
+| 64 random bytes | 64 | 98 % | 102 % | 108 % |
+| a log line | 93 | 95 % | 110 % | 137 % |
+| **all 55, as time** | | | **86 %** | **~100 %** |
 
 The throughput advantage *is* the density advantage, near enough one for one,
 and the arithmetic says why: base64 reads a byte, looks up four characters and
