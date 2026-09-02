@@ -124,14 +124,19 @@ measurement is binary2textbench's, where base65t is the seventh codec:
 
 | | encode | decode | size |
 |---|---|---|---|
-| no compressor | 124 % of base64's time | 158 % | 132.0 % (base64: 133.3 %) |
-| zstd −5 in front | 108 % | 126 % | 56.1 % (base64: 56.6 %) |
-| zstd 1 in front | 101 % | 113 % | 40.6 % (base64: 40.6 %) |
+| no compressor | 119 % of base64's time | 118 % | 132.0 % (base64: 133.3 %) |
+| zstd −5 in front | 106 % | 105 % | 56.1 % (base64: 56.6 %) |
+| zstd 1 in front | 101 % | 99 % | 40.6 % (base64: 40.6 %) |
 
 The last row is what a protocol that compresses actually sees: the input is
-high-entropy by then, `dense` writes the same bytes base64url would, and the
-difference is what it costs to look for literals that are not there. Both sides
-are scalar; the base64 the runner measures against is not.
+high-entropy by then, `dense` writes the same bytes base64url would, and what
+is left is the cost of looking for literals that are not there. The base64 it
+is measured against is the same scalar shape with the same table, built by the
+same compiler, so the ratio is the format rather than a handicap.
+
+Per file, the cost tracks how often the stream switches segments — §13 of the
+specification carries the table, from one segment per 262 144 bytes (98 % / 92 %)
+to one per 19 (213 % / 197 %).
 
 ## Building and testing
 

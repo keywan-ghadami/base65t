@@ -601,13 +601,20 @@ nach *unten* zu Base64 bleibt in beiden Fällen (§9.4).
 
 | | `dense` alt (§9.2.2 über Blöcke) | `dense` neu (lineare Regel) |
 |---|---|---|
-| Kodieren | 1478 % der Base64-Zeit | **124 %** |
-| Dekodieren | 678 % | **158 %** |
+| Kodieren | 1478 % der Base64-Zeit | **119 %** |
+| Dekodieren | 678 % | **118 %** |
 | Größe | 131,9 % der Eingabe | 132,0 % |
 
 Ein Zehntelpunkt Dichte gegen den Faktor 12 beim Kodieren. Die Richtung dieses
 Tauschs ist §2 und §13.2: Größe darf nie schlechter werden als Base64, und
 innerhalb dieser Schranke zählt Durchsatz.
+
+**Was der Sprung nicht kann.** Er überspringt Fenster, in denen ein Byte die
+Profilmenge verlässt. Text, dessen profilwidrige Zeichen dicht stehen — Prosa
+in Profil U, wo alle fünf Zeichen ein Leerzeichen steht —, hat solche Fenster
+kaum: dort liest der Encoder jedes Byte, verwirft jeden Lauf und schreibt reines
+Base64. §13 beziffert das; §9.5 sagt, was man dagegen täte und warum es ein
+eigenes Preset wäre.
 
 **Implementierungshinweis (nicht normativ).** Schritt 3 darf springen: Ein
 Literal von 11 Bytes, das irgendwo in `[i, i + 11)` beginnt, überdeckt
@@ -1092,30 +1099,60 @@ Der URL-Vorteil ist ein Vorteil **von Profil U**, nicht des Formats an sich.
 Base64 hat null datenabhängige Branches, Base65t einen pro Segmentwechsel. Bei fein
 durchmischten Daten ist Base65t deshalb langsamer.
 
-Gemessen über den Korpus von `binary2textbench` (68 Proben, 6,5 MB, skalare
-Referenzimplementierungen, Base64 = 100 %):
+Gemessen über den Korpus von `binary2textbench` (68 Proben, 6,5 MB, Base64 =
+100 %):
 
 | | Kodieren | Dekodieren | Größe |
 |---|---|---|---|
-| ohne Kompressor | 124 % | 158 % | 132,0 % (Base64: 133,3 %) |
-| mit zstd −5 davor | 108 % | 126 % | 56,1 % (Base64: 56,6 %) |
-| mit zstd 1 davor | 101 % | 113 % | 40,6 % (Base64: 40,6 %) |
+| ohne Kompressor | 119 % | 118 % | 132,0 % (Base64: 133,3 %) |
+| mit zstd −5 davor | 106 % | 105 % | 56,1 % (Base64: 56,6 %) |
+| mit zstd 1 davor | 101 % | 99 % | 40,6 % (Base64: 40,6 %) |
 
 Die dritte Zeile ist der Normalfall in einem Protokoll, das komprimiert: dort
 ist die Eingabe hochentropisch, `dense` schreibt nach §9.4 **dieselben Bytes**
-wie Base64URL, und der Abstand ist das, was das Suchen nach Literalen kostet,
-die es nicht gibt.
+wie Base64URL, und was bleibt, ist das Suchen nach Literalen, die es nicht gibt.
 
-| Datencharakter | Durchsatz (Dekode) |
-|----------------|--------------------|
-| Lange Literalläufe (> 100 B) | schneller als Base64 — `memcpy` |
-| Lange Base64-Läufe | Base64-Parität, bis auf den Scan nach `~` |
-| Häufiger Wechsel | unter Base64 |
+**Beide Seiten sind skalar.** Die Base64-Referenz im Bench ist derselbe Bau wie
+unsere: dieselbe Tabelle, dieselbe Schleifenform, derselbe Compiler mit
+denselben Schaltern. Der Vergleich misst also das Format und keinen
+Handicap-Unterschied — was auch heißt, dass die Zahlen nichts darüber sagen,
+wie sich zwei *vektorisierte* Implementierungen zueinander verhielten. §13.1
+beschreibt, wie die vektorisierte Seite für Base65t aussieht.
 
-**Die Zahlen sind die einer skalaren Implementierung.** Die Base64-Referenz, gegen
-die gemessen wird, ist vektorisiert; §13.1 beschreibt, wie dieselbe
-Vektorisierung für Base65t aussieht. Der Abstand oben ist also eine obere
-Schranke für das, was das Format kostet, keine untere.
+**Die Kosten hängen an der Segmentwechselrate, und das ist messbar.** §9.5
+sagt, dass die Rate exakt und datenabhängig ist; hier ist, was sie vorhersagt.
+Je Datei: Eingabebytes je Segment, Größe gegen Base64, Zeit gegen Base64
+(unter 100 % ist schneller):
+
+| Datei | Bytes je Segment | Größe | Kodieren | Dekodieren |
+|---|--:|--:|--:|--:|
+| `random.bin` | 262 144 | 100,0 % | 98 % | 92 % |
+| `sql-wasm.wasm` | 936 | 99,9 % | 92 % | 97 % |
+| `DejaVuSans.ttf` | 782 | 99,9 % | 110 % | 95 % |
+| `countries.json` | 190 | 99,6 % | 136 % | 120 % |
+| `commonmark-spec.txt` | 144 | 99,5 % | 209 % | 108 % |
+| `lodash.js` | 67 | 98,7 % | 250 % | 132 % |
+| `requests-2.32.3.tar` | 40 | 96,9 % | 193 % | 157 % |
+| `bootstrap.css` | 19 | 93,2 % | 213 % | 197 % |
+
+**Dekodieren folgt der Rate,** wie §9.5 es nahelegt: ab etwa 800 Bytes je
+Segment ist es Base64-Parität, darunter steigt es mit der Zahl der Wechsel.
+
+**Kodieren folgt ihr nicht** — und das ist der interessantere Befund.
+`commonmark-spec.txt` und `countries.json` haben fast dieselbe Wechselrate und
+unterscheiden sich beim Kodieren um den Faktor 1,5. Was den Encoder kostet,
+sind nicht die Segmente, die entstehen, sondern die Läufe, die er **prüft und
+verwirft**: englische Prosa in Profil U hat alle fünf Zeichen ein Leerzeichen,
+also lauter profil-legale Läufe von fünf Bytes, von denen keiner die Schwelle
+aus §9.1 erreicht. Der Encoder liest sie alle und schreibt am Ende reines
+Base64 (99,5 % Größe). Das ist die Arbeit, die der Sprung aus §9.2.1 gerade
+nicht wegnehmen kann: er springt nur über Bytes, die die Profilmenge verlassen,
+und hier verlässt sie fast keines.
+
+Wer das nicht bezahlen will, hat zwei Wege, und beide stehen schon im Dokument:
+Profil T (dort ist das Leerzeichen enthalten, die Läufe sind lang, und derselbe
+Text wird ein einziges Literal) oder ein `B_min > 1` als **eigenes** Preset
+(§9.5).
 
 ### 13.1 Die Vektor-Schleife
 
@@ -1168,8 +1205,13 @@ Woran das gemessen wird:
   Korpus, der veröffentlicht ist. Die Segmentwechselrate ist exakt und
   deterministisch (§9.5) und erklärt die Zahlen, ohne sie zu ersetzen.
 * **Skalar gegen vektorisiert ist kein Ergebnis.** Ein Vergleich zählt, wenn
-  beide Seiten denselben Grad an Handarbeit gesehen haben; §13.1 sagt, wie die
-  vektorisierte Seite für Base65t aussieht.
+  beide Seiten denselben Grad an Handarbeit gesehen haben. Im Bench ist das so,
+  und deshalb gilt er; §13.1 sagt, wie die vektorisierte Seite aussähe.
+* **Die eigene Schleife ist zuerst verdächtig, nicht das Format.** Der Abstand
+  beim Dekodieren war einmal 158 % und lag zu keinem Teil am Format: er lag an
+  zwei Schleifen der Referenzimplementierung, die byteweise arbeiteten, wo das
+  Format es nicht verlangt. Wer eine Zahl aus §13 nicht erreicht, prüft das
+  zuerst.
 
 Ein Encoder oder Dekoder ist nicht deshalb unkonform, weil er langsamer ist als
 Base64. Er ist es, wenn er die falschen Bytes schreibt.

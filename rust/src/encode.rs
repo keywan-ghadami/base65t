@@ -430,23 +430,27 @@ pub fn emit(data: &[u8], segs: &[Seg]) -> Vec<u8> {
     for seg in segs {
         match *seg {
             Seg::Base64(i, j) => emit_base64(&data[i..j], &mut out),
-            Seg::Literal(i, j) => {
-                let m = j - i;
-                debug_assert!((1..=MAX_LITERAL).contains(&m));
-                out.push(TILDE);
-                if m <= 62 {
-                    out.push(ALPHABET[m]);
-                } else {
-                    let v = m - 63;
-                    out.push(ALPHABET[63]);
-                    out.push(ALPHABET[(v >> 6) & 63]);
-                    out.push(ALPHABET[v & 63]);
-                }
-                out.extend_from_slice(&data[i..j]);
-            }
+            Seg::Literal(i, j) => emit_literal(&data[i..j], &mut out),
         }
     }
     out
+}
+
+/// One literal segment: the tilde, the length header in its shortest form
+/// (§6.1), and the bytes.
+fn emit_literal(bytes: &[u8], out: &mut Vec<u8>) {
+    let m = bytes.len();
+    debug_assert!((1..=MAX_LITERAL).contains(&m));
+    out.push(TILDE);
+    if m <= 62 {
+        out.push(ALPHABET[m]);
+    } else {
+        let v = m - 63;
+        out.push(ALPHABET[63]);
+        out.push(ALPHABET[(v >> 6) & 63]);
+        out.push(ALPHABET[v & 63]);
+    }
+    out.extend_from_slice(bytes);
 }
 
 fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
@@ -574,8 +578,56 @@ pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
 }
 
 /// One plain-mode stream under the linear rule of §9.2.1, over any input.
+///
+/// The scan and the writing are one pass. `segment_greedy` exists beside this
+/// for the tests, which need the segmentation itself rather than the stream,
+/// but going through it would mean a heap allocation proportional to the
+/// number of segments and a second walk over the input to write what the first
+/// one already knew. The rule is the same rule; only the list in between is
+/// gone.
 pub fn encode_greedy(data: &[u8], rules: Rules) -> Vec<u8> {
-    emit(data, &segment_greedy(data, rules))
+    let n = data.len();
+    let mut out = Vec::with_capacity(n + n / 3 + 8);
+    let Some(lmin) = rules.min_literal else {
+        emit_base64(data, &mut out); // `opaque`: never a literal
+        return out;
+    };
+
+    let mut pending = 0;
+    let mut i = 0;
+    while i < n {
+        if i + lmin <= n && !rules.profile.allows(data[i + lmin - 1]) {
+            i += lmin;
+            continue;
+        }
+        let mut j = i;
+        while j < n && j - i < MAX_LITERAL && rules.profile.allows(data[j]) {
+            if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
+                break;
+            }
+            j += 1;
+        }
+        if rules.framed {
+            while j > i && data[j - 1] == TILDE {
+                j -= 1;
+            }
+        }
+
+        if j - i >= lmin {
+            if pending < i {
+                emit_base64(&data[pending..i], &mut out);
+            }
+            emit_literal(&data[i..j], &mut out);
+            i = j;
+            pending = i;
+        } else {
+            i = j.max(i + 1);
+        }
+    }
+    if pending < n {
+        emit_base64(&data[pending..n], &mut out);
+    }
+    out
 }
 
 /// §8: fixed-size frames, so that a byte offset names a frame without a

@@ -455,6 +455,67 @@ repository: a specification section that proved more than it was being asked to
 (§9.1), a benchmark on somebody else's corpus, and the fact that the earlier
 decision had been written down in enough detail to be checked against.
 
+## Where the throughput actually went
+
+After the linear rule the encoder was at 124 % of base64's time and the decoder
+at 158 %, and the obvious reading was that the extra is what the format costs.
+It was not. The benchmark's base64 is the same scalar shape as ours -- same
+table, same loop, same compiler -- so the two can be compared directly, and
+`opaque` is base65t with the format switched off: one base64 segment, no
+literals, no scanning. Measured against each other on a 660 KB wasm blob:
+
+| | ours | the benchmark's base64 |
+|---|---|---|
+| encode | 1594 MiB/s | 971 MiB/s |
+| decode | **629 MiB/s** | 1388 MiB/s |
+
+Our encoder was already 1.6 times the baseline. Our *decoder*, doing strictly
+less work than the format requires, was less than half of it. None of that gap
+was the format; all of it was two loops.
+
+**The destination.** The inner loop pushed three bytes onto a `Vec` per
+quantum, which re-checks the capacity and updates a length that lives behind
+`&mut self` and therefore cannot stay in a register. Sizing the output once and
+writing it as a slice -- `zip` over two chunk iterators, so the compiler sees
+two arrays of known length and emits no bounds check -- took it from 629 to
+1013 MiB/s.
+
+**The scan for `~`.** `iter().position()` reads one byte per iteration. On a
+stream with no literals in it -- every high-entropy stream, which is most of
+what a protocol encodes -- that scan is as long as the decode, and it was:
+removing it by reading eight bytes at a time took 932 to 1327 MiB/s. Fifteen
+lines, no dependency, and the zero-byte kernel is old enough to be folklore.
+
+Together: decode 158 % → 118 %, and 99 % with a compressor in front. Encoding
+gained less, from fusing the scan and the writing into one pass so that no
+segment list is built: 124 % → 119 %.
+
+### Two things that did not work
+
+Both were the same instinct -- replace an unpredictable branch with arithmetic
+-- and both were measured and reverted.
+
+* **The profile scan, eight bytes to a bitmask.** The theory was that a
+  mispredict per run boundary dominates on mixed data. It made every file
+  slower: JSON 136 % → 210 %, prose 209 % → 241 %, a tar 193 % → 228 %. A
+  mispredict costs once per run; short runs are cheaper read one byte at a
+  time, and long runs amortise the one branch away. There was nothing to win.
+* **Writing the decoded bytes through a raw pointer** instead of into a sized
+  slice, to skip the zero fill. Within the noise, and §14 names memory safety
+  as what pays for parsing attacker-controlled lengths. Not a trade worth
+  making for nothing.
+
+### What the encoder's remaining 19 % is
+
+Not the segments it writes -- the runs it reads and throws away.
+`commonmark-spec.txt` and `countries.json` switch segments at nearly the same
+rate and differ by half again in encoding time. English prose in profile U has
+a space every five characters, so it is a chain of five-byte profile-legal runs,
+none of which reaches §9.1's threshold of eleven. The encoder reads all of them
+and writes pure base64 (99.5 % of base64's size). The skip of §9.2.1 cannot
+help: it jumps over windows containing a byte outside the profile, and here
+almost every byte is inside it. §13 has the per-file table.
+
 ## What was not done
 
 * **The `L_min`/`B_min` surface of §9.5.** The throughput measurement itself is
