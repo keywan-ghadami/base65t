@@ -34,9 +34,19 @@ jobs:
         working-directory: rust
         run: cargo test --release -- --nocapture
 
+      # The `simd` feature swaps the base64 writer for a vectorised one and
+      # must not change a byte. `tests/simd.rs` checks the writer against RFC
+      # 4648 read plainly, so it is worth running in both builds; the rest of
+      # the suite then says the streams and the vectors are unmoved.
+      - name: The same bytes with the vectorised writer
+        working-directory: rust
+        run: cargo test --release --features simd
+
       - name: Warnings are errors
         working-directory: rust
-        run: cargo clippy --all-targets --release -- -D warnings
+        run: |
+          cargo clippy --all-targets --release -- -D warnings
+          cargo clippy --all-targets --release --features simd -- -D warnings
 
       - name: Formatting
         working-directory: rust

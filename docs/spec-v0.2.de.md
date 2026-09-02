@@ -1326,6 +1326,56 @@ ausgerichtet; am Segmentende schließt `base64_decode_tail` das angebrochene Qua
 Wer den Shuffle über die Grenze laufen lässt, produziert stillschweigend falsche
 Bytes — kein Fehlercode fängt das ab.
 
+### 13.1.1 Was Vektorisierung wirklich bringt, gemessen
+
+Die Schleife oben beschreibt den **Dekoder**. Für den Encoder ist die Frage
+einfacher zu beantworten, weil das Base64-Schreiben austauschbar ist: die
+Referenzimplementierung kann es hinter dem Feature `simd` an einen
+vektorisierten Kern abgeben. Die Ausgabe ändert sich dabei nicht um ein Byte —
+Base64 ist Base64 — also ist es ein Geschwindigkeitsschalter wie die
+Arbeiterzahl (§9.2.1.1), kein Formatthema.
+
+**Auf den Lauflängen, die dieses Format wirklich erzeugt** (nicht auf einem
+Acht-Megabyte-Aufruf, wie SIMD-Bibliotheken üblicherweise beworben werden):
+
+| Lauflänge | 16 B | 40 B | 63 B | 128 B | 366 B | 16 KiB |
+|---|--:|--:|--:|--:|--:|--:|
+| vektorisiert / skalar | 1,1× | 1,6× | 2,0× | 2,5× | 3,5× | 3,7× |
+
+Ein Segment ist im Korpus zwischen 63 (Tar) und 1852 Bytes (Wasm) lang, also
+liegt der Gewinn bei 2 bis 3,5 und nicht bei den 10, die eine Spitzenzahl
+verspricht.
+
+**Und damit die eigentliche Antwort auf „schlagen wir Base64":**
+
+| 8 MB, Kodieren | `dickens` | `mozilla` | `countries.json` |
+|---|--:|--:|--:|
+| skalar gegen skalare Base64 | 113 % | 111 % | 112 % |
+| **mit `simd`** gegen skalare Base64 | **80 %** | **76 %** | **76 %** |
+| mit `simd` gegen **vektorisierte** Base64 | 388 % | 354 % | 355 % |
+
+Die dritte Zeile ist die ehrliche. Gegen eine vektorisierte Base64 verliert
+Base65t auf großen, hochentropen Daten deutlich, und der Grund ist strukturell
+und nicht behebbar: **Base64 schaut nicht, es schreibt nur.** Base65t muss die
+Eingabe erst lesen, um zu wissen, ob ein Literal darin steckt, und dieser Blick
+ist auf Daten, in denen keines steckt, reine Zusatzarbeit. Selbst mit einer
+vektorisierten Profilprüfung bliebe es bei zwei Durchgängen gegen einen.
+
+Wo Literale zustande kommen, dreht sich das um, und zwar aus demselben Grund:
+dort wird weniger geschrieben (§13, „Auf kurzen Werten"). Die Regel bleibt, was
+sie war — Base65t ist so viel schneller, wie es kürzer ist, und wo es nicht
+kürzer ist, ist es um den Blick langsamer.
+
+**Nicht untersucht, und warum nicht:**
+
+* **GPU.** Die Daten müssten über PCIe und zurück. Für die Werte aus §0.1 —
+  URL-Query, Cookie, Cache-Key — kostet allein die Latenz mehr als das
+  Kodieren, und für Massendaten ist die Parallelisierung aus §9.2.1.1 auf
+  gewöhnlichen Kernen näher und exakt.
+* **DMA.** Ein Gerät, das Speicher umkopiert, hilft beim Kopieren; das hier ist
+  kein Kopieren. Die Maschine im Bench schafft 7 GB/s `memcpy` und dieser
+  Encoder 0,8 — der Engpass ist die Rechnung, nicht der Transport.
+
 ### 13.2 Das Durchsatz-Kriterium
 
 v0.1 sah hier vier Schwellwerte *X*, *Y*, *Z* vor, „vor der Messung

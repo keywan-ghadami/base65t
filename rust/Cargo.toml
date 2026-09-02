@@ -12,10 +12,24 @@ publish = false
 name = "base65t"
 path = "src/lib.rs"
 
-# No dependencies, and none in the tests either. The differential checks the
-# specification asks for in §16.2 run against `base64(1)` and Python, the way
-# binary2textbench checks its own baseline: a crate would only tell us that two
-# Rust crates agree.
+# No dependencies by default, and none in the tests either. The differential
+# checks the specification asks for in §16.2 run against `base64(1)` and
+# Python, the way binary2textbench checks its own baseline: a crate would only
+# tell us that two Rust crates agree.
+#
+# `simd` is the one exception and it is off by default. It swaps the base64
+# writer for a vectorised one, which is worth 1.6x to 3.5x on the run lengths
+# this format actually produces (§13.1) and about 1.8x on encoding as a whole.
+# It cannot change a byte of the output -- base64 is base64, and
+# `tests/simd.rs` checks that against the scalar writer either way -- so it is
+# a performance switch like the thread count, not a variant of the format. The
+# default build stays what §13 and §14 say it is: scalar, dependency-free, and
+# meant to be read.
+[features]
+simd = ["dep:base64-simd"]
+
+[dependencies]
+base64-simd = { version = "0.8", optional = true, default-features = false, features = ["std", "detect"] }
 
 [profile.release]
 opt-level = 3

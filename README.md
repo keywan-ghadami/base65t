@@ -149,6 +149,19 @@ profile set and writes **one** — the writing is a `memcpy`. Write less, write
 faster. The converse is in the same rows: where the output is the same size as
 base64, base65t is slower by exactly what the looking costs.
 
+**`--features simd`** hands the base64 writing to a vectorised kernel. It
+cannot change a byte — base64 is base64, and `tests/simd.rs` checks that either
+way — so it is a speed switch like the thread count, and it is off by default
+so the reference build stays dependency-free and readable. On eight megabytes
+it takes encoding from 113 % of a scalar base64's time to 80 %.
+
+Against a *vectorised* base64 it is 3.5× slower on high-entropy input, and that
+is structural rather than fixable: base64 does not look, it only writes.
+base65t has to read the input to know whether a literal is in it, and on input
+where none is, that reading is pure overhead. Where literals do come off, it
+wins for the same reason it is smaller — §13.1.1 of the specification has the
+numbers.
+
 The last row is what a protocol that compresses actually sees: the input is
 high-entropy by then, `dense` writes the same bytes base64url would, and what
 is left is the cost of looking for literals that are not there. The base64 it

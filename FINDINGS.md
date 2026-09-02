@@ -510,10 +510,15 @@ Both were the same instinct -- replace an unpredictable branch with arithmetic
   slower again (prose 205 % -> 261 %, JSON 136 % -> 185 %), and this time the
   reason names itself: the runs on the files that are slow are shorter than a
   vector register, so the chunked path never runs, and what is left is eight
-  comparisons per byte where there was one load. Three attempts at the same
-  instinct, three losses. The lesson is not "branchless is a myth" but that on
-  this data the runs are too short for anything with a higher per-byte constant
-  to pay, however well it vectorises.
+  comparisons per byte where there was one load.
+
+Three attempts, three losses -- and then the fourth worked, which is the part
+worth keeping. Branchless was the right instinct all along and it kept losing
+because it was being applied to *one run at a time*, where the run is five
+bytes and there is nothing to amortise over. The mask does not scan a run: it
+answers for sixty-four bytes at once and lets the run boundaries fall out of
+the word afterwards. Same instinct, and the third time the structure was wrong,
+not the idea.
 
 ### What the encoder's remaining cost is, and the probe that halved it
 
@@ -608,6 +613,62 @@ opens a segment or is payload is known only to the parser that reached it, so
 there is nothing local to synchronise on. `framed` has it in both directions,
 because frames are self-delimiting (§8.1) -- the same property §8.1 sells as
 random access.
+
+## Can it beat base64 on large inputs? Not a vectorised one, and here is why
+
+The machine is not the limit: it copies at 7 GB/s and this encoder runs at 0.8.
+Everything below is compute, with a factor of eight to spare.
+
+**The scan was the branch predictor, and a bitmask fixed it.** Read one byte at
+a time, "does this run go on" is a branch nothing can guess on mixed input, and
+it costs one mispredict per run. Sixty-four bytes to sixty-four bits and the
+run positions computed out of the word costs no branch at all:
+
+| the scan alone | prose | binary |
+|---|--:|--:|
+| byte at a time | 473 MiB/s | 1594 MiB/s |
+| masked | 1352 | 1352 |
+
+Data-independent, which is the whole point. Encoding eight megabytes of prose
+went from 205 % of base64's time to 113 %, and the spread over every data shape
+from 103-205 % to 108-174 %. §9.2.1.2 writes the technique down.
+
+**`base64-simd` is worth what it is worth on our run lengths, not on its own.**
+SIMD base64 is advertised on megabyte calls. base65t hands its kernel one
+segment at a time, and those average 63 bytes on a tar and 1852 on a wasm blob:
+
+| run length | 16 B | 40 B | 63 B | 128 B | 366 B | 16 KiB |
+|---|--:|--:|--:|--:|--:|--:|
+| vectorised / scalar | 1.1x | 1.6x | 2.0x | 2.5x | 3.5x | 3.7x |
+
+So two to three and a half, not ten. It is in as the `simd` feature, off by
+default, and it cannot change a byte -- `tests/simd.rs` checks the writer
+against RFC 4648 §5 read plainly, in both builds.
+
+**And then the number that answers the question.** Eight megabytes, encoding:
+
+| | dickens | mozilla | countries.json |
+|---|--:|--:|--:|
+| scalar, against a scalar base64 | 113 % | 111 % | 112 % |
+| with `simd`, against a scalar base64 | 80 % | 76 % | 76 % |
+| with `simd`, against a **vectorised** base64 | 388 % | 354 % | 355 % |
+
+The third row is the honest one, and the loss is structural. **base64 does not
+look, it only writes.** base65t has to read the input to find out whether a
+literal is in it, and on input where none is -- which is what a compressor
+hands you -- that reading is work with nothing to show for it. Even with a
+vectorised profile test it would be two passes against one.
+
+Where literals do come off, it wins for exactly the reason it is smaller, and
+the short-value table in §13 is that: 57-83 % of base64's time at 75-79 % of
+its size. The rule holds in both directions -- as much faster as it is shorter,
+and where it is not shorter, slower by the looking.
+
+**GPU and DMA were considered and not pursued.** The data would have to cross
+PCIe and come back; for the values §0.1 names, the latency alone exceeds the
+encode, and for bulk data the thread split of §9.2.1.1 is nearer and exact. DMA
+moves memory, and this is not a move: the machine copies at 7 GB/s and the
+bottleneck is at 0.8.
 
 ## What was not done
 
