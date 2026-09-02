@@ -59,6 +59,17 @@ pub mod internals {
     pub use crate::encode::{
         c_vector, costs, emit, segment_greedy, segment_with, LiteralEnd, Rules, Seg,
     };
+
+    /// Where [`crate::encode_parallel`] splits. Exposed so that a test can
+    /// assert the split happens at all: an encoder that quietly fell back to
+    /// one thread would pass every assertion about the output.
+    pub fn cut_points(data: &[u8], profile: crate::Profile, threads: usize) -> Vec<usize> {
+        crate::encode::cut_points(
+            data,
+            Rules::preset(profile, Some(crate::MIN_LITERAL), false),
+            threads,
+        )
+    }
 }
 pub use canonical::encode_canonical;
 pub use decode::{decode, decode_framed, decode_plain, decode_url_strict, framing_of};
@@ -217,6 +228,28 @@ pub fn encode_legible(data: &[u8], profile: Profile) -> Vec<u8> {
     let mut rules = Rules::preset(profile, Some(1), false);
     rules.prefer_passthrough = true;
     encode::encode_rules(data, rules)
+}
+
+/// `dense` on several threads, byte for byte what [`encode_dense`] writes.
+///
+/// `threads` is a performance knob and nothing else: every value produces the
+/// same stream, because §9.2.1 is a rule about local bytes and the workers cut
+/// where no segment spans the cut (`encode::encode_parallel` carries the
+/// argument). `0` asks for one worker per available core. Inputs below a
+/// megabyte, and inputs the rule finds no literal in, run on the calling
+/// thread -- the second because a stream with no literals is base64, which
+/// this already writes faster than the comparison does.
+pub fn encode_parallel(data: &[u8], profile: Profile, threads: usize) -> Vec<u8> {
+    let threads = if threads == 0 {
+        std::thread::available_parallelism().map_or(1, |n| n.get())
+    } else {
+        threads
+    };
+    encode::encode_parallel(
+        data,
+        Rules::preset(profile, Some(MIN_LITERAL), false),
+        threads,
+    )
 }
 
 /// Base64URL and nothing else. The profile does not enter into it: there are

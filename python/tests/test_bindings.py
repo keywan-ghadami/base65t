@@ -102,3 +102,14 @@ def test_the_constants_come_from_the_crate():
     assert base65t.MIN_LITERAL == 11
     assert base65t.FRAME_BYTES == 65536
     assert base65t.SPEC_VERSION == "0.2"
+
+
+@pytest.mark.parametrize("threads", [0, 1, 2, 4, 8])
+def test_threads_never_reach_the_output(threads):
+    # Big enough that the parallel encoder actually splits, and mixed enough
+    # that it has literals to cut at. The assertion is the whole contract:
+    # the thread count is a performance knob and nothing else.
+    data = (b"a-string-that-is-transportable." * 40 + bytes(range(256))) * 900
+    assert len(data) > (1 << 20)
+    assert base65t.encode(data, threads=threads) == base65t.encode(data)
+    assert base65t.decode(base65t.encode(data, threads=threads)).bytes == data

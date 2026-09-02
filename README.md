@@ -124,8 +124,8 @@ measurement is binary2textbench's, where base65t is the seventh codec:
 
 | | encode | decode | size |
 |---|---|---|---|
-| no compressor | 119 % of base64's time | 118 % | 132.0 % (base64: 133.3 %) |
-| zstd −5 in front | 106 % | 105 % | 56.1 % (base64: 56.6 %) |
+| no compressor | 113 % of base64's time | 112 % | 132.0 % (base64: 133.3 %) |
+| zstd −5 in front | 104 % | 104 % | 56.1 % (base64: 56.6 %) |
 | zstd 1 in front | 101 % | 99 % | 40.6 % (base64: 40.6 %) |
 
 The last row is what a protocol that compresses actually sees: the input is
@@ -135,8 +135,16 @@ is measured against is the same scalar shape with the same table, built by the
 same compiler, so the ratio is the format rather than a handicap.
 
 Per file, the cost tracks how often the stream switches segments — §13 of the
-specification carries the table, from one segment per 262 144 bytes (98 % / 92 %)
-to one per 19 (213 % / 197 %).
+specification carries the table, from one segment per 262 144 bytes to one per
+19.
+
+`encode_parallel(data, profile, threads)` splits the input and writes **the
+same bytes**, whatever the thread count: a profile-illegal byte lies in no
+literal, so it is a point two runs of the rule agree on, and a cut at a
+literal's first byte leaves no segment spanning it (§9.2.1.1). Decoding a plain
+stream cannot be split — whether a `~` opens a segment or is payload is known
+only to the parser that came before it. `framed` can, in both directions, and
+that is what it is for.
 
 ## Building and testing
 

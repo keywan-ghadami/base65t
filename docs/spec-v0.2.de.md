@@ -601,8 +601,8 @@ nach *unten* zu Base64 bleibt in beiden Fällen (§9.4).
 
 | | `dense` alt (§9.2.2 über Blöcke) | `dense` neu (lineare Regel) |
 |---|---|---|
-| Kodieren | 1478 % der Base64-Zeit | **119 %** |
-| Dekodieren | 678 % | **118 %** |
+| Kodieren | 1478 % der Base64-Zeit | **113 %** |
+| Dekodieren | 678 % | **112 %** |
 | Größe | 131,9 % der Eingabe | 132,0 % |
 
 Ein Zehntelpunkt Dichte gegen den Faktor 12 beim Kodieren. Die Richtung dieses
@@ -623,6 +623,44 @@ diesem Fenster in Frage, und `i` darf sofort auf `i + 11` springen. Auf
 hochentropen Daten — wo fast jedes Byte die Profilmenge verlässt — ist das der
 Unterschied zwischen einer Prüfung je Byte und einer je elf. Die gefundenen
 Literale sind dieselben: die Bedingung ist notwendig, nie hinreichend.
+
+### 9.2.1.1 Parallelisierung (nicht normativ, aber eine Aussage über das Format)
+
+Die lineare Regel ist parallelisierbar, **ohne dass sich ein Byte der Ausgabe
+ändert**. Das ist keine Implementierungsfreiheit, sondern folgt aus zwei
+Eigenschaften des Formats:
+
+1. **Ein profilwidriges Byte liegt in keinem Literal.** Ein Encoder, der bei
+   einem solchen Byte ansetzt, hat also nichts Offenes über diese Stelle hinweg
+   und entscheidet ab dort genau das, was ein Encoder entscheidet, der am
+   Anfang der Eingabe begonnen hat. Die Regel ist gedächtnislos in `i`.
+2. **Ein Base64-Lauf überschreitet nie ein Literal.** Ein Schnitt auf dem
+   *ersten Byte eines Literals* lässt den Lauf davor vollständig auf der einen
+   Seite; die beiden Hälften ergeben aneinandergehängt genau den Strom, den ein
+   Durchlauf über die ganze Eingabe geschrieben hätte.
+
+> Ein Encoder DARF die Eingabe an Schnittstellen zerlegen, die nach 1. gefunden
+> und nach 2. gewählt sind, und die Teile unabhängig kodieren. Die Ausgabe MUSS
+> dieselbe sein wie die eines einzelnen Durchlaufs — die Zahl der Arbeiter ist
+> ein Geschwindigkeitsregler und darf nie im Strom sichtbar werden. §11.1 hängt
+> Cache-Keys an diese Bytes; ein Strom, der von der Kernzahl der Maschine
+> abhinge, wäre auf jeder Maschine ein anderes Format.
+
+Einen Schnittpunkt findet man **lokal**: ab der Zielstelle das nächste
+profilwidrige Byte suchen, von dort die Regel laufen lassen und das erste
+Literal nehmen, das sie nimmt. Ein Fenster genügt — ein Literal, das klar vor
+dem Fensterende endet, wurde aus Bytes innerhalb des Fensters entschieden.
+
+Wo die Regel kein Literal findet, gibt es keinen Schnittpunkt. Das kostet
+nichts: eine Eingabe ohne Literale ist nach §9.4 byteweise Base64URL, und die
+schreibt derselbe Encoder ohnehin mit Base64-Geschwindigkeit.
+
+**`framed` braucht das nicht.** Frames sind selbstbegrenzend (§8.1), also
+sowohl parallel kodierbar als auch — anders als der Plain Mode — parallel
+**dekodierbar**. Im Plain Mode ist Dekodieren zwangsläufig sequentiell: ob ein
+`~` ein Segment einleitet oder Nutzlast ist, sagt einem nur der Parser, der
+davor war. Wer wahlfreien Zugriff oder parallele Dekodierung braucht, nimmt
+`framed`; genau dafür ist es da.
 
 ### 9.2.2 Warum `dense` nicht das Programm aus §9.2 benutzt
 
@@ -1104,9 +1142,13 @@ Gemessen über den Korpus von `binary2textbench` (68 Proben, 6,5 MB, Base64 =
 
 | | Kodieren | Dekodieren | Größe |
 |---|---|---|---|
-| ohne Kompressor | 119 % | 118 % | 132,0 % (Base64: 133,3 %) |
-| mit zstd −5 davor | 106 % | 105 % | 56,1 % (Base64: 56,6 %) |
+| ohne Kompressor | 113 % | 112 % | 132,0 % (Base64: 133,3 %) |
+| mit zstd −5 davor | 104 % | 104 % | 56,1 % (Base64: 56,6 %) |
 | mit zstd 1 davor | 101 % | 99 % | 40,6 % (Base64: 40,6 %) |
+
+Alles einthreadig gemessen, wie der Bench jeden Codec misst. §9.2.1.1 sagt,
+warum `dense` sich aufteilen lässt, ohne dass sich ein Byte ändert; auf vier
+Kernen bringt das auf Prosa — dem schlechtesten Fall oben — 305 auf 534 MiB/s.
 
 Die dritte Zeile ist der Normalfall in einem Protokoll, das komprimiert: dort
 ist die Eingabe hochentropisch, `dense` schreibt nach §9.4 **dieselben Bytes**
@@ -1126,21 +1168,22 @@ Je Datei: Eingabebytes je Segment, Größe gegen Base64, Zeit gegen Base64
 
 | Datei | Bytes je Segment | Größe | Kodieren | Dekodieren |
 |---|--:|--:|--:|--:|
-| `random.bin` | 262 144 | 100,0 % | 98 % | 92 % |
-| `sql-wasm.wasm` | 936 | 99,9 % | 92 % | 97 % |
-| `DejaVuSans.ttf` | 782 | 99,9 % | 110 % | 95 % |
-| `countries.json` | 190 | 99,6 % | 136 % | 120 % |
-| `commonmark-spec.txt` | 144 | 99,5 % | 209 % | 108 % |
-| `lodash.js` | 67 | 98,7 % | 250 % | 132 % |
-| `requests-2.32.3.tar` | 40 | 96,9 % | 193 % | 157 % |
-| `bootstrap.css` | 19 | 93,2 % | 213 % | 197 % |
+| `random.bin` | 262 144 | 100,0 % | 121 % | 84 % |
+| `sql-wasm.wasm` | 936 | 99,9 % | 106 % | 85 % |
+| `DejaVuSans.ttf` | 782 | 99,9 % | 110 % | 86 % |
+| `countries.json` | 190 | 99,6 % | 140 % | 99 % |
+| `commonmark-spec.txt` | 144 | 99,5 % | 193 % | 98 % |
+| `lodash.js` | 67 | 98,7 % | 196 % | 124 % |
+| `requests-2.32.3.tar` | 40 | 96,9 % | 180 % | 131 % |
+| `bootstrap.css` | 19 | 93,2 % | 189 % | 161 % |
 
-**Dekodieren folgt der Rate,** wie §9.5 es nahelegt: ab etwa 800 Bytes je
-Segment ist es Base64-Parität, darunter steigt es mit der Zahl der Wechsel.
+**Dekodieren folgt der Rate,** wie §9.5 es nahelegt: bis etwa 150 Bytes je
+Segment ist es Base64-Parität oder besser, darunter steigt es mit der Zahl der
+Wechsel.
 
 **Kodieren folgt ihr nicht** — und das ist der interessantere Befund.
 `commonmark-spec.txt` und `countries.json` haben fast dieselbe Wechselrate und
-unterscheiden sich beim Kodieren um den Faktor 1,5. Was den Encoder kostet,
+unterscheiden sich beim Kodieren um den Faktor 1,4. Was den Encoder kostet,
 sind nicht die Segmente, die entstehen, sondern die Läufe, die er **prüft und
 verwirft**: englische Prosa in Profil U hat alle fünf Zeichen ein Leerzeichen,
 also lauter profil-legale Läufe von fünf Bytes, von denen keiner die Schwelle

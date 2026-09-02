@@ -506,36 +506,61 @@ fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
 /// state per input byte, which is what made encoding fifteen times the cost of
 /// base64.
 pub fn segment_greedy(data: &[u8], rules: Rules) -> Vec<Seg> {
+    let mut segs = Vec::new();
+    walk_greedy(data, rules, |seg| segs.push(seg));
+    segs
+}
+
+/// The linear rule itself, handing each segment to `take` as it is decided.
+///
+/// One place. `segment_greedy` collects the segments because the tests want
+/// them; `encode_greedy` writes them straight out because a caller wants the
+/// stream and not a list. Writing the rule twice would be writing it twice.
+fn walk_greedy(data: &[u8], rules: Rules, mut take: impl FnMut(Seg)) {
     let n = data.len();
     let Some(lmin) = rules.min_literal else {
         // `opaque`: never a literal.
-        return if n == 0 {
-            Vec::new()
-        } else {
-            vec![Seg::Base64(0, n)]
-        };
+        if n > 0 {
+            take(Seg::Base64(0, n));
+        }
+        return;
     };
 
-    let mut segs = Vec::new();
     let mut pending = 0; // start of the base64 run being accumulated
     let mut i = 0;
     while i < n {
-        // A literal of `lmin` bytes starting anywhere in `[i, i + lmin)` has
-        // to cover `i + lmin - 1`, so one disallowed byte there rules out
-        // every start in that window at once. The scan below would reach the
-        // same place one byte at a time; on data whose bytes are mostly
-        // outside the profile -- compressed, encrypted, most binary formats --
-        // that is the whole of the encoder's work, and this does it in a
-        // lookup per `lmin` bytes instead of one per byte. The literals found
-        // are the same ones: the test is necessary, never sufficient, and the
-        // framed constraints below only ever shorten a run.
-        if i + lmin <= n && !rules.profile.allows(data[i + lmin - 1]) {
-            i += lmin;
+        // The probe. A literal of `lmin` bytes starting anywhere in
+        // `[i, i + lmin)` has to cover `i + lmin - 1`, so this one byte
+        // answers for the whole window: outside the profile, and no start in
+        // it is possible. On data whose bytes mostly are outside -- compressed,
+        // encrypted, most binary formats -- this is the encoder's whole job,
+        // and it costs one lookup per `lmin` bytes instead of one per byte.
+        let p = i + lmin - 1;
+        if p >= n {
+            break; // fewer than `lmin` bytes left: no literal can start here
+        }
+        if !rules.profile.allows(data[p]) {
+            i = p + 1;
             continue;
         }
-        // The longest literal a run starting here could carry.
-        let mut j = i;
-        while j < n && j - i < MAX_LITERAL && rules.profile.allows(data[j]) {
+
+        // The probe landed inside a run, so find that run rather than
+        // rediscovering it from `i` forwards. Every literal that could start
+        // in `[i, p]` contains `p` and therefore lies in this run, so scanning
+        // outwards from `p` reads the run and nothing else -- where a scan
+        // from `i` also reads every rejected run before it. That is most of
+        // the reading on text whose profile-illegal bytes are dense: English
+        // prose in profile U has a space every five characters, and the scan
+        // from `i` read all of them to establish, five bytes at a time, what
+        // one probe and one run establish here.
+        let mut s = p;
+        while s > i && rules.profile.allows(data[s - 1]) {
+            s -= 1;
+        }
+        // `[s, p]` is known legal, so the forward scan resumes past it --
+        // except in framed mode, where F1 has to see those bytes too.
+        let mut j = if rules.framed { s } else { p + 1 };
+        while j < n && j - s < MAX_LITERAL && rules.profile.allows(data[j]) {
             // F1: the payload may not contain `~A` (§8.2).
             if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
                 break;
@@ -544,16 +569,16 @@ pub fn segment_greedy(data: &[u8], rules: Rules) -> Vec<Seg> {
         }
         // F2: the payload may not end on a tilde.
         if rules.framed {
-            while j > i && data[j - 1] == TILDE {
+            while j > s && data[j - 1] == TILDE {
                 j -= 1;
             }
         }
 
-        if j - i >= lmin {
-            if pending < i {
-                segs.push(Seg::Base64(pending, i));
+        if j - s >= lmin {
+            if pending < s {
+                take(Seg::Base64(pending, s));
             }
-            segs.push(Seg::Literal(i, j));
+            take(Seg::Literal(s, j));
             i = j;
             pending = i;
         } else {
@@ -561,13 +586,12 @@ pub fn segment_greedy(data: &[u8], rules: Rules) -> Vec<Seg> {
             // run starting inside a rejected one can be longer than it was,
             // so the scan resumes at its end rather than at the next byte --
             // which is what keeps this linear.
-            i = j.max(i + 1);
+            i = j.max(s + 1);
         }
     }
     if pending < n {
-        segs.push(Seg::Base64(pending, n));
+        take(Seg::Base64(pending, n));
     }
-    segs
 }
 
 /// One plain-mode stream under the given rules, over the whole input.
@@ -588,44 +612,111 @@ pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
 pub fn encode_greedy(data: &[u8], rules: Rules) -> Vec<u8> {
     let n = data.len();
     let mut out = Vec::with_capacity(n + n / 3 + 8);
-    let Some(lmin) = rules.min_literal else {
-        emit_base64(data, &mut out); // `opaque`: never a literal
-        return out;
-    };
+    walk_greedy(data, rules, |seg| match seg {
+        Seg::Base64(i, j) => emit_base64(&data[i..j], &mut out),
+        Seg::Literal(i, j) => emit_literal(&data[i..j], &mut out),
+    });
+    out
+}
 
-    let mut pending = 0;
-    let mut i = 0;
-    while i < n {
-        if i + lmin <= n && !rules.profile.allows(data[i + lmin - 1]) {
-            i += lmin;
+/// Below this many bytes, splitting the input costs more than it saves.
+const PARALLEL_MIN: usize = 1 << 20;
+
+/// How far past a target offset a cut point is looked for before giving up on
+/// it. Generous: a stream with no literal in a quarter-megabyte is a stream
+/// the encoder is already writing at base64 speed.
+const CUT_WINDOW: usize = 1 << 18;
+
+/// The offset of the first literal the rule takes at or after `from`, if it is
+/// near enough to be found without reading the rest of the input.
+///
+/// This is the whole of why `dense` can be split, so it is worth being exact
+/// about. Two facts:
+///
+/// * **A profile-illegal byte lies in no literal.** So the byte at `q` below
+///   is a position the encoder passes through with nothing open across it, and
+///   a walk started there decides exactly what a walk from the beginning of
+///   the input decides from `q` on. Starting anywhere else risks landing
+///   inside a literal, where the two walks disagree about what they are in the
+///   middle of.
+/// * **A base64 run never crosses a literal.** So a cut at a literal's first
+///   byte leaves the run before it entirely on one side, and the two halves
+///   concatenate to the byte the whole-input encoder would have written.
+///
+/// The window is what makes it local: a literal found well clear of the far
+/// edge was decided by bytes inside the window, so truncating there cannot
+/// have changed it.
+fn first_literal_from(data: &[u8], from: usize, rules: Rules) -> Option<usize> {
+    let n = data.len();
+    let q = (from..n).find(|&i| !rules.profile.allows(data[i]))?;
+    let w = n.min(q + CUT_WINDOW);
+    let mut found = None;
+    walk_greedy(&data[q..w], rules, |seg| {
+        if let Seg::Literal(a, b) = seg {
+            if found.is_none() && q + b + MAX_LITERAL < w {
+                found = Some(q + a);
+            }
+        }
+    });
+    found
+}
+
+/// Where `encode_parallel` splits, for `threads` workers: strictly increasing
+/// offsets strictly inside the input, each the first byte of a literal.
+pub fn cut_points(data: &[u8], rules: Rules, threads: usize) -> Vec<usize> {
+    let n = data.len();
+    let mut cuts: Vec<usize> = Vec::new();
+    for k in 1..threads {
+        let target = k * n / threads;
+        let last = cuts.last().copied().unwrap_or(0);
+        if target <= last {
             continue;
         }
-        let mut j = i;
-        while j < n && j - i < MAX_LITERAL && rules.profile.allows(data[j]) {
-            if rules.framed && data[j] == TILDE && j + 1 < n && data[j + 1] == b'A' {
-                break;
+        if let Some(c) = first_literal_from(data, target, rules) {
+            if c > last {
+                cuts.push(c);
             }
-            j += 1;
-        }
-        if rules.framed {
-            while j > i && data[j - 1] == TILDE {
-                j -= 1;
-            }
-        }
-
-        if j - i >= lmin {
-            if pending < i {
-                emit_base64(&data[pending..i], &mut out);
-            }
-            emit_literal(&data[i..j], &mut out);
-            i = j;
-            pending = i;
-        } else {
-            i = j.max(i + 1);
         }
     }
-    if pending < n {
-        emit_base64(&data[pending..n], &mut out);
+    cuts
+}
+
+/// `dense` over several threads, writing what one thread would have written.
+///
+/// Not a second encoder and not an approximation: the workers run the same
+/// rule on adjacent ranges, and `first_literal_from` picks the boundaries so
+/// that no segment spans one. Any thread count, including a different one on
+/// the next call, produces the same bytes -- which it has to, because §11.1
+/// hangs cache keys on them.
+///
+/// Falls back to one thread for small inputs and for input the rule finds no
+/// literal in. The second case costs nothing: input with no literals is input
+/// the encoder is already writing at base64's speed, since it is base64.
+pub fn encode_parallel(data: &[u8], rules: Rules, threads: usize) -> Vec<u8> {
+    let n = data.len();
+    let threads = threads.max(1).min(n / PARALLEL_MIN.max(1) + 1);
+    if threads < 2 || rules.framed {
+        return encode_greedy(data, rules);
+    }
+
+    let mut cuts = vec![0usize];
+    cuts.extend(cut_points(data, rules, threads));
+    cuts.push(n);
+    if cuts.len() < 3 {
+        return encode_greedy(data, rules);
+    }
+
+    let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = cuts
+            .windows(2)
+            .map(|w| scope.spawn(move || encode_greedy(&data[w[0]..w[1]], rules)))
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+
+    let mut out = Vec::with_capacity(parts.iter().map(Vec::len).sum());
+    for part in &parts {
+        out.extend_from_slice(part);
     }
     out
 }

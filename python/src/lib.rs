@@ -139,21 +139,37 @@ fn wrap(py: Python<'_>, d: base65t::Decoded) -> Decoded {
 /// T every octet is printable ASCII and `.decode("ascii")` is free, but under
 /// profile B it is not text at all, and an API that pretended otherwise would
 /// be lying at exactly one of its three settings.
+///
+/// `threads` is a performance knob and nothing else: every value produces the
+/// same stream, because §9.2.1 is a rule about local bytes and the parallel
+/// encoder cuts where no segment spans the cut. `0` asks for one worker per
+/// available core. It applies to `dense` only -- the other presets optimise
+/// over the whole input by definition -- and inputs below a megabyte encode on
+/// the calling thread whatever it says.
 #[pyfunction]
-#[pyo3(signature = (data, /, preset = "dense", profile = "U"))]
-#[pyo3(text_signature = "(data, /, preset='dense', profile='U')")]
+#[pyo3(signature = (data, /, preset = "dense", profile = "U", threads = 1))]
+#[pyo3(text_signature = "(data, /, preset='dense', profile='U', threads=1)")]
 fn encode<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyAny>,
     preset: &str,
     profile: &str,
+    threads: usize,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode() expects bytes, bytearray or str")?;
+    let preset_name = preset;
     let preset = preset_of(preset)?;
     let profile = profile_of(profile)?;
     // The encoder touches no Python object, so other threads may run while it
-    // works. That matters: this is the call a caller makes on a whole file.
-    let out = py.detach(|| base65t::encode_with(&data, preset, profile));
+    // works -- and so the workers it starts are free of the GIL too. That
+    // matters: this is the call a caller makes on a whole file.
+    let out = py.detach(|| {
+        if threads != 1 && preset_name == "dense" {
+            base65t::encode_parallel(&data, profile, threads)
+        } else {
+            base65t::encode_with(&data, preset, profile)
+        }
+    });
     Ok(PyBytes::new(py, &out))
 }
 

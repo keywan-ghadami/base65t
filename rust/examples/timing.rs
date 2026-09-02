@@ -44,5 +44,11 @@ fn main() {
         bench("decode opaque", data.len(), || {
             decode(&opaque, Profile::U).unwrap()
         });
+        for t in [2usize, 4, 8] {
+            assert_eq!(encode_parallel(&data, Profile::U, t), dense);
+            bench(&format!("encode dense x{t}"), data.len(), || {
+                encode_parallel(&data, Profile::U, t)
+            });
+        }
     }
 }

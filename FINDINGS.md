@@ -505,16 +505,58 @@ Both were the same instinct -- replace an unpredictable branch with arithmetic
   as what pays for parsing attacker-controlled lengths. Not a trade worth
   making for nothing.
 
-### What the encoder's remaining 19 % is
+### What the encoder's remaining cost is, and the probe that halved it
+
+Not the segments it writes -- the runs it reads and throws away.
 
 Not the segments it writes -- the runs it reads and throws away.
 `commonmark-spec.txt` and `countries.json` switch segments at nearly the same
 rate and differ by half again in encoding time. English prose in profile U has
 a space every five characters, so it is a chain of five-byte profile-legal runs,
-none of which reaches §9.1's threshold of eleven. The encoder reads all of them
-and writes pure base64 (99.5 % of base64's size). The skip of §9.2.1 cannot
-help: it jumps over windows containing a byte outside the profile, and here
-almost every byte is inside it. §13 has the per-file table.
+none of which reaches §9.1's threshold of eleven. The encoder read all of them
+and wrote pure base64 (99.5 % of base64's size). §13 has the per-file table.
+
+The probe was already the fix for the other half of this -- one lookup per
+eleven bytes wherever a byte outside the profile can be found -- but it was
+being used for only half of what it knows. It says a byte *is* legal as often
+as it says one is not, and that also locates something: the run the byte
+belongs to. Every literal that could start in the window contains that byte and
+therefore lies in that run, so scanning outwards from the probe reads the run
+and nothing else, where scanning forwards from the window's start also reads
+every rejected run before it. Prose 209 % -> 193 %, JavaScript 250 % -> 196 %,
+CSS 213 % -> 189 %, and over the corpus 119 % -> 113 %. The rule is unchanged
+and `linear_rule.rs` is what says so: it still transcribes §9.2.1 one byte at a
+time, with no probe and no window, and requires the encoder to agree.
+
+### Splitting `dense` across threads changes nothing in the output
+
+Two properties of the format, neither of them about the implementation:
+
+* A profile-illegal byte lies in no literal. So it is a position at which two
+  runs of the rule -- one from the beginning of the input, one starting there --
+  are in the same state, because the rule's state is the position and nothing
+  else.
+* A base64 run never crosses a literal. So a cut at a literal's first byte
+  leaves the run before it whole, on one side.
+
+Together: cut at the first literal at or after a profile-illegal byte, encode
+the pieces independently, concatenate. The bytes are the ones a single pass
+would have written, at any thread count -- which they have to be, since §11.1
+hangs cache keys on them and a stream that depended on the machine's core count
+would be a different format on every machine. `tests/parallel.rs` asserts it
+over eight shapes, three profiles and seven thread counts, and separately
+asserts that the cuts are really taken, because an encoder that quietly fell
+back to one thread would pass the first assertion and prove nothing.
+
+Measured on four cores, on prose, which is the worst case in §13's table:
+305 -> 534 MiB/s. It does not move any number in the benchmark: that measures
+every codec on one thread, base85n's parallel encoder included.
+
+Decoding a plain stream has no equivalent and cannot get one. Whether a `~`
+opens a segment or is payload is known only to the parser that reached it, so
+there is nothing local to synchronise on. `framed` has it in both directions,
+because frames are self-delimiting (§8.1) -- the same property §8.1 sells as
+random access.
 
 ## What was not done
 
