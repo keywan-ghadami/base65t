@@ -785,11 +785,18 @@ pub fn encode_rules(data: &[u8], rules: Rules) -> Vec<u8> {
 pub fn encode_greedy(data: &[u8], rules: Rules) -> Vec<u8> {
     let n = data.len();
     let mut out = Vec::with_capacity(n + n / 3 + 8);
-    walk_greedy(data, rules, |seg| match seg {
-        Seg::Base64(i, j) => emit_base64(&data[i..j], &mut out),
-        Seg::Literal(i, j) => emit_literal(&data[i..j], &mut out),
-    });
+    encode_greedy_into(data, rules, &mut out);
     out
+}
+
+/// The same, appending to a buffer the caller owns.
+pub fn encode_greedy_into(data: &[u8], rules: Rules, out: &mut Vec<u8>) {
+    let n = data.len();
+    out.reserve(n + n / 3 + 8);
+    walk_greedy(data, rules, |seg| match seg {
+        Seg::Base64(i, j) => emit_base64(&data[i..j], out),
+        Seg::Literal(i, j) => emit_literal(&data[i..j], out),
+    });
 }
 
 /// Below this many bytes, splitting the input costs more than it saves.

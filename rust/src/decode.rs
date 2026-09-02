@@ -20,7 +20,7 @@
 use crate::alphabet::{
     AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
 };
-use crate::{Decoded, Error, Framing};
+use crate::{Decoded, Error, Framing, Meta};
 
 /// What `decode()` does with a stream before it looks at anything else
 /// (Rule F, §5.6): two octets decide the mode, and nothing else can.
@@ -66,26 +66,43 @@ pub fn decode_framed(stream: &[u8], profile: Profile) -> Result<Decoded, Error> 
 }
 
 fn run(stream: &[u8], profile: Profile, strict_url: bool, mode: Framing) -> Result<Decoded, Error> {
+    // The only allocation a decode does, and `stream.len()` is the bound that
+    // holds for every stream: four characters carry three bytes, but a
+    // literal's characters carry one byte each, so a literal-heavy stream
+    // decodes to almost its own length. `3/4` of it was briefly here as a
+    // tighter bound. It is the bound for base64 and wrong for this format --
+    // it made the shape base65t exists for, a short value that is one literal,
+    // reallocate on every decode.
+    let mut out = Vec::with_capacity(stream.len());
+    let meta = run_into(stream, profile, strict_url, mode, &mut out)?;
+    Ok(Decoded {
+        bytes: out,
+        alphabet_seen: meta.alphabet_seen,
+        padding_seen: meta.padding_seen,
+        framing_seen: meta.framing_seen,
+    })
+}
+
+/// The same, appending to a buffer the caller owns.
+pub(crate) fn run_into(
+    stream: &[u8],
+    profile: Profile,
+    strict_url: bool,
+    mode: Framing,
+    out: &mut Vec<u8>,
+) -> Result<Meta, Error> {
     let mut d = Decoder {
         profile,
         strict_url,
         alphabet_seen: AlphabetSeen::None,
         padding_seen: false,
-        // The only allocation a decode does, and `stream.len()` is the bound
-        // that holds for every stream: four characters carry three bytes, but
-        // a literal's characters carry one byte each, so a literal-heavy
-        // stream decodes to almost its own length. `3/4` of it was briefly
-        // here as a tighter bound. It is the bound for base64 and wrong for
-        // this format -- it made the shape base65t exists for, a short value
-        // that is one literal, reallocate on every decode.
-        out: Vec::with_capacity(stream.len()),
+        out,
     };
     match mode {
         Framing::Plain => d.plain(stream, Padding::Allowed)?,
         Framing::Framed => d.framed(stream)?,
     }
-    Ok(Decoded {
-        bytes: d.out,
+    Ok(Meta {
         alphabet_seen: d.alphabet_seen,
         padding_seen: d.padding_seen,
         framing_seen: mode,
@@ -172,15 +189,15 @@ enum Padding {
 /// The three fields §5.5 requires in the result, carried while they are being
 /// found. Rule A and Rule P are stream-wide, so a framed stream threads one
 /// decoder through all its frames rather than one per frame.
-struct Decoder {
+struct Decoder<'a> {
     profile: Profile,
     strict_url: bool,
     alphabet_seen: AlphabetSeen,
     padding_seen: bool,
-    out: Vec<u8>,
+    out: &'a mut Vec<u8>,
 }
 
-impl Decoder {
+impl Decoder<'_> {
     /// Rule A (§5.4), and the strict variant from §5.5 in the same place: both
     /// are questions about a character at an alphabet position, and there is
     /// no other place where such a character is read.

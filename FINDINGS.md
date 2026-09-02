@@ -721,6 +721,81 @@ at a fifth `bootstrap.css` starts losing density. A tenth is the knee on this
 corpus, on this machine, and it is a number read off a graph rather than
 derived from one.
 
+## Three more levers, sized
+
+### Non-temporal stores (`_mm256_stream_si256`) — the one with headroom left
+
+They pay against memory bandwidth and nothing else, so the first question is
+whether we are near it. On eight megabytes:
+
+| | traffic |
+|---|--:|
+| `memcpy` | 14.6 GB/s |
+| the vectorised encoder | 11.3 GB/s — **78 % of it** |
+
+So on the `simd` path with large inputs, yes: that is close enough for the
+store traffic to matter. A normal store to a cache line reads the line first
+(read-for-ownership), so writing four thirds of a byte per input byte costs
+eight thirds of traffic, not four thirds. A non-temporal store skips the read
+and takes the total from 3.67 units per input byte to 2.33 — **a third less**.
+
+Two reasons it is named here rather than built. `base64-simd` does the storing,
+so taking this would mean writing and keeping our own AVX2 kernel. And it is a
+bet on what the caller does next: a non-temporal store pushes the output out of
+cache, which is right if the next thing is a socket and wrong if it is a hash.
+A library cannot know, and §13 says the reference stays readable.
+
+The scalar path is nowhere near this — it runs at an eighth of the machine's
+bandwidth — so it would gain nothing.
+
+### `IORING_REGISTER_BUFFERS` — right question, wrong layer
+
+Registered buffers are about getting bytes into and out of a process without
+pinning them per operation. They say nothing about a transform that happens
+entirely in user memory. What they need *from* a codec is the thing this one
+did not have: somewhere to write that the caller chose.
+
+So `encode_into` and `decode_into`, appending to a `Vec` the caller owns. The
+allocation they save is a fixed cost, which means it matters exactly where the
+values are small — which is where §0.1 says they are:
+
+| bytes | encode | decode |
+|---|--:|--:|
+| 8 | **1.69x** | **1.66x** |
+| 16 | 1.44x | 1.55x |
+| 32 | 1.30x | 1.35x |
+| 64 | 1.16x | 1.27x |
+| 155 | 1.03x | 1.15x |
+| 4096 | 0.99x | 1.05x |
+
+A session id is forty bytes and a UUID thirty-six. Above half a kilobyte there
+is nothing left to save, which is the same shape the allocation measurement
+predicted: 22 % of encoding a sixteen-byte value, 8 % at a hundred and fifty,
+nothing at four thousand.
+
+### Decoding in place — sound, and here is why
+
+"Read 64 characters, write the 48 decoded bytes back to the same start
+address." It works for base64 because the write pointer trails the read
+pointer, and it works for base65t for the same reason, which is worth writing
+down because it is not obvious that a format with literals keeps the property:
+
+* a base64 run writes three bytes per four characters read;
+* a literal writes `m` bytes per `m + h` characters read, `h` being two or four;
+* a frame header reads five and writes none, and a padding character reads one
+  and writes none.
+
+Every case reads at least as much as it writes, so after any prefix the bytes
+written are at most the characters read, and an in-place write never touches a
+character that has not been consumed. Decoding in place is therefore available
+to this format, not only to base64.
+
+It is not built. `decode_into` already removes the allocation, which is the
+part that shows on the values this format is for; what in-place would add is
+the second buffer's cache footprint, and that only shows on inputs large enough
+not to fit — which is the case §0.1 does not name. The reasoning is recorded so
+that whoever wants it does not have to re-derive whether it is allowed.
+
 ## What was not done
 
 * **The `L_min`/`B_min` surface of §9.5.** The throughput measurement itself is

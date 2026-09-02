@@ -102,6 +102,12 @@ same bytes.
 is printable ASCII without `"` and `\`, which a JSON string carries unescaped;
 `B` is every octet, which no text container should be given.
 
+**Into a buffer you own.** `encode_into` and `decode_into` append to a `Vec`
+the caller supplies, which is what a loop over many small values wants and what
+a buffer registered with the kernel requires. The allocation they save is a
+fixed cost, so it shows where the values are small: 1.69× on eight bytes, 1.44×
+on sixteen, 1.16× on sixty-four, nothing above half a kilobyte.
+
 **Four decoder entry points.** `decode` detects the framing; `decode_plain`,
 `decode_framed` and `decode_url_strict` fix it instead. Auto-detection is a
 convenience for a stream you trust — an attacker who controls the stream
