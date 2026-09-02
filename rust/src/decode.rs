@@ -121,6 +121,46 @@ fn find_tilde(hay: &[u8]) -> Option<usize> {
     rest.iter().position(|&b| b == TILDE).map(|k| done + k)
 }
 
+/// Which alphabet variants a base64 run holds: [`CLASSIC_BIT`] for `+` or `/`,
+/// [`URL_BIT`] for `-` or `_` (§5.2, §5.4).
+///
+/// This is the whole of what Rule A needs, and it is a *search* rather than a
+/// decode -- which is what makes a vectorised decoder possible at all. A
+/// library decodes into one alphabet and reports one opaque error; it cannot
+/// say which of the two it saw, and base65t has to. Asked separately, at eight
+/// bytes a word, the answer costs about a seventh of what decoding costs.
+#[cfg(feature = "simd")]
+fn variant_bits(hay: &[u8]) -> u8 {
+    const LO: u64 = 0x0101_0101_0101_0101;
+    const HI: u64 = 0x8080_8080_8080_8080;
+    #[inline(always)]
+    fn has(v: u64, needle: u8) -> u64 {
+        let x = v ^ (LO * needle as u64);
+        x.wrapping_sub(LO) & !x & HI
+    }
+    let (words, rest) = hay.as_chunks::<8>();
+    let (mut classic, mut url) = (0u64, 0u64);
+    for w in words {
+        let v = u64::from_le_bytes(*w);
+        classic |= has(v, b'+') | has(v, b'/');
+        url |= has(v, b'-') | has(v, b'_');
+    }
+    let mut bits = ((classic != 0) as u8 * CLASSIC_BIT) | ((url != 0) as u8 * URL_BIT);
+    for &b in rest {
+        bits |= match b {
+            b'+' | b'/' => CLASSIC_BIT,
+            b'-' | b'_' => URL_BIT,
+            _ => 0,
+        };
+    }
+    bits
+}
+
+/// Below this many characters the two passes and the dispatch cost more than
+/// the scalar loop they replace.
+#[cfg(feature = "simd")]
+const SIMD_MIN: usize = 64;
+
 /// Whether Rule P (§5.3) reaches the end of this byte range: only the end of
 /// the whole stream is the end of the stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -276,6 +316,40 @@ impl Decoder {
         //   properties of the *set* of characters in the segment, so the loop
         //   only accumulates bits and the questions are asked once, afterwards.
         let body = &seg[..n];
+
+        // A vectorised decoder where the build asked for one, and where the
+        // run is long enough to pay for two passes instead of one.
+        //
+        // Rule A goes first because its answer chooses the alphabet to ask
+        // for: a library commits to one per call, and this stream may be in
+        // either (§5.2). It also settles §5.5's strict variant, and rejects a
+        // stream that mixes them -- all before a byte is decoded.
+        //
+        // The library returns one opaque error where §10.4 names twelve
+        // conditions, so a failure falls through to the loop below rather than
+        // being translated. That is the slow path by definition: it runs once,
+        // on a stream that is about to be rejected.
+        #[cfg(feature = "simd")]
+        if body.len() >= SIMD_MIN {
+            let bits = variant_bits(body);
+            self.note_classes(bits)?;
+            let alphabet = if bits & CLASSIC_BIT != 0 {
+                base64_simd::STANDARD_NO_PAD
+            } else {
+                base64_simd::URL_SAFE_NO_PAD
+            };
+            let at = self.out.len();
+            self.out.resize(at + body.len() / 4 * 3 + 3, 0);
+            match alphabet.decode(body, base64_simd::Out::from_slice(&mut self.out[at..])) {
+                Ok(decoded) => {
+                    let len = decoded.len();
+                    self.out.truncate(at + len);
+                    return Ok(());
+                }
+                Err(_) => self.out.truncate(at),
+            }
+        }
+
         let (quanta, tail) = body.as_chunks::<4>();
         let mut seen = 0u16;
 

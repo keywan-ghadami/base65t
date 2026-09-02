@@ -153,11 +153,21 @@ profile set and writes **one** — the writing is a `memcpy`. Write less, write
 faster. The converse is in the same rows: where the output is the same size as
 base64, base65t is slower by exactly what the looking costs.
 
-**`--features simd`** hands the base64 writing to a vectorised kernel. It
-cannot change a byte — base64 is base64, and `tests/simd.rs` checks that either
-way — so it is a speed switch like the thread count, and it is off by default
-so the reference build stays dependency-free and readable. On eight megabytes
-it takes encoding from 113 % of a scalar base64's time to 80 %.
+**`--features simd`** hands the base64 writing *and reading* to a vectorised
+kernel. It cannot change a byte — base64 is base64, and `tests/simd.rs` checks
+that either way — so it is a speed switch like the thread count, and it is off
+by default so the reference build stays dependency-free and readable. On eight
+megabytes it takes encoding from 113 % of a scalar base64's time to 80 %, and
+decoding from 103 % to 72 %.
+
+Decoding was the side that looked closed: a base64 library commits to one
+alphabet per call and returns one opaque error, where §5.2 needs both variants
+read, §5.4 needs to know which was seen, and §10.4 names twelve conditions.
+What opens it is that Rule A only asks *does this run hold a `+`, `/`, `-` or
+`_`* — a search, not a decode, at a seventh of the cost — and its answer picks
+the alphabet for the call. A failed call falls through to the scalar loop,
+which names the condition; that is the path taken only by streams already being
+rejected.
 
 Against a *vectorised* base64 it is 3.5× slower on high-entropy input, and the
 reason is structural: base64 does not look, it only writes. base65t has to read

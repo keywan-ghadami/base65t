@@ -90,3 +90,67 @@ fn and_every_preset_still_round_trips_and_holds_section_9_4() {
         }
     }
 }
+
+/// The vectorised path only runs on long runs, and every error test in the
+/// suite is short — so without this, the branch that matters here is the one
+/// nothing exercises. Each case is padded past the threshold and must come
+/// back with the same verdict a short one does.
+#[test]
+fn a_long_run_is_judged_the_same_as_a_short_one() {
+    // 64 characters of clean base64url to get past the dispatch threshold.
+    let pad = "A".repeat(64);
+
+    let cases: Vec<(String, Result<usize, Error>)> = vec![
+        // Clean, and long: the case the fast path exists for.
+        (format!("{pad}{pad}"), Ok(96)),
+        // A character outside both alphabets, well inside the run.
+        (format!("{pad}A*A{pad}"), Err(Error::Charset)),
+        // `=` is not an alphabet character and this is not the stream end.
+        (format!("{pad}A=A{pad}"), Err(Error::Charset)),
+        // A run whose length is 1 mod 4 carries a character that decodes to
+        // nothing (§5).
+        (format!("{pad}{pad}A"), Err(Error::Align)),
+        // Both alphabets in one stream is Rule A (§5.4), and it is caught
+        // before anything is decoded.
+        (format!("{pad}-{pad}+"), Err(Error::MixedAlphabet)),
+    ];
+
+    for (stream, want) in cases {
+        let got = decode(stream.as_bytes(), Profile::U);
+        match (&got, &want) {
+            (Ok(d), Ok(n)) => assert_eq!(d.bytes.len(), *n, "{stream:.20}…"),
+            (Err(e), Err(w)) => assert_eq!(e, w, "{stream:.20}…"),
+            _ => panic!("{stream:.20}…: got {got:?}, wanted {want:?}"),
+        }
+    }
+}
+
+/// Rule A over a long run: the variant has to be reported, and the classic
+/// alphabet has to decode to the same bytes as the URL one.
+#[test]
+fn a_long_run_reports_which_alphabet_it_was_written_in() {
+    let data: Vec<u8> = (0..=255u8).chain(0..=255u8).collect();
+    let url = encode_opaque(&data);
+    let classic: Vec<u8> = url
+        .iter()
+        .map(|&c| match c {
+            b'-' => b'+',
+            b'_' => b'/',
+            other => other,
+        })
+        .collect();
+    assert!(url.len() > 64 && url.iter().any(|&c| c == b'-' || c == b'_'));
+
+    let a = decode(&url, Profile::U).unwrap();
+    let b = decode(&classic, Profile::U).unwrap();
+    assert_eq!(a.bytes, data);
+    assert_eq!(b.bytes, data);
+    assert_eq!(a.alphabet_seen, AlphabetSeen::Url);
+    assert_eq!(b.alphabet_seen, AlphabetSeen::Classic);
+    // And §5.5's strict entry point turns the classic one down.
+    assert_eq!(
+        decode_url_strict(&classic, Profile::U),
+        Err(Error::NonUrlAlphabet)
+    );
+    assert!(decode_url_strict(&url, Profile::U).is_ok());
+}

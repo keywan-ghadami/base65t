@@ -1399,12 +1399,27 @@ Bytes — kein Fehlercode fängt das ab.
 
 ### 13.1.1 Was Vektorisierung wirklich bringt, gemessen
 
-Die Schleife oben beschreibt den **Dekoder**. Für den Encoder ist die Frage
-einfacher zu beantworten, weil das Base64-Schreiben austauschbar ist: die
-Referenzimplementierung kann es hinter dem Feature `simd` an einen
-vektorisierten Kern abgeben. Die Ausgabe ändert sich dabei nicht um ein Byte —
-Base64 ist Base64 — also ist es ein Geschwindigkeitsschalter wie die
-Arbeiterzahl (§9.2.1.1), kein Formatthema.
+Die Referenzimplementierung kann das Base64-Schreiben **und das
+Base64-Lesen** hinter dem Feature `simd` an einen vektorisierten Kern abgeben.
+Die Ausgabe ändert sich dabei nicht um ein Byte — Base64 ist Base64 — also ist
+es ein Geschwindigkeitsschalter wie die Arbeiterzahl (§9.2.1.1), kein
+Formatthema.
+
+**Beim Dekoder ist das nicht selbstverständlich**, und es lohnt sich, den Grund
+zu benennen. Eine Base64-Bibliothek legt sich je Aufruf auf **ein** Alphabet
+fest und meldet **einen** Fehler; §5.2 verlangt, dass beide Varianten gelesen
+werden, §5.4 verlangt zu wissen, welche es war, und §10.4 verlangt zwölf
+unterscheidbare Bedingungen. Was das rettet, ist eine Beobachtung: Regel A
+braucht nur die Frage *„steht in diesem Lauf ein `+`, `/`, `-` oder `_`"*, und
+das ist eine **Suche und keine Dekodierung**. Als eigener Durchgang gefragt
+kostet sie ein Siebtel dessen, was das Dekodieren kostet — und ihre Antwort
+wählt anschließend das Alphabet für den Bibliotheksaufruf. Bleibt der Fehlercode:
+schlägt der vektorisierte Aufruf fehl, läuft die skalare Schleife noch einmal
+über denselben Lauf und benennt die Bedingung. Das ist per Definition der
+langsame Pfad — er läuft einmal, auf einem Strom, der ohnehin abgelehnt wird.
+
+Der Tail-Bit-Test aus §5 (`E_NONZERO_TAIL`) ist kein Hindernis: eine
+ordentliche Bibliothek prüft ihn selbst.
 
 **Auf den Lauflängen, die dieses Format wirklich erzeugt** (nicht auf einem
 Acht-Megabyte-Aufruf, wie SIMD-Bibliotheken üblicherweise beworben werden):
@@ -1419,11 +1434,13 @@ verspricht.
 
 **Und damit die eigentliche Antwort auf „schlagen wir Base64":**
 
-| 8 MB, Kodieren | `dickens` | `mozilla` | `countries.json` |
+| 8 MB | `dickens` | `mozilla` | `countries.json` |
 |---|--:|--:|--:|
-| skalar gegen skalare Base64 | 113 % | 111 % | 112 % |
-| **mit `simd`** gegen skalare Base64 | **80 %** | **76 %** | **76 %** |
-| mit `simd` gegen **vektorisierte** Base64 | 388 % | 354 % | 355 % |
+| Kodieren, skalar gegen skalare Base64 | 113 % | 111 % | 112 % |
+| Kodieren, **mit `simd`** gegen skalare Base64 | **80 %** | **79 %** | **74 %** |
+| Dekodieren, skalar gegen skalare Base64 | 103 % | 104 % | 103 % |
+| Dekodieren, **mit `simd`** gegen skalare Base64 | **77 %** | **72 %** | **70 %** |
+| Kodieren, mit `simd` gegen **vektorisierte** Base64 | 388 % | 354 % | 355 % |
 
 Die dritte Zeile ist die ehrliche. Gegen eine vektorisierte Base64 verliert
 Base65t auf großen, hochentropen Daten deutlich, und der Grund ist strukturell
