@@ -14,9 +14,12 @@ import pytest
 import base65t
 
 
-def test_the_parameterless_call_is_profile_u():
+def test_encode_takes_the_data_and_nothing_else():
     assert base65t.encode(b"alice.jones") == b"~~alice.jones"
-    assert base65t.encode(b"alice.jones", "U") == b"~~alice.jones"
+    # There is no second argument to pass, and passing one is an error rather
+    # than a silently ignored option.
+    with pytest.raises(TypeError):
+        base65t.encode(b"alice.jones", "U")
 
 
 @pytest.mark.parametrize("arg", [b"abc", bytearray(b"abc"), "abc"])
@@ -30,19 +33,15 @@ def test_a_sequence_of_integers_is_a_type_error_not_an_input(arg):
         base65t.encode(arg)
 
 
-def test_every_profile_name_is_wired():
-    data = bytes.fromhex("deadbeef") + b"session-eu-central"
-    for profile in base65t.PROFILES:
-        out = base65t.encode(data, profile)
-        assert base65t.decode(out, profile).bytes == data, profile
-
-
-def test_an_unknown_profile_is_a_value_error():
-    with pytest.raises(ValueError):
-        base65t.encode(b"x", "V")
-    # Profile B was a profile until v0.4 and is not one any more (§7).
-    with pytest.raises(ValueError):
-        base65t.encode(b"x", "B")
+def test_the_exported_alphabet_is_what_the_encoder_writes():
+    """§7: the module states the alphabet, and it has to be the true one."""
+    assert len(base65t.ALPHABET) == 66
+    seen = set()
+    for n in range(0, 400):
+        seen |= set(base65t.encode(bytes(range(256))[: n % 256] * 2).decode("ascii"))
+        seen |= set(base65t.encode(b"aZ0-._~" * n).decode("ascii"))
+    assert seen <= set(base65t.ALPHABET)
+    assert seen == set(base65t.ALPHABET)
 
 
 def test_the_base64url_entry_point_is_not_a_mode():
@@ -96,17 +95,21 @@ def test_the_error_carries_the_code_the_vectors_use(stream, code):
 
 def test_the_constants_come_from_the_crate():
     assert base65t.BLOCK_BYTES == 48
-    assert base65t.PROFILES == ["U", "T"]
+    assert base65t.ALPHABET == (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    )
     assert base65t.SPEC_VERSION == "0.4"
 
 
 def test_nothing_the_old_api_had_is_still_exported():
-    """v0.4 removed presets, framing and profile B (§8, §9.3, §7).
+    """v0.4 removed presets, framing and the profiles (§8, §9.3, §7).
 
     A binding that kept a name alive after the format dropped it is worse than
     one that never had it: the call keeps working and means something else.
     """
     for gone in (
+        "PROFILES",
+        "encode_with",
         "PRESETS",
         "decode_plain",
         "decode_framed",

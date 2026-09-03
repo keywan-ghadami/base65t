@@ -8,18 +8,26 @@
 //! the comments are that document's; `docs/history/` holds the earlier
 //! versions and the record of how each decision was reached.
 //!
-//! **The wire format is not stable.** v0.4 replaced the segment format of the
-//! earlier versions with fixed blocks, and nothing promises that v0.5 keeps
-//! them. What is stable is the contract: bytes in, printable ASCII out, never
-//! longer than base64, and any base64 stream reads back.
+//! **The wire format is not stable.** Nothing promises that v0.5 keeps these
+//! blocks. What is stable is the contract: bytes in, printable ASCII out,
+//! never longer than base64, and any base64 stream reads back.
 //!
 //! ```
-//! use base65t::{decode, encode, Profile};
+//! use base65t::{decode, encode};
 //!
 //! let out = encode(b"alice.jones");
 //! assert_eq!(out, b"~~alice.jones");
-//! assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
+//! assert_eq!(decode(&out).unwrap().bytes, b"alice.jones");
 //! ```
+//!
+//! # One alphabet
+//!
+//! Whatever goes in, the output is these 66 characters and nothing else:
+//! `A-Z a-z 0-9 - . _ ~`, exactly RFC 3986 *unreserved*. Not `=` either,
+//! because the encoder writes no padding. The alphabet does not depend on the
+//! data and there is no setting that changes it, which is what lets one
+//! sentence cover every container: a URL query, a cookie value, a header
+//! value, a JSON string, a filename, a log field.
 //!
 //! # One encoder
 //!
@@ -28,24 +36,23 @@
 //! rather than an omission: a caller who has to choose has to know what the
 //! choices mean before encoding a byte, and a caller who is unsure reaches
 //! for base64. The encoder is one question per block of forty-eight bytes
-//! (§4): all text, or base64. It neither searches nor remembers.
+//! (§4): all text, or base64. It neither searches nor remembers, and it takes
+//! no parameter at all.
 //!
 //! It asks that question of the first sixty-four blocks before it starts, and
 //! where none of them can be raw it writes base64url and stops asking (§9.6).
 //! So on input where the format would gain nothing -- anything compressed,
-//! and English prose under profile U, whose spaces leave no block whole --
-//! the output is base64url byte for byte and costs base64's time.
+//! and English prose, whose spaces leave no block whole -- the output is
+//! base64url byte for byte and costs base64's time.
 //!
-//! The two parameters that remain are not choices about the encoding. The
-//! profile (§7) is a statement about the container the stream has to survive,
-//! and [`encode_base64url`] is the way out for a caller who wants no part of
-//! the input left in the clear (§14).
+//! [`encode_base64url`] is not a second mode but the way out of the format,
+//! for a caller who wants no part of the input left in the clear (§14).
 //!
 //! # One decoder
 //!
-//! [`decode`] takes a stream and a profile and needs nothing else (§0.3): the
-//! alphabet variant and the padding come out of the stream and are reported
-//! back in [`Decoded`]. [`decode_url_strict`] fixes the alphabet instead.
+//! [`decode`] takes a stream and needs nothing else (§0.3): the alphabet
+//! variant and the padding come out of the stream and are reported back in
+//! [`Decoded`]. [`decode_url_strict`] fixes the alphabet variant instead.
 
 // §14 makes memory safety the payment for parsing untrusted input. Paying it
 // and then reaching for `unsafe` for a lookup table would be the worst of
@@ -56,7 +63,7 @@ mod alphabet;
 mod decode;
 mod encode;
 
-pub use alphabet::{AlphabetSeen, Profile};
+pub use alphabet::{admits_all, allows, AlphabetSeen};
 pub use decode::{decode, decode_url_strict};
 pub use encode::{
     any_block_can_be_raw, choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES, SAMPLE_BLOCKS,
@@ -90,7 +97,7 @@ pub enum Error {
     /// `~` followed by an alphabet character: a block form this version does
     /// not define and a later one may (§17).
     Reserved,
-    /// A clear byte the profile does not admit.
+    /// A raw byte the alphabet does not admit.
     Profile,
     /// A base64 run of length `1 mod 4`, which no number of bytes produces.
     Align,
@@ -134,26 +141,21 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// The encoding, profile U — the parameterless call §9.3 requires.
+/// The encoding — the parameterless call §9.3 requires, and the only one.
 pub fn encode(data: &[u8]) -> Vec<u8> {
-    encode_with(data, Profile::U)
-}
-
-/// The encoding, in the profile a container asks for (§7).
-pub fn encode_with(data: &[u8], profile: Profile) -> Vec<u8> {
     let mut out = Vec::new();
-    encode::encode_into(data, profile, &mut out);
+    encode::encode_into(data, &mut out);
     out
 }
 
 /// The encoding, appending to a buffer the caller owns.
 ///
-/// The same bytes [`encode_with`] returns; what changes is who owns the
-/// memory. A caller encoding many small values in a loop wants to say where
-/// the output goes, and on those values the allocation this saves is a real
-/// share of the work.
-pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
-    encode::encode_into(data, profile, out);
+/// The same bytes [`encode`] returns; what changes is who owns the memory. A
+/// caller encoding many small values in a loop wants to say where the output
+/// goes, and on those values the allocation this saves is a real share of the
+/// work.
+pub fn encode_into(data: &[u8], out: &mut Vec<u8>) {
+    encode::encode_into(data, out);
 }
 
 /// Base64URL and nothing else, whatever the input looks like.
@@ -173,9 +175,9 @@ pub fn encode_base64url(data: &[u8]) -> Vec<u8> {
 ///
 /// The counterpart of [`encode_into`]. On an error the buffer is left as it
 /// was found.
-pub fn decode_into(stream: &[u8], profile: Profile, out: &mut Vec<u8>) -> Result<Meta, Error> {
+pub fn decode_into(stream: &[u8], out: &mut Vec<u8>) -> Result<Meta, Error> {
     let at = out.len();
-    match decode::run_into(stream, profile, false, out) {
+    match decode::run_into(stream, false, out) {
         Ok(meta) => Ok(meta),
         Err(e) => {
             out.truncate(at);

@@ -2,11 +2,11 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §16.1 — `decode(encode(x)) == x`, over every profile and every preset.
+//! §16.1 — `decode(encode(x)) == x`, over both entry points.
 //!
 //! The corpus is generated from a counter stream rather than collected, so a
 //! failure names an input that can be regenerated exactly, and it is built to
-//! hit what the format branches on: the profile boundary, the tilde, the
+//! hit what the format branches on: the alphabet boundary, the tilde, the
 //! header bands at 62 and 63 bytes, the literal cap at 4158, and text that is
 //! legal apart from the occasional byte that is not.
 
@@ -54,7 +54,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
             (0..n).map(|_| r.byte()).collect(),
         ));
     }
-    // Text with a rising share of bytes no profile-U literal may carry, which
+    // Text with a rising share of bytes no raw block may carry, which
     // is where segmentation has to decide something.
     for percent in [0, 1, 5, 20, 50] {
         let data: Vec<u8> = (0..2000)
@@ -92,47 +92,38 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
     v
 }
 
-const PROFILES: [Profile; 2] = [Profile::U, Profile::T];
-
 /// The two entry points a caller has, so every claim below is checked of both.
-type Enc = fn(&[u8], Profile) -> Vec<u8>;
+type Enc = fn(&[u8]) -> Vec<u8>;
 
 fn kinds() -> [(&'static str, Enc); 2] {
-    [
-        ("encode", encode_with),
-        ("base64url", |d, _| encode_base64url(d)),
-    ]
+    [("encode", encode as Enc), ("base64url", encode_base64url)]
 }
 
 #[test]
 fn decode_of_encode_is_the_identity() {
     for (name, data) in corpus() {
-        for profile in PROFILES {
-            for (kind, encode) in kinds() {
-                let out = encode(&data, profile);
-                let d = decode(&out, profile)
-                    .unwrap_or_else(|e| panic!("{name}, {kind}, {profile:?}: {e}"));
-                assert_eq!(d.bytes, data, "{name}, {kind}, {profile:?}");
+        for (kind, enc) in kinds() {
+            let out = enc(&data);
+            let d = decode(&out).unwrap_or_else(|e| panic!("{name}, {kind}: {e}"));
+            assert_eq!(d.bytes, data, "{name}, {kind}");
 
-                // An encoder never writes padding and never writes the classic
-                // alphabet (§5.1, §5.3), so a decoder never sees either.
-                assert!(!d.padding_seen, "{name}, {kind}");
-                assert_ne!(d.alphabet_seen, AlphabetSeen::Classic, "{name}, {kind}");
+            // An encoder never writes padding and never writes the classic
+            // alphabet (§5.1, §5.3), so a decoder never sees either.
+            assert!(!d.padding_seen, "{name}, {kind}");
+            assert_ne!(d.alphabet_seen, AlphabetSeen::Classic, "{name}, {kind}");
 
-                // And the strict entry point agrees with the permissive one.
-                assert_eq!(
-                    decode_url_strict(&out, profile).map(|d| d.bytes),
-                    Ok(data.clone()),
-                    "{name}, {kind}"
-                );
-            }
+            // And the strict entry point agrees with the permissive one.
+            assert_eq!(
+                decode_url_strict(&out).map(|d| d.bytes),
+                Ok(data.clone()),
+                "{name}, {kind}"
+            );
         }
     }
 }
 
 /// `encode_base64url` is Base64URL and nothing else — that is its whole
-/// promise (§14), and the profile has no say in it because there are no
-/// literals to constrain.
+/// promise (§14), and no raw block ever appears in it.
 #[test]
 fn the_base64url_entry_point_leaks_nothing() {
     for (name, data) in corpus() {
@@ -142,13 +133,12 @@ fn the_base64url_entry_point_leaks_nothing() {
     }
 }
 
-/// A stream that came out of the encoder is decoded by the profile it was
-/// encoded under. A wider profile still reads it; a narrower one may not, and
-/// that is the profile doing its job rather than a bug.
+/// There is one alphabet, so a stream the encoder wrote is read by the
+/// decoder with nothing to configure between them (§0.3).
 #[test]
-fn a_wider_profile_reads_a_narrower_ones_stream() {
+fn a_stream_reads_back_with_no_parameter_at_all() {
     for (name, data) in corpus() {
-        let out = encode_with(&data, Profile::U);
-        assert_eq!(decode(&out, Profile::T).unwrap().bytes, data, "{name}");
+        let out = encode(&data);
+        assert_eq!(decode(&out).unwrap().bytes, data, "{name}");
     }
 }

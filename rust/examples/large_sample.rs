@@ -46,11 +46,8 @@ fn main() {
         }
     }
 
-    let stream = encode_with(&data, Profile::U);
-    assert_eq!(
-        decode(&stream, Profile::U).expect("its own output").bytes,
-        data
-    );
+    let stream = encode(&data);
+    assert_eq!(decode(&stream).expect("its own output").bytes, data);
     std::fs::write(input_path, &data).expect("write input");
     std::fs::write(stream_path, &stream).expect("write stream");
     println!(

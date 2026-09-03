@@ -6,7 +6,7 @@
 
 This is not a second implementation and cannot discharge §16.3 -- it calls the
 same Rust the vectors were written from, so it can only agree. What it does
-check is that every entry point and profile name reaches the argument it is
+check is that every entry point reaches the argument it is
 supposed to, which is the one thing a binding can get wrong on its own.
 """
 
@@ -36,8 +36,7 @@ def test_every_vector_encodes_and_decodes():
     for v in load():
         data = bytes.fromhex(v["input"])
         want = bytes.fromhex(v["stream"])
-        for profile in v["profiles"]:
-            assert KINDS[v["kind"]](data, profile) == want, v["name"]
-            assert base65t.decode(want, profile).bytes == data, v["name"]
-            checked += 1
-    assert checked >= 200, f"only {checked} vector/profile pairs"
+        assert KINDS[v["kind"]](data) == want, v["name"]
+        assert base65t.decode(want).bytes == data, v["name"]
+        checked += 1
+    assert checked >= 100, f"only {checked} vectors"

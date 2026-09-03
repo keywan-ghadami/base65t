@@ -5,7 +5,7 @@
 //! The encoder (§9): fixed blocks, two forms, no state.
 //!
 //! The input is cut into blocks of [`BLOCK_BYTES`]. A block whose every byte
-//! the profile admits is written raw, after `~~`; any other block is written
+//! the alphabet admits is written raw, after `~~`; any other block is written
 //! as base64. That is the whole encoder, and it is one question per block.
 //!
 //! Before it starts, it asks that question of the first [`SAMPLE_BLOCKS`]
@@ -22,7 +22,7 @@
 //! followed by an alphabet character is reserved so a later version can bring
 //! it back without an old decoder reading it wrongly.
 
-use crate::alphabet::{Profile, ALPHABET, TILDE};
+use crate::alphabet::{admits_all, ALPHABET, TILDE};
 
 /// Input bytes per block (§4).
 ///
@@ -41,7 +41,7 @@ pub const BASE64_BLOCK_CHARS: usize = BLOCK_BYTES / 3 * 4;
 ///
 /// Sixty-four blocks are 3072 bytes, and that number is chosen twice over.
 /// It is the knee of the measurement (`binary2textbench`, `--example
-/// sample`): at thirty-two blocks `xml` under profile T is mis-sampled and
+/// sample`): at thirty-two blocks `xml` is mis-sampled and
 /// gives up 9.8 points on five megabytes, at sixty-four it is not, and above
 /// it almost nothing moves while fewer streams get the cheap path. And it is
 /// longer than every value §0.1 names -- a URL query, a cookie, a header, a
@@ -62,7 +62,7 @@ pub enum Form {
     Raw,
 }
 
-/// Which form a block of `m` bytes takes, given whether the profile admits
+/// Which form a block of `m` bytes takes, given whether the alphabet admits
 /// all of them, and how many characters it costs (§9.0).
 ///
 /// Raw where every byte is admitted and raw is no longer than base64, which
@@ -86,14 +86,14 @@ pub fn choose(m: usize, admits_all: bool) -> (Form, usize) {
 /// that is shorter than base64, so the asking is paid for.
 ///
 /// It answers with the input and nothing else, so two encoders agree (§9.0).
-pub fn any_block_can_be_raw(data: &[u8], profile: Profile) -> bool {
+pub fn any_block_can_be_raw(data: &[u8]) -> bool {
     data.chunks(BLOCK_BYTES)
         .take(SAMPLE_BLOCKS)
-        .any(|b| choose(b.len(), profile.admits_all(b)).0 == Form::Raw)
+        .any(|b| choose(b.len(), admits_all(b)).0 == Form::Raw)
 }
 
-/// Encode `data` in `profile`, appending to `out`.
-pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
+/// Encode `data`, appending to `out`.
+pub fn encode_into(data: &[u8], out: &mut Vec<u8>) {
     out.reserve(base64_len(data.len()));
     // An input that fits inside the sample needs no sample: asking the first
     // sixty-four blocks and then asking every block would ask the same blocks
@@ -102,7 +102,7 @@ pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
     // either way -- which is what `the_sample_is_free_on_a_short_value`
     // checks. This is the case §0.1 is about, and paying for the sample
     // there would be paying for a decision that is already made.
-    if data.len() > SAMPLE_BLOCKS * BLOCK_BYTES && !any_block_can_be_raw(data, profile) {
+    if data.len() > SAMPLE_BLOCKS * BLOCK_BYTES && !any_block_can_be_raw(data) {
         emit_base64(data, out);
         return;
     }
@@ -114,7 +114,7 @@ pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
     let mut pending = 0..0;
     for (k, block) in data.chunks(BLOCK_BYTES).enumerate() {
         let start = k * BLOCK_BYTES;
-        let form = choose(block.len(), profile.admits_all(block)).0;
+        let form = choose(block.len(), admits_all(block)).0;
         if form == Form::Base64 {
             if pending.end == start {
                 pending.end = start + block.len();
@@ -179,7 +179,7 @@ mod tests {
             .map(|i| if i % 6 == 5 { b' ' } else { b'a' })
             .collect();
         let mut out = Vec::new();
-        encode_into(&prose, Profile::U, &mut out);
+        encode_into(&prose, &mut out);
         let mut b64 = Vec::new();
         emit_base64(&prose, &mut b64);
         assert_eq!(out, b64);
@@ -193,7 +193,7 @@ mod tests {
         data.extend(vec![b' '; (SAMPLE_BLOCKS + 10) * BLOCK_BYTES]);
         data.extend(vec![b'b'; BLOCK_BYTES]);
         let mut out = Vec::new();
-        encode_into(&data, Profile::U, &mut out);
+        encode_into(&data, &mut out);
         assert!(out.starts_with(b"~~aaa"));
         assert!(out.ends_with(&[b"~~".as_slice(), &[b'b'; BLOCK_BYTES]].concat()));
     }
@@ -216,29 +216,27 @@ mod tests {
             let data: Vec<u8> = (0..n)
                 .map(|_| b"aabbcc  ..--\x00\xff"[next() % 14])
                 .collect();
-            for p in [Profile::U, Profile::T] {
-                let mut out = Vec::new();
-                encode_into(&data, p, &mut out);
-                // What the encoder would write if it always sampled first.
-                let want = if any_block_can_be_raw(&data, p) {
-                    let mut v = Vec::new();
-                    for b in data.chunks(BLOCK_BYTES) {
-                        match choose(b.len(), p.admits_all(b)).0 {
-                            Form::Raw => {
-                                v.extend_from_slice(b"~~");
-                                v.extend_from_slice(b);
-                            }
-                            Form::Base64 => emit_base64(b, &mut v),
+            let mut out = Vec::new();
+            encode_into(&data, &mut out);
+            // What the encoder would write if it always sampled first.
+            let want = if any_block_can_be_raw(&data) {
+                let mut v = Vec::new();
+                for b in data.chunks(BLOCK_BYTES) {
+                    match choose(b.len(), admits_all(b)).0 {
+                        Form::Raw => {
+                            v.extend_from_slice(b"~~");
+                            v.extend_from_slice(b);
                         }
+                        Form::Base64 => emit_base64(b, &mut v),
                     }
-                    v
-                } else {
-                    let mut v = Vec::new();
-                    emit_base64(&data, &mut v);
-                    v
-                };
-                assert_eq!(out, want, "{p:?}, {n} bytes");
-            }
+                }
+                v
+            } else {
+                let mut v = Vec::new();
+                emit_base64(&data, &mut v);
+                v
+            };
+            assert_eq!(out, want, "{n} bytes");
         }
     }
 
@@ -254,11 +252,11 @@ mod tests {
                 let mut data = vec![b'a'; n];
                 *data.last_mut().unwrap() = tail;
                 let mut out = Vec::new();
-                encode_into(&data, Profile::U, &mut out);
+                encode_into(&data, &mut out);
                 // What the encoder writes when it always asks.
                 let want: usize = data
                     .chunks(BLOCK_BYTES)
-                    .map(|b| choose(b.len(), Profile::U.admits_all(b)).1)
+                    .map(|b| choose(b.len(), admits_all(b)).1)
                     .sum();
                 assert_eq!(out.len(), want, "n = {n}, tail {tail:?}");
             }
@@ -271,14 +269,14 @@ mod tests {
     #[test]
     fn a_full_block_is_all_or_nothing() {
         let clean = [b'a'; 48];
-        assert!(Profile::U.admits_all(&clean));
+        assert!(admits_all(&clean));
         assert_eq!(choose(48, true), (Form::Raw, 50));
         for missing in 0..48 {
             let mut block = clean;
             block[missing] = b' ';
-            assert!(!Profile::U.admits_all(&block), "byte {missing}");
+            assert!(!admits_all(&block), "byte {missing}");
             block[missing] = 0x80;
-            assert!(!Profile::U.admits_all(&block), "byte {missing}, high bit");
+            assert!(!admits_all(&block), "byte {missing}, high bit");
         }
         assert_eq!(choose(48, false), (Form::Base64, 64));
     }
@@ -305,10 +303,10 @@ mod tests {
                     data[i] = b' ';
                 }
                 let mut out = Vec::new();
-                encode_into(&data, Profile::U, &mut out);
+                encode_into(&data, &mut out);
                 let want: usize = data
                     .chunks(BLOCK_BYTES)
-                    .map(|b| choose(b.len(), Profile::U.admits_all(b)).1)
+                    .map(|b| choose(b.len(), admits_all(b)).1)
                     .sum();
                 assert_eq!(out.len(), want, "n = {n}, bad at {bad_at:?}");
                 assert!(out.len() <= base64_len(n));

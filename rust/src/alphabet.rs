@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The alphabet, the 65th character, and the two profiles (§3, §5.2, §7).
+//! The alphabet, the 65th character, and what may stand raw (§3, §5.2, §7).
 
 /// Base64URL, RFC 4648 §5. The encoder writes this and only this (§5.1).
 pub const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -70,124 +70,95 @@ pub enum AlphabetSeen {
     Classic,
 }
 
-/// What a literal payload may contain (§7). The one parameter `decode` keeps,
-/// because it is a statement about the container and not about the stream
-/// (§7.2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    /// RFC 3986 *unreserved*: 66 characters, and the only profile that goes
-    /// into a URL query or a cookie value as it stands (§7.1).
-    U,
-    /// Printable ASCII without `"` and `\`, so a JSON string carries it
-    /// unescaped. Not URL-safe and not CSV-safe.
-    T,
-}
-
-/// Profile membership as a table: bit 0 for U, bit 1 for T.
-///
-/// Not what the encoder uses any more -- see [`Profile::allows`] for why --
-/// but kept as the definition of §7 written out one byte at a time, and the
-/// thing the arithmetic is tested against.
+/// The set of bytes that may stand raw in a block: RFC 3986 *unreserved*, 66
+/// characters (§7). Written out one byte at a time, which is the definition
+/// the specification gives, and the thing [`allows`] is tested against.
 #[cfg(test)]
-static MEMBERSHIP: [u8; 256] = {
-    let mut t = [0u8; 256];
+static MEMBERSHIP: [bool; 256] = {
+    let mut t = [false; 256];
     let mut b = 0usize;
     while b < 256 {
         let c = b as u8;
-        let unreserved =
-            c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_' || c == TILDE;
-        let text = 0x20 <= c && c <= 0x7E && c != b'"' && c != b'\\';
-        t[b] = (unreserved as u8) | ((text as u8) << 1);
+        t[b] = c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_' || c == TILDE;
         b += 1;
     }
     t
 };
 
-impl Profile {
-    /// Whether the profile admits **every** byte of `data` (§9.0).
-    ///
-    /// The only question the encoder asks of a block, and asking exactly it —
-    /// rather than building a bit per byte and comparing to all-ones — is
-    /// what took encoding on large files from 122 % of base64's time to
-    /// parity.
-    ///
-    /// The membership test inside is arithmetic and not a table lookup, and
-    /// that is the whole trick: a gather does not vectorise, six shifts and
-    /// compares do. The loop below is a branchless `or` of rejections over
-    /// thirty-two bytes, and only then is there a branch — one per group,
-    /// taken as soon as any byte in it settles the block.
-    ///
-    /// **It does vectorise, and that is checked rather than hoped for.** In
-    /// the code the compiler emits for this function, 112 of 171
-    /// instructions work on vector registers: sixteen bytes per operation on
-    /// the baseline `x86-64` target, which assumes only SSE2. Build with
-    /// `-C target-cpu=native` and it is thirty-two or sixty-four, which
-    /// roughly halves what the check costs (§13.1) without changing a byte of
-    /// the output. Anyone doubting it can look:
-    /// `cargo rustc --release -- --emit=asm`.
-    ///
-    /// The same width *without* a build flag would need runtime dispatch,
-    /// and both routes are shut: `#[target_feature]` needs `unsafe`, which
-    /// this crate forbids, and `std::simd` is not stable (rustc 1.94.1,
-    /// rust-lang/rust#86656).
-    #[inline]
-    pub fn admits_all(self, data: &[u8]) -> bool {
-        let (groups, tail) = data.as_chunks::<32>();
-        // The cheap necessary condition, on the first group only: every byte
-        // either profile admits is at most 0x7E (§7), so one `or` and one test
-        // reject the block. On compressed or binary input -- the case where
-        // this whole function is pure overhead -- the first thirty-two bytes
-        // hold a high bit with probability 1 - 2^-32, so the block is settled
-        // by two vector operations instead of the six a byte that the full
-        // test costs. On text it passes and costs those two operations once,
-        // not once per group.
-        if let Some(g) = groups.first() {
-            let mut hi = 0u8;
-            for &b in g {
-                hi |= b;
-            }
-            if hi & 0x80 != 0 {
-                return false;
-            }
+/// Whether **every** byte of `data` may stand raw (§9.0).
+///
+/// The only question the encoder asks of a block, and asking exactly it —
+/// rather than building a bit per byte and comparing to all-ones — is what
+/// took encoding on large files from 122 % of base64's time to parity.
+///
+/// The membership test inside is arithmetic and not a table lookup, and that
+/// is the whole trick: a gather does not vectorise, six shifts and compares
+/// do. The loop below is a branchless `or` of rejections over thirty-two
+/// bytes, and only then is there a branch — one per group, taken as soon as
+/// any byte in it settles the block.
+///
+/// **It does vectorise, and that is checked rather than hoped for.** In the
+/// code the compiler emits for this function, most instructions work on
+/// vector registers: sixteen bytes per operation on the baseline `x86-64`
+/// target, which assumes only SSE2. Build with `-C target-cpu=native` and it
+/// is thirty-two or sixty-four, which roughly halves what the check costs
+/// (§13.1) without changing a byte of the output. Anyone doubting it can
+/// look: `cargo rustc --release -- --emit=asm`.
+///
+/// The same width *without* a build flag would need runtime dispatch, and
+/// both routes are shut: `#[target_feature]` needs `unsafe`, which this crate
+/// forbids, and `std::simd` is not stable (rustc 1.98.1,
+/// rust-lang/rust#86656).
+#[inline]
+pub fn admits_all(data: &[u8]) -> bool {
+    let (groups, tail) = data.as_chunks::<32>();
+    // The cheap necessary condition, on the first group only: every byte that
+    // may stand raw is at most 0x7E (§7), so one `or` and one test reject the
+    // block. On compressed or binary input -- the case where this whole
+    // function is pure overhead -- the first thirty-two bytes hold a high bit
+    // with probability 1 - 2^-32, so the block is settled by two vector
+    // operations instead of the six a byte that the full test costs. On text
+    // it passes and costs those two operations once, not once per group.
+    if let Some(g) = groups.first() {
+        let mut hi = 0u8;
+        for &b in g {
+            hi |= b;
         }
-        for g in groups {
-            let mut bad = 0u8;
-            for &b in g {
-                bad |= !self.allows(b) as u8;
-            }
-            if bad != 0 {
-                return false;
-            }
+        if hi & 0x80 != 0 {
+            return false;
         }
+    }
+    for g in groups {
         let mut bad = 0u8;
-        for &b in tail {
-            bad |= !self.allows(b) as u8;
+        for &b in g {
+            bad |= !allows(b) as u8;
         }
-        bad == 0
+        if bad != 0 {
+            return false;
+        }
     }
+    let mut bad = 0u8;
+    for &b in tail {
+        bad |= !allows(b) as u8;
+    }
+    bad == 0
+}
 
-    /// Whether this byte may stand raw in a block (§7).
-    ///
-    /// Arithmetic rather than a lookup in [`MEMBERSHIP`], which is the same
-    /// answer by a different road: a table is one load and this is six cheap
-    /// operations, so on a single byte the table wins, and over a block the
-    /// arithmetic wins by a wide margin because it vectorises and a gather
-    /// does not. `only_the_arithmetic_and_the_table_agree` checks the two
-    /// against each other over all 256 bytes and both profiles, which is what
-    /// keeps the duplication honest.
-    #[inline]
-    pub fn allows(self, b: u8) -> bool {
-        // `b | 0x20` folds the upper case onto the lower, so one range test
-        // covers both.
-        let alpha = (b | 0x20).wrapping_sub(b'a') < 26;
-        let digit = b.wrapping_sub(b'0') < 10;
-        match self {
-            Profile::U => alpha || digit || b == b'-' || b == b'.' || b == b'_' || b == TILDE,
-            // 0x20 to 0x7E is 95 characters, less the two a JSON string would
-            // have to escape.
-            Profile::T => b.wrapping_sub(0x20) < 95 && b != b'"' && b != b'\\',
-        }
-    }
+/// Whether this byte may stand raw in a block (§7).
+///
+/// Arithmetic rather than a lookup in [`MEMBERSHIP`], which is the same answer
+/// by a different road: a table is one load and this is six cheap operations,
+/// so on a single byte the table wins, and over a block the arithmetic wins by
+/// a wide margin because it vectorises and a gather does not.
+/// `only_the_arithmetic_and_the_table_agree` checks the two against each other
+/// over all 256 bytes, which is what keeps the duplication honest.
+#[inline]
+pub fn allows(b: u8) -> bool {
+    // `b | 0x20` folds the upper case onto the lower, so one range test
+    // covers both.
+    let alpha = (b | 0x20).wrapping_sub(b'a') < 26;
+    let digit = b.wrapping_sub(b'0') < 10;
+    alpha || digit || b == b'-' || b == b'.' || b == b'_' || b == TILDE
 }
 
 #[cfg(test)]
@@ -195,10 +166,10 @@ mod tests {
     use super::*;
 
     /// §7.1, as an executable form of the ABNF argument rather than of the
-    /// table beside it: every byte profile U admits is a `cookie-octet` from
-    /// RFC 6265 §4.1.1, and there are 66 of them.
+    /// table beside it: every byte that may stand raw is a `cookie-octet`
+    /// from RFC 6265 §4.1.1, and there are 66 of them.
     #[test]
-    fn profile_u_is_cookie_octet() {
+    fn every_raw_byte_is_a_cookie_octet() {
         let cookie_octet = |b: u8| {
             b == 0x21
                 || (0x23..=0x2B).contains(&b)
@@ -206,19 +177,20 @@ mod tests {
                 || (0x3C..=0x5B).contains(&b)
                 || (0x5D..=0x7E).contains(&b)
         };
-        let admitted: Vec<u8> = (0..=255u8).filter(|&b| Profile::U.allows(b)).collect();
+        let admitted: Vec<u8> = (0..=255u8).filter(|&b| allows(b)).collect();
         assert_eq!(admitted.len(), 66, "unreserved is 66 characters");
         for b in admitted {
             assert!(cookie_octet(b), "{:?} is not a cookie-octet", b as char);
         }
     }
 
-    /// The alphabet is a subset of profile U, which is why a literal may abut a
-    /// base64 segment without either needing a delimiter.
+    /// The base64 alphabet is a subset of what may stand raw, which is why a
+    /// raw block may abut a base64 block without either needing a delimiter,
+    /// and why the whole output is one 66-character set (§3).
     #[test]
     fn alphabet_is_unreserved() {
         for &c in ALPHABET.iter() {
-            assert!(Profile::U.allows(c), "{:?}", c as char);
+            assert!(allows(c), "{:?}", c as char);
         }
     }
 
@@ -251,19 +223,12 @@ mod tests {
         }
     }
 
-    /// Profile T is the JSON-safe one, and that is the whole of its claim.
     /// The two ways of asking §7's question, against each other over every
-    /// byte and both profiles. One is the definition and one is what runs.
+    /// byte. One is the definition written out, one is what runs.
     #[test]
     fn only_the_arithmetic_and_the_table_agree() {
         for b in 0..=255u8 {
-            for (p, bit) in [(Profile::U, 0b001u8), (Profile::T, 0b010)] {
-                assert_eq!(
-                    p.allows(b),
-                    MEMBERSHIP[b as usize] & bit != 0,
-                    "{p:?} {b:#04x}"
-                );
-            }
+            assert_eq!(allows(b), MEMBERSHIP[b as usize], "{b:#04x}");
         }
     }
 
@@ -271,31 +236,30 @@ mod tests {
     /// change that -- whichever byte of a block is the one that rejects.
     #[test]
     fn admits_all_agrees_with_allows_at_every_position() {
-        for p in [Profile::U, Profile::T] {
-            for n in 0..=80usize {
-                let clean = vec![b'a'; n];
-                assert!(p.admits_all(&clean), "{p:?} {n}");
-                for i in 0..n {
-                    for bad in [b' ', 0x00, 0x80, 0xff, b'"', b'\\', b'/'] {
-                        let mut v = clean.clone();
-                        v[i] = bad;
-                        assert_eq!(
-                            p.admits_all(&v),
-                            v.iter().all(|&b| p.allows(b)),
-                            "{p:?} n={n} i={i} {bad:#04x}"
-                        );
-                    }
+        for n in 0..=80usize {
+            let clean = vec![b'a'; n];
+            assert!(admits_all(&clean), "{n}");
+            for i in 0..n {
+                for bad in [b' ', 0x00, 0x80, 0xff, b'"', b'\\', b'/'] {
+                    let mut v = clean.clone();
+                    v[i] = bad;
+                    assert_eq!(
+                        admits_all(&v),
+                        v.iter().all(|&b| allows(b)),
+                        "n={n} i={i} {bad:#04x}"
+                    );
                 }
             }
         }
     }
 
+    /// The space is the character this format most conspicuously does not
+    /// admit, and the one an earlier revision did. Pinned so that widening
+    /// the set is a deliberate act with a failing test in front of it.
     #[test]
-    fn profile_t_excludes_exactly_quote_and_backslash() {
-        for b in 0x20..=0x7Eu8 {
-            assert_eq!(Profile::T.allows(b), b != b'"' && b != b'\\');
+    fn the_space_and_the_punctuation_of_prose_stand_outside() {
+        for b in *b" \t\n\r,;:!?'\"()[]{}/+=@#$%^&*<>|\\" {
+            assert!(!allows(b), "{:?} must not stand raw", b as char);
         }
-        assert!(!Profile::T.allows(0x1F));
-        assert!(!Profile::T.allows(0x7F));
     }
 }

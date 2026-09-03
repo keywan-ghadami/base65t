@@ -15,27 +15,27 @@
 //! the segment format stood behind base64 (§14).
 
 use crate::alphabet::{
-    AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
+    admits_all, AlphabetSeen, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
 };
 use crate::encode::{BASE64_BLOCK_CHARS, BLOCK_BYTES};
 use crate::{Decoded, Error, Meta};
 
-/// §10.2. The profile is the only parameter.
-pub fn decode(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    run(stream, profile, false)
+/// §10.2. A stream and nothing else (§0.3).
+pub fn decode(stream: &[u8]) -> Result<Decoded, Error> {
+    run(stream, false)
 }
 
 /// §5.5: like [`decode`], but `+` and `/` at an alphabet position are an
 /// error rather than the classic alphabet.
-pub fn decode_url_strict(stream: &[u8], profile: Profile) -> Result<Decoded, Error> {
-    run(stream, profile, true)
+pub fn decode_url_strict(stream: &[u8]) -> Result<Decoded, Error> {
+    run(stream, true)
 }
 
-fn run(stream: &[u8], profile: Profile, strict_url: bool) -> Result<Decoded, Error> {
+fn run(stream: &[u8], strict_url: bool) -> Result<Decoded, Error> {
     // The output is never longer than the stream: a raw byte is one
     // character, and base64 is three bytes per four.
     let mut out = Vec::with_capacity(stream.len());
-    let meta = run_into(stream, profile, strict_url, &mut out)?;
+    let meta = run_into(stream, strict_url, &mut out)?;
     Ok(Decoded {
         bytes: out,
         alphabet_seen: meta.alphabet_seen,
@@ -43,14 +43,8 @@ fn run(stream: &[u8], profile: Profile, strict_url: bool) -> Result<Decoded, Err
     })
 }
 
-pub(crate) fn run_into(
-    stream: &[u8],
-    profile: Profile,
-    strict_url: bool,
-    out: &mut Vec<u8>,
-) -> Result<Meta, Error> {
+pub(crate) fn run_into(stream: &[u8], strict_url: bool, out: &mut Vec<u8>) -> Result<Meta, Error> {
     let mut d = Decoder {
-        profile,
         strict_url,
         alphabet_seen: AlphabetSeen::None,
         padding_seen: false,
@@ -67,7 +61,6 @@ pub(crate) fn run_into(
 /// found. Rule A and Rule P are statements about the whole stream, so one
 /// decoder threads through every block.
 struct Decoder<'a> {
-    profile: Profile,
     strict_url: bool,
     alphabet_seen: AlphabetSeen,
     padding_seen: bool,
@@ -100,12 +93,12 @@ impl Decoder<'_> {
         Ok(())
     }
 
-    /// §7: every byte of a raw payload must be one the profile admits.
+    /// §7: every byte of a raw payload must be one the alphabet admits.
     ///
     /// The same question the encoder asks, through the same function.
     #[inline]
-    fn check_profile(&self, bytes: &[u8]) -> Result<(), Error> {
-        if self.profile.admits_all(bytes) {
+    fn check_alphabet(&self, bytes: &[u8]) -> Result<(), Error> {
+        if admits_all(bytes) {
             Ok(())
         } else {
             Err(Error::Profile)
@@ -136,7 +129,7 @@ impl Decoder<'_> {
                 pos += 2;
                 let n = BLOCK_BYTES.min(len - pos);
                 let bytes = &stream[pos..pos + n];
-                self.check_profile(bytes)?;
+                self.check_alphabet(bytes)?;
                 self.out.extend_from_slice(bytes);
                 pos += n;
             } else if WORDS[stream[pos + 1] as usize] & WORD_BAD == 0 {

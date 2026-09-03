@@ -46,11 +46,11 @@ never meaningfully slower than base64, and any base64 stream reads back.
 ## One encoder, no options, no state
 
 ```rust
-use base65t::{decode, encode, Profile};
+use base65t::{decode, encode};
 
 let stream = encode(b"alice.jones");
 assert_eq!(stream, b"~~alice.jones");
-assert_eq!(decode(&stream, Profile::U)?.bytes, b"alice.jones");
+assert_eq!(decode(&stream)?.bytes, b"alice.jones");
 ```
 
 `encode` takes bytes and returns bytes. There is no mode to pick, no threshold
@@ -66,18 +66,13 @@ bytes, stopping at the first byte that settles it. Blocks are independent, so a
 stream can be cut at any block boundary and put back together, and two
 implementations cannot disagree about a byte.
 
-Nothing has to be decided to use it: the default alphabet above goes into every
+Nothing has to be decided to use it: the alphabet above goes into every
 container listed there, and a caller who reads no further is already right.
 
-Two things exist beside it, and neither is a decision about the encoding:
-
-* **Profile `T`** admits 93 raw characters instead of 66 — printable ASCII
-  without `"` and `\` — and buys readability on text with punctuation at the
-  price of the URL. It describes the container, not the stream, which is the
-  only reason it is a parameter at all.
-* **`encode_base64url`** is not a mode of the format but the way out of it: for
-  a caller carrying a secret who wants no part of it left in the clear. Its
-  output is ordinary unpadded base64url.
+One thing exists beside it, and it is not a mode of the encoding.
+**`encode_base64url`** is the way *out* of the format, for a caller carrying a
+secret who wants no part of it left in the clear. Its output is ordinary
+unpadded base64url — a subset of the same 66 characters.
 
 **The output is never longer than base64** — per input, not on average, with no
 exception. A raw block is 50 characters where base64 is 64, and every other
@@ -104,23 +99,21 @@ for:
 | two UUIDs | 73 | **78.6 %** |
 | a JWT, three segments | 155 | **78.7 %** |
 
-**What does not** — anything with a byte the profile rejects in every 48-byte
-block, which is every large document and everything binary:
+**What does not** — anything with a rejected byte in every 48-byte block,
+which is every large document and everything binary:
 
-| sample | profile | size |
-|---|---|--:|
-| English prose (Silesia `dickens`) | U | 100.0 % |
-| `xml` | U | 100.0 % |
-| `countries.json` | U or T | 100.0 % |
-| a JPEG, a PNG, random bytes | — | 100.0 % |
-| English prose | T | 94.8 % |
-| `xml` | T | 90.2 % |
+| sample | size |
+|---|--:|
+| English prose (Silesia `dickens`) | 100.0 % |
+| `xml` | 100.0 % |
+| `countries.json` | 100.0 % |
+| a JPEG, a PNG, random bytes | 100.0 % |
 
-Summed over 69 corpus samples it is 99.99 % in profile U and 99.51 % in T.
-That number is byte-weighted and therefore decided by megabyte files, where
-this format saves nothing; 43 % of the samples are better than 95 %, and
-they are all short values. Of the difference, 0.01 points in U and 0.24 in T
-are what the sample gives up; the rest is the block being all-or-nothing.
+Summed over 69 corpus samples it is 99.99 %. That number is byte-weighted and
+therefore decided by megabyte files, where this format saves nothing; 43 % of
+the samples are better than 95 %, and they are all short values. None of the
+difference is the sample: at 64 blocks it costs no file in the corpus
+anything. It is the block being all-or-nothing.
 
 The decisive pair is in the corpus twice over: `session_ids_32.bin`, raw
 binary session ids, comes out at **100.0 %**; the same thing written as text,
@@ -169,62 +162,56 @@ and the same allocator, so the ratio is the format and not a handicap. Median
 of paired ratios over 21 rounds, sorted by size, because that is the whole
 story:
 
-| file | profile | size | encode | decode |
-|---|---|--:|--:|--:|
-| generated, all admitted | U | 78.1 % | **48 %** | **40 %** |
-| prose, space every 6 bytes | T | 78.1 % | **40 %** | **35 %** |
-| `xml` | T | 88.4 % | **91 %** | **68 %** |
-| `dickens` (prose) | T | 95.1 % | 118 % | **90 %** |
-| `dickens` (prose) | U | 100.0 % | **100 %** | **100 %** |
-| `xml` | U | 100.0 % | **99 %** | **100 %** |
-| `x-ray` (binary) | U | 100.0 % | 101 % | 101 % |
-| random bytes | U | 100.0 % | **100 %** | 101 % |
+| file | bytes | size | encode | decode |
+|---|--:|--:|--:|--:|
+| generated, all admitted | 4 000 000 | **78.1 %** | **47 %** | **40 %** |
+| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 101 % |
+| `xml` | 5 345 280 | 100.0 % | 100 % | 100 % |
+| `countries.json` | 1 408 911 | 100.0 % | 103 % | 98 % |
+| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 101 % |
+| random bytes | 262 144 | 100.0 % | 102 % | 99 % |
 
-Where the output is not smaller than base64, it *is* base64 — 99 to 101 % of
-its time, both directions, because the sample turned the asking off. Where it
-is smaller it is usually faster too, since a `memcpy` is less work than a
-base64 loop.
+Where the output is not smaller than base64, it *is* base64 — 98 to 103 % of
+its time over two runs, both directions, which is the runner's spread rather
+than the format's. Where it is smaller it is faster too, since a `memcpy` is
+less work than a base64 loop. **No row trades size against time**, because the
+sample turns the asking off on exactly the inputs that would pay for it.
 
-One row breaks that: `dickens` under profile T is 4.9 % smaller and 18 %
-slower to encode. The sample rightly says "check" — there are raw blocks — but
-most blocks turn out to hold a newline and become base64, and for those the
-check is overhead. It is the one case where the format trades size for time,
-and it is named rather than smoothed away.
-
-The check itself, when it does run, costs 6 % of base64's time on a block that
-rejects early and 34 % on one whose only rejecting byte is the last:
+The check itself, when it does run, costs 7 % of base64's time on a block that
+rejects early and 36 % on one whose only rejecting byte is the last:
 
 | block content | check alone | encode |
 |---|--:|--:|
-| all admitted (raw) | 33 % | **48 %** |
-| binary | 6 % | 109 % |
-| text, rejecting byte last | 34 % | 145 % |
+| all admitted (raw) | 36 % | **46 %** |
+| binary | 7 % | 100 % |
+| text, rejecting byte last | 36 % | 100 % |
 
-The last two rows are exactly the ones the sample removes from the reckoning.
-Decoding never pays the check at all, because the form is in the first
-character.
+The 100 % in the second column of the last two rows is the sample: those
+inputs are written as base64url without a block ever being checked. Decoding
+never pays the check at all, because the form is in the first character.
 
-For comparison on `dickens` under profile U: the segment format this replaced
-encoded at 1137 %, the mask version at 169 %, this at 100 %.
+## Readability, and what it costs
 
-## Readability, and what the profile does to it
+A raw block stands in the output as it stood in the input. One rejected byte
+costs its whole block, so this is not a gradient but a property of the value —
+over 103 corpus samples, 32 files come through entirely, 68 not at all, and
+three land in between at 1 %, 1 % and 5 %.
 
-A raw block stands in the output as it stood in the input. How much of a file
-that covers is decided by the profile, and one rejected byte costs its whole
-block:
+| file | size | in the clear |
+|---|--:|--:|
+| a git commit id | **77.8 %** | **100 %** |
+| a SHA-512 digest in hex | **78.4 %** | **100 %** |
+| `dickens` (Silesia) | 100.0 % | 0 % |
+| `xml` (Silesia) | 100.0 % | 0 % |
+| `bootstrap.css` | 100.0 % | 0 % |
+| `countries.json` | 100.0 % | 0 % |
 
-| file | size U | size T | clear U | clear T |
-|---|--:|--:|--:|--:|
-| `dickens` (Silesia) | 100.0 % | **94.8 %** | 0 % | **24 %** |
-| `xml` (Silesia) | 100.0 % | **90.2 %** | 0 % | **45 %** |
-| `lodash.js` | 100.0 % | **96.7 %** | 0 % | **15 %** |
-| `bootstrap.css` | 100.0 % | **97.8 %** | 0 % | **10 %** |
-| `countries.json` | 100.0 % | 100.0 % | 0 % | 0 % |
-
-The space character is not in profile U, so a document with spaces has no
-fully admitted block at all under U. What stays readable is text that runs in
-stretches of 48 bytes: identifiers, ids, hex, and under profile T longer
-passages without a quotation mark.
+The space is not in the alphabet, so a document with spaces has no fully
+admitted block at all. What stays readable is text that runs in stretches of
+48 bytes: identifiers, ids, hex, digests. **That is the price of one
+alphabet.** A wider one would make prose readable and would take the container
+guarantee at the top of this file with it; `docs/history/` has what a wider
+one scored before it was withdrawn.
 
 ## What is here
 
@@ -236,7 +223,7 @@ passages without a quotation mark.
 * **`rust/`** — the reference implementation. No dependencies, no features to
   turn on, and `#![forbid(unsafe_code)]`, written to be read against the
   specification rather than to be fast: the section numbers are in the
-  comments. That it is also fast comes from the profile check being arithmetic
+  comments. That it is also fast comes from the alphabet check being arithmetic
   rather than a table lookup, which is what lets the compiler vectorise it
   without being asked.
 * **`python/`** — the Python distribution: a PyO3 extension over the same
@@ -248,13 +235,13 @@ passages without a quotation mark.
   rather than from the Rust, testing each byte against a written-out character
   set rather than through arithmetic over thirty-two bytes at a time, no
   shared code and no shared tables. It agrees with
-  the Rust on all 308 vector/profile pairs and on a quarter-megabyte stream.
+  the Rust on all 154 vectors and on a quarter-megabyte stream.
   The gap that stays open is that both have the same author.
-* **`docs/vectors.json`** — 173 vectors over both entry points and both
-  profiles, as input and expected stream in hex, so a second implementation can
+* **`docs/vectors.json`** — 154 vectors over both entry points, as input and
+  expected stream in hex, so a second implementation can
   discharge §16.3 without reading any of this code.
-* **`docs/history/`** — v0.1 to v0.3, the segment-format v0.4 and the mask
-  form, both of which lasted a day, the errata, the findings and the
+* **`docs/history/`** — v0.1 to v0.3, the withdrawn segment-format v0.4 and
+  mask form, the errata, the findings and the
   pre-registered measurement, with a note on what was cut between the versions
   and why. Nothing there is normative; it is the record of how the decisions
   were reached.

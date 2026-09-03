@@ -48,13 +48,9 @@ def _unreserved(b: int) -> bool:
     )
 
 
-def allows(profile: str, b: int) -> bool:
-    """§7: what a raw byte may be."""
-    if profile == "U":
-        return _unreserved(b)
-    if profile == "T":
-        return 0x20 <= b <= 0x7E and b not in (0x22, 0x5C)
-    raise ValueError("profile is U or T")
+def allows(b: int) -> bool:
+    """§7: what a raw byte may be -- RFC 3986 unreserved, 66 characters."""
+    return _unreserved(b)
 
 
 def _b64_len(n: int) -> int:
@@ -75,8 +71,7 @@ class Decoded:
 
 
 class _Decoder:
-    def __init__(self, profile: str, strict_url: bool):
-        self.profile = profile
+    def __init__(self, strict_url: bool):
         self.strict_url = strict_url
         self.alphabet = "none"
         self.padding = False
@@ -104,7 +99,7 @@ class _Decoder:
 
     def raw(self, payload: bytes) -> None:
         for b in payload:
-            if not allows(self.profile, b):
+            if not allows(b):
                 raise Base65tError("E_PROFILE")
         self.out += payload          # no Rule A here -- §5.4, TV7
 
@@ -159,19 +154,19 @@ class _Decoder:
         return bytes(out)
 
 
-def _run(stream, profile, strict_url=False) -> Decoded:
-    d = _Decoder(profile, strict_url)
+def _run(stream, strict_url=False) -> Decoded:
+    d = _Decoder(strict_url)
     d.blocks(stream)
     return Decoded(bytes(d.out), d.alphabet, d.padding)
 
 
-def decode(stream: bytes, profile: str = "U") -> Decoded:
-    """§10.2. The profile is the only parameter."""
-    return _run(stream, profile)
+def decode(stream: bytes) -> Decoded:
+    """§10.2. A stream and nothing else (§0.3)."""
+    return _run(stream)
 
 
-def decode_url_strict(stream: bytes, profile: str = "U") -> Decoded:
-    return _run(stream, profile, strict_url=True)
+def decode_url_strict(stream: bytes) -> Decoded:
+    return _run(stream, strict_url=True)
 
 
 # --- encoder, §9 ----------------------------------------------------------
@@ -187,21 +182,21 @@ def _b64(chunk: bytes) -> bytes:
     return bytes(out)
 
 
-def _encode_block(block: bytes, profile: str) -> bytes:
+def _encode_block(block: bytes) -> bytes:
     """§9.0: raw when every byte is admitted and raw is no longer than
     base64, which is four bytes and up; base64 otherwise."""
     m = len(block)
-    if all(allows(profile, b) for b in block) and m + 2 <= _b64_len(m):
+    if all(allows(b) for b in block) and m + 2 <= _b64_len(m):
         return b"~~" + block
     return _b64(block)
 
 
-def encode_base64url(data: bytes, profile: str = "U") -> bytes:
+def encode_base64url(data: bytes) -> bytes:
     """§9.3, §14: base64url and nothing else, whatever the input looks like."""
     return _b64(data)
 
 
-def _any_block_can_be_raw(data: bytes, profile: str) -> bool:
+def _any_block_can_be_raw(data: bytes) -> bool:
     """§9.6: does any of the first SAMPLE_BLOCKS blocks stand raw?
 
     The encoder's own decision, sampled -- not a proxy for it. Written out
@@ -210,34 +205,29 @@ def _any_block_can_be_raw(data: bytes, profile: str) -> bool:
     """
     for i in range(0, min(len(data), SAMPLE_BLOCKS * BLOCK_BYTES), BLOCK_BYTES):
         block = data[i:i + BLOCK_BYTES]
-        if len(block) + 2 <= _b64_len(len(block)) and all(
-            allows(profile, b) for b in block
-        ):
+        if len(block) + 2 <= _b64_len(len(block)) and all(allows(b) for b in block):
             return True
     return False
 
 
-def encode_with(data: bytes, profile: str = "U") -> bytes:
+def encode(data: bytes) -> bytes:
     """§9: block by block, and nothing carries over between blocks.
 
     Except the one thing that does: §9.6 asks the same question of the first
     sixty-four blocks, and where none of them can stand raw the whole stream
     is base64url and no block is asked about again.
+
+    §9.3: there is no parameter. One alphabet, one call.
     """
-    if not _any_block_can_be_raw(data, profile):
+    if not _any_block_can_be_raw(data):
         return _b64(data)
     out = bytearray()
     for i in range(0, len(data), BLOCK_BYTES):
-        out += _encode_block(data[i:i + BLOCK_BYTES], profile)
+        out += _encode_block(data[i:i + BLOCK_BYTES])
     return bytes(out)
 
 
-def encode(data: bytes) -> bytes:
-    """§9.3: no parameter means profile U."""
-    return encode_with(data, "U")
-
-
 KINDS = {
-    "encode": encode_with,
+    "encode": encode,
     "base64url": encode_base64url,
 }

@@ -114,21 +114,20 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
 }
 
 fn main() {
-    // Two entry points, not five presets: the encoding, and the base64url
-    // way out §14 is about.
-    type Enc = fn(&[u8], Profile) -> Vec<u8>;
+    // Two entry points, no profiles and no presets: the encoding, and the
+    // base64url way out §14 is about.
+    type Enc = fn(&[u8]) -> Vec<u8>;
     let kinds: [(&str, Enc); 2] = [
-        ("encode", encode_with as Enc),
-        ("base64url", (|d, _| encode_base64url(d)) as Enc),
+        ("encode", encode as Enc),
+        ("base64url", encode_base64url as Enc),
     ];
-    let profiles: [(&str, Profile); 2] = [("U", Profile::U), ("T", Profile::T)];
 
     println!("{{");
     println!("  \"spec\": \"base65t v0.4, docs/spec-v0.4.md\",");
     println!(
-        "  \"note\": \"Every entry is: the named entry point over (input, profile) is exactly stream, and \
-         decode(stream, profile) is exactly input. Bytes are hex. A second implementation that \
-         reproduces these byte for byte discharges conformance point 3 of \\u00a716.\","
+        "  \"note\": \"Every entry is: the named entry point over input is exactly stream, and \
+         decode(stream) is exactly input. Bytes are hex. A second implementation that reproduces \
+         these byte for byte discharges \\u00a716.3.\","
     );
     println!("  \"vectors\": [");
 
@@ -136,43 +135,24 @@ fn main() {
     let mut count = 0usize;
     for (name, data) in inputs() {
         for (sname, enc) in kinds {
-            // A stream depends on the profile only through which
-            // bytes a literal may carry, so a wider profile often produces the
-            // same stream as a narrower one. Those are one entry listing every
-            // profile it holds for, rather than three that differ in a field.
-            let mut groups: Vec<(Vec<u8>, Vec<&str>)> = Vec::new();
-            for (pname, profile) in profiles {
-                let stream = enc(&data, profile);
-                let back = decode(&stream, profile).expect("its own output");
-                assert_eq!(back.bytes, data);
-                match groups.iter_mut().find(|(s, _)| *s == stream) {
-                    Some((_, names)) => names.push(pname),
-                    None => groups.push((stream, vec![pname])),
-                }
+            let stream = enc(&data);
+            let back = decode(&stream).expect("its own output");
+            assert_eq!(back.bytes, data);
+            if !first {
+                println!(",");
             }
-            for (stream, pnames) in groups {
-                if !first {
-                    println!(",");
-                }
-                first = false;
-                count += 1;
-                print!(
-                    "    {{\"name\": {}, \"kind\": \"{sname}\", \"profiles\": [{}], \
-                     \"input\": \"{}\", \"stream\": \"{}\"",
-                    json_string(&format!("{name}/{sname}/{}", pnames.join(""))),
-                    pnames
-                        .iter()
-                        .map(|p| format!("\"{p}\""))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    hex(&data),
-                    hex(&stream)
-                );
-                if let Some(a) = ascii(&stream) {
-                    print!(", \"stream_ascii\": {}", json_string(&a));
-                }
-                print!("}}");
+            first = false;
+            count += 1;
+            print!(
+                "    {{\"name\": {}, \"kind\": \"{sname}\", \"input\": \"{}\", \"stream\": \"{}\"",
+                json_string(&format!("{name}/{sname}")),
+                hex(&data),
+                hex(&stream)
+            );
+            if let Some(a) = ascii(&stream) {
+                print!(", \"stream_ascii\": {}", json_string(&a));
             }
+            print!("}}");
         }
     }
     println!("\n  ],");

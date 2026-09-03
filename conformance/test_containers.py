@@ -3,20 +3,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Conformance point 6 of §16: the containers, against real parsers.
+"""§16.5: the containers, against real parsers.
 
-§7.1 proves from the ABNF that every character of profile U is a
-`cookie-octet`. This checks the weaker, empirical thing the section separates
-out: whether parsers actually behave that way. They are Python's -- one set of
+§7.1 proves from the ABNF that every character base65t writes is a
+`cookie-octet`. This checks the weaker, empirical thing §16 separates out:
+whether parsers actually behave that way. They are Python's -- one set of
 parsers, not all of them, and the file says which.
 
-The negative controls matter as much as the positive ones. Profile T is *not*
-URL-safe and §7 says so; a test that only showed U passing would not have
-established that the profile distinction is real.
+**The negative control is classic base64**, and it is the point of the file.
+That base65t's output survives a URL is only interesting if something
+comparable does not, and classic base64 is exactly that comparison: same data,
+same length, `+` and `/` and `=` instead of this alphabet. Every check below
+runs both, and the pair is what shows the alphabet doing the work rather than
+the output merely being ASCII.
 
     python3 conformance/test_containers.py
 """
 
+import base64
 import http.cookies
 import json
 import pathlib
@@ -26,17 +30,14 @@ import urllib.parse
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import reference as base65t  # noqa: E402
 
-# Two samples, because one would make the negative control vacuous: text that
-# is entirely unreserved encodes identically under U and T, and then "T is not
-# URL-safe" is never exercised. The second sample uses characters T admits and
-# U does not -- a space, a slash, a comma, an equals sign.
-#
-# Both are entirely legal in their profile and at least four bytes long, so
-# each is a raw block and its bytes stand in the output (§9.0). That is what
-# a container test needs: a stream that is pure base64 would tell us only
-# that base64 goes through a URL, which nobody doubts.
-SAMPLE_U = b"session-eu-central-1.frankfurt~alice.jones-2026"
-SAMPLE_T = b"GET /api/v2?id=42, status=ok; done"
+# Long enough to be a raw block and made only of admitted bytes, so its own
+# characters stand in the output (§9.0). A stream that was pure base64 would
+# tell us only that base64 goes through a URL, which nobody doubts.
+SAMPLE = b"session-eu-central-1.frankfurt~alice.jones-2026"
+
+# Chosen so that classic base64 of it contains `+`, `/` and `=` -- otherwise
+# the control is vacuous.
+CONTROL_INPUT = bytes([0xFB, 0xEF, 0xBE, 0x00, 0x3F, 0xF0, 0xFB, 0xFF, 0xEF, 0xFF])
 
 failures = []
 
@@ -50,57 +51,51 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
-    u = base65t.encode_with(SAMPLE_U, "U").decode("ascii")
-    t = base65t.encode_with(SAMPLE_T, "T").decode("ascii")
-    print(f"profile U: {u}\nprofile T: {t}\n")
-    assert any(c in t for c in " /?=,;"), "the T sample must exercise T"
-    assert u.startswith("~~"), "the U sample must be a raw block"
-    assert t.startswith("~~"), "the T sample must be a raw block"
+    s = base65t.encode(SAMPLE).decode("ascii")
+    control = base64.b64encode(CONTROL_INPUT).decode("ascii")
+    print(f"base65t:        {s}")
+    print(f"classic base64: {control}\n")
+    assert s.startswith("~~"), "the sample must be a raw block"
+    assert any(c in control for c in "+/="), "the control must exercise +, / and ="
 
     print("URL query (urllib.parse)")
-    check("U survives quote() unchanged", urllib.parse.quote(u, safe="") == u)
+    check("survives quote() unchanged", urllib.parse.quote(s, safe="") == s)
+    check("round-trips through parse_qs", urllib.parse.parse_qs(f"v={s}")["v"] == [s])
     check(
-        "U round-trips through parse_qs",
-        urllib.parse.parse_qs(f"v={u}")["v"] == [u],
-    )
-    check(
-        "T does need escaping, as §7 says",
-        urllib.parse.quote(t, safe="") != t,
-        urllib.parse.quote(t, safe=""),
+        "classic base64 does need escaping",
+        urllib.parse.quote(control, safe="") != control,
+        urllib.parse.quote(control, safe=""),
     )
 
     print("\nCookie value (http.cookies)")
     jar = http.cookies.SimpleCookie()
-    jar["sid"] = u
+    jar["sid"] = s
     header = jar.output(header="Set-Cookie:").strip()
-    check("U is not quoted by the serialiser", f"sid={u}" in header, header)
+    check("not quoted by the serialiser", f"sid={s}" in header, header)
     back = http.cookies.SimpleCookie()
-    back.load(f"sid={u}")
-    check("U round-trips through a cookie parser", back["sid"].value == u)
+    back.load(f"sid={s}")
+    check("round-trips through a cookie parser", back["sid"].value == s)
+    ctrl_jar = http.cookies.SimpleCookie()
+    ctrl_jar["sid"] = control
+    check(
+        "classic base64 is quoted by the same serialiser",
+        f"sid={control}" not in ctrl_jar.output(header="Set-Cookie:"),
+        ctrl_jar.output(header="Set-Cookie:").strip(),
+    )
 
     print("\nJSON string (json)")
-    for label, s in (("U", u), ("T", t)):
-        check(
-            f"{label} needs no escaping in JSON",
-            len(json.dumps(s)) == len(s) + 2,
-            json.dumps(s),
-        )
-        check(f"{label} round-trips through JSON", json.loads(json.dumps(s)) == s)
+    check("needs no escaping in JSON", len(json.dumps(s)) == len(s) + 2, json.dumps(s))
+    check("round-trips through JSON", json.loads(json.dumps(s)) == s)
 
-    print("\nFile name and log line")
-    check("U has no path separator", "/" not in u and "\\" not in u)
-    check("T may well have one, which is why it is not a file name", "/" in t)
-    check("U has no whitespace, so a log line can be split on it",
-          not any(c.isspace() for c in u))
-    # Profile T admits 0x20 (§7). §0.1 recommends `legible` with T for a log
-    # field, and this is the caveat that recommendation needs: a
-    # whitespace-delimited log format has to quote it, a key=value one does
-    # not. Asserted rather than fixed, because it is a property of the profile.
-    check("T may contain a space, and a log format must expect it", " " in t)
+    print("\nFile name, log line, key=value")
+    check("no path separator", "/" not in s and "\\" not in s)
+    check("classic base64 may have one", "/" in control)
+    check("no whitespace, so a log line splits on it", not any(c.isspace() for c in s))
+    check("no `=`, so a key=value field has one", "=" not in s)
+    check("classic base64 has `=`", "=" in control)
 
-    print("\nAnd every stream still decodes to the input")
-    for label, s, want in (("U", u, SAMPLE_U), ("T", t, SAMPLE_T)):
-        check(f"{label} decodes", base65t.decode(s.encode(), label).bytes == want)
+    print("\nAnd the stream still decodes to the input")
+    check("decodes", base65t.decode(s.encode()).bytes == SAMPLE)
 
     print()
     if failures:

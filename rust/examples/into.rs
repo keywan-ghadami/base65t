@@ -49,14 +49,14 @@ fn main() {
         });
         let e1 = bench(n, || {
             buf.clear();
-            encode_into(&data, Profile::U, &mut buf);
+            encode_into(&data, &mut buf);
         });
         let d0 = bench(n, || {
-            std::hint::black_box(decode(&stream, Profile::U).unwrap());
+            std::hint::black_box(decode(&stream).unwrap());
         });
         let d1 = bench(n, || {
             buf.clear();
-            decode_into(&stream, Profile::U, &mut buf).unwrap();
+            decode_into(&stream, &mut buf).unwrap();
         });
         println!(
             "| {n} | {e0:.0} | {e1:.0} | **{:.2}x** | {d0:.0} | {d1:.0} | **{:.2}x** |",

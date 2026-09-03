@@ -60,24 +60,24 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 /// §9.4, the sentence the whole case for switching rests on: never longer
-/// than base64, per input rather than on average, in both profiles and at
+/// than base64, per input rather than on average, and at
 /// both entry points. It holds block by block, because a raw block is 50
 /// characters against base64's 64 and every other block is base64.
 #[test]
 fn the_encoding_is_never_longer_than_base64() {
     for (name, data) in corpus() {
-        for profile in [Profile::U, Profile::T] {
+        {
             for (kind, out) in [
-                ("encode", encode_with(&data, profile)),
+                ("encode", encode(&data)),
                 ("base64url", encode_base64url(&data)),
             ] {
                 assert!(
                     out.len() <= base64_len(data.len()),
-                    "{name}, {kind}, {profile:?}: {} > {}",
+                    "{name}, {kind}: {} > {}",
                     out.len(),
                     base64_len(data.len())
                 );
-                assert_eq!(decode(&out, profile).unwrap().bytes, data, "{name}, {kind}");
+                assert_eq!(decode(&out).unwrap().bytes, data, "{name}, {kind}");
             }
         }
     }
@@ -99,7 +99,7 @@ fn high_entropy_input_is_base64url_byte_for_byte() {
     assert_eq!(encode(&data), encode_base64url(&data));
 }
 
-/// Pure profile-legal text costs two characters per 48 bytes: 50/48.
+/// Text made only of admitted bytes costs two characters per 48: 50/48.
 #[test]
 fn the_density_bound_for_pure_text_is_exact() {
     for k in [1usize, 2, 10, 100] {
@@ -136,7 +136,7 @@ fn whole_blocks_encode_independently() {
     let whole: Vec<u8> = blocks.concat();
     let joined: Vec<u8> = blocks.iter().flat_map(|b| encode(b)).collect();
     assert_eq!(encode(&whole), joined);
-    assert_eq!(decode(&joined, Profile::U).unwrap().bytes, whole);
+    assert_eq!(decode(&joined).unwrap().bytes, whole);
 }
 
 /// Both forms occur on ordinary input, and each decodes.
@@ -145,7 +145,7 @@ fn every_form_occurs_and_round_trips() {
     let mut seen = [false; 2];
     for (_, data) in corpus() {
         for block in data.chunks(BLOCK_BYTES) {
-            let (form, _) = choose(block.len(), Profile::U.admits_all(block));
+            let (form, _) = choose(block.len(), admits_all(block));
             seen[form as usize] = true;
         }
     }
@@ -162,12 +162,12 @@ fn a_short_last_block_is_the_last_block() {
         // A tail under four bytes is shorter as base64 (§9.1).
         let tail = if n < 4 { base64_len(n) } else { n + 2 };
         assert_eq!(out.len(), 50 + tail, "n = {n}");
-        assert_eq!(decode(&out, Profile::U).unwrap().bytes, data);
+        assert_eq!(decode(&out).unwrap().bytes, data);
         // And a second stream appended is not silently read as a tail.
         let two = [out.clone(), out.clone()].concat();
         if n < 48 {
             assert_ne!(
-                decode(&two, Profile::U).map(|d| d.bytes),
+                decode(&two).map(|d| d.bytes),
                 Ok([data.clone(), data.clone()].concat())
             );
         }

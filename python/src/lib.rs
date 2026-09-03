@@ -19,7 +19,7 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 
-use base65t::{Error, Profile};
+use base65t::Error;
 
 create_exception!(
     base65t,
@@ -39,7 +39,7 @@ fn decode_error(py: Python<'_>, err: Error) -> PyErr {
 }
 
 /// `bytes` or `bytearray` in, a copy out. A `str` is accepted because the
-/// stream is printable ASCII under both profiles; nothing here *returns* a
+/// stream is printable ASCII; nothing here *returns* a
 /// `str`, because §3 calls the output an octet stream and a decoded payload is
 /// arbitrary bytes.
 fn byte_argument(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<u8>> {
@@ -56,16 +56,6 @@ fn byte_argument(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<u8>> {
         return Ok(s.into_bytes());
     }
     Err(PyTypeError::new_err(what.to_string()))
-}
-
-fn profile_of(name: &str) -> PyResult<Profile> {
-    match name {
-        "U" => Ok(Profile::U),
-        "T" => Ok(Profile::T),
-        other => Err(PyValueError::new_err(format!(
-            "profile is 'U' or 'T', not {other:?}"
-        ))),
-    }
 }
 
 /// What a decode found, which section 5.5 makes part of the result rather than
@@ -117,25 +107,19 @@ fn wrap(py: Python<'_>, d: base65t::Decoded) -> Decoded {
 /// mean before encoding a byte, and a caller who is unsure writes base64. The
 /// encoder is a fixed mapping over blocks of forty-eight bytes (§4).
 ///
-/// `profile` is not such a choice: it is a statement about the container the
-/// stream has to survive, and it cannot be derived from the stream (§7.2).
+/// There is no profile either: the output alphabet is the 66 characters of
+/// RFC 3986 *unreserved*, whatever the input (§7).
 ///
-/// `bytes` and not `str` on the way out, although both profiles produce
-/// printable ASCII: the return type says what the format guarantees, and §3
-/// guarantees octets.
+/// `bytes` and not `str` on the way out, although the output is printable
+/// ASCII: the return type says what the format guarantees, and §3 guarantees
+/// octets.
 #[pyfunction]
-#[pyo3(signature = (data, /, profile = "U"))]
-#[pyo3(text_signature = "(data, /, profile='U')")]
-fn encode<'py>(
-    py: Python<'py>,
-    data: &Bound<'py, PyAny>,
-    profile: &str,
-) -> PyResult<Bound<'py, PyBytes>> {
+#[pyo3(text_signature = "(data, /)")]
+fn encode<'py>(py: Python<'py>, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode() expects bytes, bytearray or str")?;
-    let profile = profile_of(profile)?;
     // The encoder touches no Python object, so other threads may run while it
     // works. That matters: this is the call a caller makes on a whole file.
-    let out = py.detach(|| base65t::encode_with(&data, profile));
+    let out = py.detach(|| base65t::encode(&data));
     Ok(PyBytes::new(py, &out))
 }
 
@@ -144,18 +128,14 @@ fn encode<'py>(
 /// Not a mode of the format but the way out of it: for a caller carrying a
 /// secret who wants no part of it left in the clear, and for one talking to
 /// something that only speaks base64url. The output is ordinary unpadded
-/// base64url and any base64 decoder reads it. `profile` is accepted and
-/// ignored, because there are no literals for it to constrain.
+/// base64url and any base64 decoder reads it.
 #[pyfunction]
-#[pyo3(signature = (data, /, profile = "U"))]
-#[pyo3(text_signature = "(data, /, profile='U')")]
+#[pyo3(text_signature = "(data, /)")]
 fn encode_base64url<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyAny>,
-    profile: &str,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode_base64url() expects bytes, bytearray or str")?;
-    profile_of(profile)?;
     let out = py.detach(|| base65t::encode_base64url(&data));
     Ok(PyBytes::new(py, &out))
 }
@@ -164,12 +144,10 @@ macro_rules! decoder {
     ($name:ident, $inner:path, $doc:expr) => {
         #[doc = $doc]
         #[pyfunction]
-        #[pyo3(signature = (stream, /, profile = "U"))]
-        #[pyo3(text_signature = "(stream, /, profile='U')")]
-        fn $name(py: Python<'_>, stream: &Bound<'_, PyAny>, profile: &str) -> PyResult<Decoded> {
+        #[pyo3(text_signature = "(stream, /)")]
+        fn $name(py: Python<'_>, stream: &Bound<'_, PyAny>) -> PyResult<Decoded> {
             let stream = byte_argument(stream, concat!(stringify!($name), "() expects bytes, bytearray or str"))?;
-            let profile = profile_of(profile)?;
-            match py.detach(|| $inner(&stream, profile)) {
+            match py.detach(|| $inner(&stream)) {
                 Ok(d) => Ok(wrap(py, d)),
                 Err(e) => Err(decode_error(py, e)),
             }
@@ -181,8 +159,9 @@ decoder!(
     decode,
     base65t::decode,
     "Decode a stream.\n\n\
-     The profile is the only parameter: the alphabet variant and the padding \
-     come out of the stream and are reported back on the result (§0.3). An \
+     It takes the stream and nothing else: the alphabet variant and the \
+     padding come out of the stream and are reported back on the result \
+     (§0.3). An \
      attacker who controls the stream controls both (§14), so where the \
      alphabet is fixed, use `decode_url_strict`."
 );
@@ -209,7 +188,12 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The constants the specification fixes, so that tooling has one source
     // for them rather than a transcribed copy.
     m.add("BLOCK_BYTES", base65t::BLOCK_BYTES)?;
-    m.add("PROFILES", vec!["U", "T"])?;
+    // The output alphabet, as the specification's head states it: 66
+    // characters, and there is no setting that changes them (§7).
+    m.add(
+        "ALPHABET",
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~",
+    )?;
 
     m.add(
         "__all__",
@@ -220,7 +204,7 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "decode_url_strict",
             "Decoded",
             "Base65tDecodeError",
-            "PROFILES",
+            "ALPHABET",
             "BLOCK_BYTES",
             "SPEC_VERSION",
             "__version__",

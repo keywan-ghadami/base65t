@@ -25,7 +25,7 @@ fn tv1_a_raw_block() {
     assert_eq!(out, b"~~alice.jones");
     assert_eq!(out.len(), 13);
     assert_eq!(base64_len(11), 15);
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
+    assert_eq!(decode(&out).unwrap().bytes, b"alice.jones");
 }
 
 /// A base64 block: four bytes of the twenty-two are not text, so the block is
@@ -39,7 +39,7 @@ fn tv2_a_base64_block() {
     assert_eq!(out, b"3q2-73Nlc3Npb24tZXUtY2VudHJhbA");
     assert_eq!(out.len(), 30);
     assert_eq!(out, encode_base64url(&input));
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, input);
+    assert_eq!(decode(&out).unwrap().bytes, input);
 }
 
 /// `~` in a raw payload needs nothing: the block's length is fixed.
@@ -47,7 +47,7 @@ fn tv2_a_base64_block() {
 fn tv3_tilde_needs_no_escaping() {
     let out = encode(b"sub~alice~jones");
     assert_eq!(out, b"~~sub~alice~jones");
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"sub~alice~jones");
+    assert_eq!(decode(&out).unwrap().bytes, b"sub~alice~jones");
     // And the input that v0.1 built a whole conflict rule around.
     assert_eq!(encode(b"hello~Alice"), b"~~hello~Alice");
 }
@@ -63,29 +63,37 @@ fn tv4_block_boundaries() {
     assert_eq!(&out[100..], b"~~aaaa");
     assert_eq!(out.len(), 106);
     assert_eq!(base64_len(100), 134);
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, input);
+    assert_eq!(decode(&out).unwrap().bytes, input);
 }
 
 // --- TV5: one byte decides the block -------------------------------------
 
-/// Fifty bytes of English. In profile U the space is not admitted, so the
-/// first block is base64 as a whole and only the tail `in` is raw -- no,
-/// even the tail is too short to be raw (§9.1), so the stream is base64url
-/// exactly. In profile T the space is admitted, the first block is raw, and
-/// the two-byte tail is base64.
+/// One byte, and the block goes the other way. The same 48 bytes are raw at
+/// 50 characters and base64 at 64, and the only difference between the two
+/// inputs is that one of them holds a space -- which the alphabet does not
+/// admit (§7), wherever in the block it sits.
 #[test]
 fn tv5_one_byte_decides_the_block() {
-    let input = b"the quick brown fox jumps over the lazy dog. again";
-    let u = encode_with(input, Profile::U);
-    assert_eq!(u, encode_base64url(input));
-    assert_eq!(u.len(), 67);
-    assert_eq!(decode(&u, Profile::U).unwrap().bytes, input);
+    let block = b"the-quick-brown-fox-jumps-over-the-lazy-dog.abcd".to_vec();
+    assert_eq!(block.len(), 48);
+    let out = encode(&block);
+    assert_eq!(out, [b"~~".as_slice(), &block].concat());
+    assert_eq!(out.len(), 50);
+    assert_eq!(decode(&out).unwrap().bytes, block);
 
-    let t = encode_with(input, Profile::T);
-    assert_eq!(&t[..50], [b"~~".as_slice(), &input[..48]].concat());
-    assert_eq!(&t[50..], b"aW4");
-    assert_eq!(t.len(), 53);
-    assert_eq!(decode(&t, Profile::T).unwrap().bytes, input);
+    // Fifty bytes of English with spaces: no block of it can be raw, so the
+    // stream is byte for byte base64url.
+    let prose = b"the quick brown fox jumps over the lazy dog. again";
+    assert_eq!(encode(prose), encode_base64url(prose));
+    assert_eq!(encode(prose).len(), 67);
+    assert_eq!(decode(&encode(prose)).unwrap().bytes, prose);
+
+    // And it is the byte, not its position: every single position rejects.
+    for i in 0..block.len() {
+        let mut v = block.clone();
+        v[i] = b' ';
+        assert_eq!(encode(&v), encode_base64url(&v), "space at {i}");
+    }
 }
 
 /// The reserved form: `~` and an alphabet character is the mask block of
@@ -94,12 +102,12 @@ fn tv5_one_byte_decides_the_block() {
 /// else.
 #[test]
 fn tv5b_a_tilde_and_an_alphabet_character_is_reserved() {
-    assert_eq!(decode(b"~AAAAAAAA", Profile::U), Err(Error::Reserved));
-    assert_eq!(decode(b"~7abc", Profile::U), Err(Error::Reserved));
-    assert_eq!(decode(b"~_", Profile::U), Err(Error::Reserved));
+    assert_eq!(decode(b"~AAAAAAAA"), Err(Error::Reserved));
+    assert_eq!(decode(b"~7abc"), Err(Error::Reserved));
+    assert_eq!(decode(b"~_"), Err(Error::Reserved));
     // Anything else after `~` is not reserved, it is wrong.
-    assert_eq!(decode(b"~=", Profile::U), Err(Error::Charset));
-    assert_eq!(decode(b"~ a", Profile::U), Err(Error::Charset));
+    assert_eq!(decode(b"~="), Err(Error::Charset));
+    assert_eq!(decode(b"~ a"), Err(Error::Charset));
 }
 
 // --- TV6-TV8: reading base64, and the two rules that keep it unambiguous --
@@ -119,7 +127,7 @@ fn tv6_reads_base64_and_base64url() {
         (b"YWxpY2U=", b"alice", AlphabetSeen::None, true),
     ];
     for (stream, expect, alphabet, padding) in cases {
-        let d = decode(stream, Profile::U).expect("valid");
+        let d = decode(stream).expect("valid");
         assert_eq!(d.bytes, expect, "{:?}", String::from_utf8_lossy(stream));
         assert_eq!(d.alphabet_seen, alphabet);
         assert_eq!(d.padding_seen, padding);
@@ -127,21 +135,15 @@ fn tv6_reads_base64_and_base64url() {
     // A long base64 stream is read in blocks of 64 characters, which is
     // invisible: base64 blocks tile.
     let data: Vec<u8> = (0..1000u32).map(|i| (i * 7 % 251) as u8).collect();
-    assert_eq!(
-        decode(&encode_base64url(&data), Profile::U).unwrap().bytes,
-        data
-    );
+    assert_eq!(decode(&encode_base64url(&data)).unwrap().bytes, data);
 }
 
 #[test]
 fn tv7_rule_a_holds_at_alphabet_positions() {
-    assert_eq!(decode(b"PDw_Pz8+Pg", Profile::U), Err(Error::MixedAlphabet));
-    assert_eq!(decode(b"PDw/Pz8-Pg", Profile::U), Err(Error::MixedAlphabet));
-    assert_eq!(
-        decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
-        Err(Error::NonUrlAlphabet)
-    );
-    assert!(decode_url_strict(b"PDw_Pz8-Pg", Profile::U).is_ok());
+    assert_eq!(decode(b"PDw_Pz8+Pg"), Err(Error::MixedAlphabet));
+    assert_eq!(decode(b"PDw/Pz8-Pg"), Err(Error::MixedAlphabet));
+    assert_eq!(decode_url_strict(b"PDw/Pz8+Pg"), Err(Error::NonUrlAlphabet));
+    assert!(decode_url_strict(b"PDw_Pz8-Pg").is_ok());
     // Across blocks: a raw block between two base64 blocks in different
     // alphabets is still one stream.
     let url = encode_base64url(&[0xfbu8; 48]); // `-` and `_` in here
@@ -157,71 +159,80 @@ fn tv7_rule_a_holds_at_alphabet_positions() {
     s.extend(b"~~");
     s.extend([b'a'; 48]);
     s.extend(&classic);
-    assert_eq!(decode(&s, Profile::U), Err(Error::MixedAlphabet));
+    assert_eq!(decode(&s), Err(Error::MixedAlphabet));
 }
 
 /// The negative half of Rule A, and the one a whole-stream scanner fails: the
 /// bytes of a raw block are data.
 #[test]
 fn tv7_raw_bytes_do_not_count() {
-    let stream = b"~~a+b/c-d_e";
-    let d = decode(stream, Profile::T).expect("valid under profile T");
+    // `-` and `_` are the URL variant's own two characters and are also
+    // admitted raw, so this is exactly the stream a whole-stream scanner
+    // misreads: as data they say nothing about the alphabet.
+    let stream = b"~~a-b_c-d_e";
+    let d = decode(stream).expect("a raw block of admitted bytes");
     assert_eq!(d.alphabet_seen, AlphabetSeen::None);
-    assert_eq!(d.bytes, b"a+b/c-d_e");
+    assert_eq!(d.bytes, b"a-b_c-d_e");
+    // The same characters as base64 output do set it.
+    assert_eq!(
+        decode(b"PDw_Pz8-Pg").unwrap().alphabet_seen,
+        AlphabetSeen::Url
+    );
 }
 
 #[test]
 fn tv8_what_may_follow_a_tilde() {
-    assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~~", Profile::U).unwrap().bytes, b"");
-    assert_eq!(decode(b"~A", Profile::U), Err(Error::Reserved));
-    assert_eq!(decode(b"~=", Profile::U), Err(Error::Charset));
+    assert_eq!(decode(b"~"), Err(Error::TrailingTilde));
+    assert_eq!(decode(b"~~").unwrap().bytes, b"");
+    assert_eq!(decode(b"~A"), Err(Error::Reserved));
+    assert_eq!(decode(b"~="), Err(Error::Charset));
     // A `~` where a base64 block should continue.
-    assert_eq!(decode(b"YW~x", Profile::U), Err(Error::Charset));
+    assert_eq!(decode(b"YW~x"), Err(Error::Charset));
 }
 
 // --- TV9-TV10: padding, and why it may not be stripped in advance --------
 
 #[test]
 fn tv9_padding() {
-    assert_eq!(decode(b"YWxpY2U=", Profile::U).unwrap().bytes, b"alice");
-    assert!(decode(b"YWxpY2U=", Profile::U).unwrap().padding_seen);
-    assert_eq!(decode(b"YWxpY2Uu", Profile::U).unwrap().bytes, b"alice.");
-    assert_eq!(decode(b"YWxp==", Profile::U), Err(Error::Padding));
-    assert_eq!(decode(b"YWxpY2U==", Profile::U), Err(Error::Padding));
+    assert_eq!(decode(b"YWxpY2U=").unwrap().bytes, b"alice");
+    assert!(decode(b"YWxpY2U=").unwrap().padding_seen);
+    assert_eq!(decode(b"YWxpY2Uu").unwrap().bytes, b"alice.");
+    assert_eq!(decode(b"YWxp=="), Err(Error::Padding));
+    assert_eq!(decode(b"YWxpY2U=="), Err(Error::Padding));
     // Padding inside a base64 block that is not the last: never.
     let mut s = encode_base64url(&[7u8; 96]);
     s[63] = b'=';
-    assert_eq!(decode(&s, Profile::U), Err(Error::Charset));
+    assert_eq!(decode(&s), Err(Error::Charset));
 }
 
-/// Both streams end in `=`; in profile T it is a legal raw byte. A raw tail
-/// runs to the end of the stream, so the `=` is data; a base64 tail is where
-/// Rule P looks.
+/// Padding may not be stripped from the end of the stream in advance, even
+/// though `=` is not an admitted byte. A raw tail runs to the end of the
+/// stream, so a `=` there belongs to the raw block and makes it invalid;
+/// strip it first and the same stream decodes cleanly instead. An error and
+/// an acceptance are not the same answer.
 #[test]
-fn tv10_equals_as_a_raw_byte_in_profile_t() {
-    let d = decode(b"~~a=b=", Profile::T).expect("a raw tail");
-    assert_eq!(d.bytes, b"a=b=");
-    assert!(!d.padding_seen);
-    assert_eq!(decode(b"~~a=b=", Profile::U), Err(Error::Profile));
+fn tv10_padding_may_not_be_stripped_in_advance() {
+    assert_eq!(decode(b"~~abcd="), Err(Error::Profile));
+    assert_eq!(decode(b"~~abcd").unwrap().bytes, b"abcd");
+    // Where Rule P does look: a base64 tail at the end of the stream.
+    let d = decode(b"YWxpY2U=").expect("Rule P");
+    assert_eq!(d.bytes, b"alice");
+    assert!(d.padding_seen);
 }
 
 // --- TV11: the error table -----------------------------------------------
 
 #[test]
 fn tv11_error_cases() {
-    assert_eq!(decode(b"abcde", Profile::U), Err(Error::Align));
-    assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~Aabc", Profile::U), Err(Error::Reserved));
-    assert_eq!(decode(b"~~a b", Profile::U), Err(Error::Profile));
-    assert_eq!(decode(b"YWxp==", Profile::U), Err(Error::Padding));
-    assert_eq!(decode(b"YWxpY2V", Profile::U), Err(Error::NonzeroTail));
-    assert_eq!(decode(b"YW~x", Profile::U), Err(Error::Charset));
-    assert_eq!(decode(b"PDw_Pz8+Pg", Profile::U), Err(Error::MixedAlphabet));
-    assert_eq!(
-        decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
-        Err(Error::NonUrlAlphabet)
-    );
+    assert_eq!(decode(b"abcde"), Err(Error::Align));
+    assert_eq!(decode(b"~"), Err(Error::TrailingTilde));
+    assert_eq!(decode(b"~Aabc"), Err(Error::Reserved));
+    assert_eq!(decode(b"~~a b"), Err(Error::Profile));
+    assert_eq!(decode(b"YWxp=="), Err(Error::Padding));
+    assert_eq!(decode(b"YWxpY2V"), Err(Error::NonzeroTail));
+    assert_eq!(decode(b"YW~x"), Err(Error::Charset));
+    assert_eq!(decode(b"PDw_Pz8+Pg"), Err(Error::MixedAlphabet));
+    assert_eq!(decode_url_strict(b"PDw/Pz8+Pg"), Err(Error::NonUrlAlphabet));
 }
 
 // --- TV12: the tail ------------------------------------------------------
@@ -245,6 +256,6 @@ fn tv12_the_tail() {
         let out = encode(&data);
         assert_eq!(&out[..50], [b"~~".as_slice(), &full].concat(), "{tail:?}");
         assert_eq!(&out[50..], want, "{tail:?}");
-        assert_eq!(decode(&out, Profile::U).unwrap().bytes, data);
+        assert_eq!(decode(&out).unwrap().bytes, data);
     }
 }

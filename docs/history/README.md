@@ -42,11 +42,57 @@ across revisions, so each row points at the same number in both documents.
 | 10 | The decoder knows a block's length before it reads it |
 | 10.4 | `E_RESERVED_LEN` and `E_TRUNCATED` are gone, `E_RESERVED` is added |
 | 11 | Canonicity follows from the mapping; the ordering `B < L < S` is gone, because there is no tie left to break |
-| 12 | Density, as size: this revision reaches 99.99 % in profile U and 99.51 % in T over 69 samples. The segment format reached 98.57 % in U, the mask format 98.65 % — so v0.4 is worse on large files and equally good on short values |
+| 7, 12 | One alphabet, and density as size: v0.4 reaches 99.99 % over 69 samples. The segment format reached 98.57 %, the mask format 98.65 % — so v0.4 is worse on large files and equally good on short values. The two profiles it briefly had are their own section below |
 | 13 | Measured afresh, and this is what the size was traded for. As time, encoding `dickens`: the segment format 1137 %, the mask format 169 %, v0.4 100 %. Over the 55 short values: 355 % for the segment format, 98 % for the mask format, 77 % for v0.4 |
 | 13.5 | Readability, share of bytes standing in the clear in profile U: prose 17 % → 76 % → **0 %**, XML 21 % → 66 % → **0 %**, CSS 54 % → 72 % → **0 %**, JSON 9 % → 15 % → **0 %**, for the segment format, the mask format and v0.4 in that order. This is the price, and it is the largest single thing v0.4 gave up |
 | 14 | The decoder no longer parses an attacker-chosen length. The segment format read lengths up to 4158 out of the stream; v0.4 reads none at all |
 | 15 | Twelve vectors, new. The inputs of the earlier revisions were carried over, their streams were not |
+
+## And then profile T
+
+v0.4 shipped for a while with two profiles: **U**, the 66 characters of RFC
+3986 *unreserved*, and **T**, printable ASCII without `"` and `\` — 93
+characters, the space among them. T was inherited from v0.1, where there were
+three, and it was carried through every redesign without its reason being
+re-examined.
+
+The reason it is gone is not a measurement, it is the argument the measurement
+was asked to settle. The head of the specification makes one claim — the
+output alphabet is these characters, therefore it goes into a URL, a cookie, a
+header, a JSON string, a filename and a log field — and every container
+statement in the document rests on it. With two profiles that claim needs an
+"except when", and a guarantee with an exception is not one. The target
+alphabet is the product; it cannot be one thing sometimes.
+
+The question that surfaced it was whether the space belonged in T at all,
+since the space is the one character that costs T a container the rest of its
+alphabet passes. The measurement (`binary2textbench`, `--example tspace`, 118
+samples) answered something larger than it was asked:
+
+| | size | cleartext share of all input bytes |
+|---|--:|--:|
+| profile T | 97.50 % | 11.5 % |
+| profile T without the space | 99.96 % | 0.2 % |
+
+Twenty-four files were affected and **every one went to exactly 100.0 %**,
+without exception. Text with punctuation is text with spaces, and 48
+consecutive printable non-space characters effectively do not occur in it. So
+T without the space was not a narrower T, it was nothing at all — and T *with*
+the space was the thing breaking the one-alphabet claim. There was no version
+of T that was both safe and worth having.
+
+What it cost to drop it, as size against base64: a log line 78 % → 100 %, a
+SQL statement 78 % → 100 %, `xml` 90 % → 100 %, `dickens` 95 % → 100 %.
+Readability of prose in the encoded stream, 24 % → 0 %. Summed over the
+corpus, 97.50 % → 99.99 %. That is a real loss and it is not softened
+anywhere: base65t now helps values that are already URL-shaped, and nothing
+else.
+
+What it bought: one sentence that holds without qualification, an `encode`
+that takes no parameter at all, and the disappearance of the only row that
+traded size against time (`dickens` under T cost 18 % more encoding time for
+4.9 % of size). §17.3 of the specification is where a wider alphabet would
+have to start if anyone wants it back.
 
 ## What happened between v0.2 and v0.4
 
@@ -103,7 +149,7 @@ search, no state, no lengths in the stream.
 The first block revision had three forms. The third was a mask with one bit per
 byte, leaving the admitted bytes of a mixed block standing in the clear and
 appending the rest as base64. It was the most elegant idea in this project: it
-took English prose in profile U from 17 % readable to 76 %, at a smaller output
+took English prose from 17 % readable to 76 %, at a smaller output
 than the segment format, and it cost not a single search.
 
 It is dropped anyway, and the reason is not a measurement error but the
@@ -126,12 +172,12 @@ price; a decoder of today then fails loudly instead of reading wrongly.
 
 ## What came of it
 
-Two block forms, one question per block: `docs/spec-v0.4.md`. Faster than
-base64 on short values in both directions (77 % and 84 % of the time), and on
-large files at base64's time — 99 to 101 % encoding where the output is the
-same size, and faster than base64 where it is smaller. The price is in §13.5 of
-the current revision: mixed text is no longer readable, and on large documents
-the format gains nothing in profile U.
+Two block forms, one question per block, one alphabet: `docs/spec-v0.4.md`.
+Faster than base64 on short values in both directions (65 % and 84 % of the
+time), and on large files at base64's time — 98 to 103 % where the output is
+the same size, and faster where it is smaller. The price is in §13.5 of the
+current revision: text with punctuation is not readable at all, and on large
+documents the format gains nothing.
 
 **Kept from the segment era:** the base64 loop that writes into a slice of
 known length, and the Rule A insight that alphabet consistency is a search and

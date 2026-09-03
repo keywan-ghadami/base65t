@@ -32,22 +32,21 @@ def main() -> int:
         if "stream_ascii" in v and v["stream_ascii"].encode() != want:
             print(f"FAIL {v['name']}: stream_ascii disagrees with the hex")
             failed += 1
-        for profile in v["profiles"]:
-            got = base65t.KINDS[v["kind"]](data, profile)
-            if got != want:
-                print(f"FAIL {v['name']} ({profile}) encode")
-                print(f"     want {want!r}")
-                print(f"     got  {got!r}")
-                failed += 1
-                continue
-            back = base65t.decode(want, profile).bytes
-            if back != data:
-                print(f"FAIL {v['name']} ({profile}) decode: {back!r} != {data!r}")
-                failed += 1
-                continue
-            checked += 1
+        got = base65t.KINDS[v["kind"]](data)
+        if got != want:
+            print(f"FAIL {v['name']} encode")
+            print(f"     want {want!r}")
+            print(f"     got  {got!r}")
+            failed += 1
+            continue
+        back = base65t.decode(want).bytes
+        if back != data:
+            print(f"FAIL {v['name']} decode: {back!r} != {data!r}")
+            failed += 1
+            continue
+        checked += 1
     failed += errors()
-    print(f"{checked} vector/profile pairs agree, {failed} disagree")
+    print(f"{checked} vectors agree, {failed} disagree")
     return 1 if failed else 0
 
 
@@ -58,27 +57,28 @@ def errors() -> int:
     what is invalid has not agreed about the format.
     """
     cases = [
-        (b"YWJj" * 16 + b"~", "U", "decode", "E_TRAILING_TILDE"),
-        (b"~", "U", "decode", "E_TRAILING_TILDE"),
-        (b"~Aabc", "U", "decode", "E_RESERVED"),
-        (b"~7abc", "U", "decode", "E_RESERVED"),
-        (b"~~a b", "U", "decode", "E_PROFILE"),
-        (b"~~a=b=", "U", "decode", "E_PROFILE"),               # TV10
-        (b"abcde", "U", "decode", "E_ALIGN"),
-        (b"YWxpY2V", "U", "decode", "E_NONZERO_TAIL"),
-        (b"YW*j", "U", "decode", "E_CHARSET"),
-        (b"YW~x", "U", "decode", "E_CHARSET"),
-        (b"~=", "U", "decode", "E_CHARSET"),
-        (b"YWxp==", "U", "decode", "E_PADDING"),
-        (b"YWxpY2U==", "U", "decode", "E_PADDING"),
-        (b"PDw_Pz8+Pg", "U", "decode", "E_MIXED_ALPHABET"),
-        (b"PDw/Pz8+Pg", "U", "decode_url_strict", "E_NON_URL_ALPHABET"),
+        (b"YWJj" * 16 + b"~", "decode", "E_TRAILING_TILDE"),
+        (b"~", "decode", "E_TRAILING_TILDE"),
+        (b"~Aabc", "decode", "E_RESERVED"),
+        (b"~7abc", "decode", "E_RESERVED"),
+        (b"~~a b", "decode", "E_PROFILE"),
+        (b"~~abcd=", "decode", "E_PROFILE"),                   # TV10
+        (b"~~a+b/c-d_e", "decode", "E_PROFILE"),
+        (b"abcde", "decode", "E_ALIGN"),
+        (b"YWxpY2V", "decode", "E_NONZERO_TAIL"),
+        (b"YW*j", "decode", "E_CHARSET"),
+        (b"YW~x", "decode", "E_CHARSET"),
+        (b"~=", "decode", "E_CHARSET"),
+        (b"YWxp==", "decode", "E_PADDING"),
+        (b"YWxpY2U==", "decode", "E_PADDING"),
+        (b"PDw_Pz8+Pg", "decode", "E_MIXED_ALPHABET"),
+        (b"PDw/Pz8+Pg", "decode_url_strict", "E_NON_URL_ALPHABET"),
     ]
     bad = 0
-    for stream, profile, entry, want in cases:
+    for stream, entry, want in cases:
         fn = getattr(base65t, entry)
         try:
-            fn(stream, profile)
+            fn(stream)
             print(f"FAIL {stream!r}: expected {want}, got a value")
             bad += 1
         except base65t.Base65tError as e:
@@ -86,14 +86,14 @@ def errors() -> int:
                 print(f"FAIL {stream!r}: expected {want}, got {e.code}")
                 bad += 1
     # And the ones that must be accepted (TV6, TV7, TV9, TV10).
-    for stream, profile, expect in [
-        (b"~~a=b=", "T", b"a=b="),
-        (b"YWxpY2U=", "U", b"alice"),
-        (b"YWxpY2Uu", "U", b"alice."),
-        (b"~~a+b/c-d_e", "T", b"a+b/c-d_e"),
-        (b"~~", "U", b""),
+    for stream, expect in [
+        (b"~~abcd", b"abcd"),
+        (b"YWxpY2U=", b"alice"),
+        (b"YWxpY2Uu", b"alice."),
+        (b"~~a-b_c-d_e", b"a-b_c-d_e"),   # TV7: raw bytes do not count
+        (b"~~", b""),
     ]:
-        got = base65t.decode(stream, profile).bytes
+        got = base65t.decode(stream).bytes
         if got != expect:
             print(f"FAIL {stream!r}: {got!r} != {expect!r}")
             bad += 1

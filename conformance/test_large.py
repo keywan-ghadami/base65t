@@ -37,7 +37,7 @@ def main(argv) -> int:
     stream = pathlib.Path(argv[1]).read_bytes()
 
     try:
-        got = base65t.decode(stream, "U")
+        got = base65t.decode(stream)
     except base65t.Base65tError as e:
         print(f"FAIL the other implementation's stream does not decode: {e.code}")
         return 1

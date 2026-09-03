@@ -18,30 +18,23 @@ fn all_nine_codes() {
         (
             Error::TrailingTilde,
             "E_TRAILING_TILDE",
-            decode(
-                &[encode_base64url(&[9u8; 48]), b"~".to_vec()].concat(),
-                Profile::U,
-            ),
+            decode(&[encode_base64url(&[9u8; 48]), b"~".to_vec()].concat()),
         ),
-        (Error::Reserved, "E_RESERVED", decode(b"~Aabc", Profile::U)),
-        (Error::Profile, "E_PROFILE", decode(b"~~a b", Profile::U)),
-        (Error::Align, "E_ALIGN", decode(b"abcde", Profile::U)),
-        (
-            Error::NonzeroTail,
-            "E_NONZERO_TAIL",
-            decode(b"YWxpY2V", Profile::U),
-        ),
-        (Error::Charset, "E_CHARSET", decode(b"YW*j", Profile::U)),
-        (Error::Padding, "E_PADDING", decode(b"YWxp==", Profile::U)),
+        (Error::Reserved, "E_RESERVED", decode(b"~Aabc")),
+        (Error::Profile, "E_PROFILE", decode(b"~~a b")),
+        (Error::Align, "E_ALIGN", decode(b"abcde")),
+        (Error::NonzeroTail, "E_NONZERO_TAIL", decode(b"YWxpY2V")),
+        (Error::Charset, "E_CHARSET", decode(b"YW*j")),
+        (Error::Padding, "E_PADDING", decode(b"YWxp==")),
         (
             Error::MixedAlphabet,
             "E_MIXED_ALPHABET",
-            decode(b"PDw_Pz8+Pg", Profile::U),
+            decode(b"PDw_Pz8+Pg"),
         ),
         (
             Error::NonUrlAlphabet,
             "E_NON_URL_ALPHABET",
-            decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
+            decode_url_strict(b"PDw/Pz8+Pg"),
         ),
     ];
     for (expected, code, got) in cases {
@@ -59,7 +52,7 @@ fn nothing_can_be_truncated() {
     let data: Vec<u8> = (0..100).map(|i| b"abcdefghij"[i % 10]).collect();
     let out = encode(&data);
     for cut in 0..=out.len() {
-        let r = decode(&out[..cut], Profile::U);
+        let r = decode(&out[..cut]);
         match r {
             Ok(d) => assert!(data.starts_with(&d.bytes), "cut {cut}"),
             Err(e) => assert!(
@@ -84,12 +77,12 @@ fn arbitrary_input_decodes_or_errors() {
     for _ in 0..20_000 {
         let n = (next() % 140) as usize;
         let data: Vec<u8> = (0..n).map(|_| pool[next() as usize % pool.len()]).collect();
-        for profile in [Profile::U, Profile::T] {
+        {
             for f in [
-                decode as fn(&[u8], Profile) -> Result<Decoded, Error>,
+                decode as fn(&[u8]) -> Result<Decoded, Error>,
                 decode_url_strict,
             ] {
-                if let Ok(d) = f(&data, profile) {
+                if let Ok(d) = f(&data) {
                     // Whatever came out has to be no larger than the stream
                     // could describe: a raw byte is one per character and
                     // base64 is three per four.

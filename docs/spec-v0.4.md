@@ -20,21 +20,17 @@ YWxpY2U=                         ordinary base64, and it decodes to "alice"
 
 ### The output alphabet is fixed
 
-The output alphabet never depends on the data. It depends only on which
-function was called, and there are two:
+Whatever goes in, `encode` writes these 66 characters and no others:
 
-| Call | Writes | Characters |
-|---|---|--:|
-| `encode(x)` — the default | `A–Z a–z 0–9 - . _ ~`, exactly RFC 3986 *unreserved* | 66 |
-| `encode(x, Profile::T)` | printable ASCII except `"` and `\` | 93 |
+```
+A–Z   a–z   0–9   -   .   _   ~
+```
 
-`=` appears in neither, because the encoder produces no padding (§5.1). Both
-sets are fixed and complete: every character listed is reachable and nothing
-outside it is ever written, whatever the input.
-
-The rest of this section is about the default, which is what a caller who
-never reads §7 gets. Its 66 characters are the whole reason the format is easy
-to place:
+That is exactly RFC 3986's *unreserved* set. Every one of the 66 is reachable
+and nothing outside it ever appears — `=` included, because the encoder
+produces no padding (§5.1). It does not depend on the data, and there is no
+parameter, mode or profile that changes it. That single sentence is the whole
+reason the format is easy to place:
 
 * **URL query, path segment** — *unreserved* is what "needs no percent-encoding"
   means, by definition of RFC 3986.
@@ -44,17 +40,16 @@ to place:
 * **JSON string** — nothing to escape.
 * **Filename, log field, `key=value`** — no space and no delimiter.
 
-Checked against Python's own parsers in `conformance/test_containers.py`
-(§16.5), and against the encoder in `the_output_alphabet_is_exactly_unreserved`.
+Checked against Python's own parsers, and against classic base64 as a control,
+in `conformance/test_containers.py` (§16.5); and against the encoder itself in
+`the_output_alphabet_is_exactly_unreserved`, which builds the set from what it
+emits and compares it both ways.
 
 `encode_base64url` (§9.3) — the way out of the format for a caller who wants
 none of it — writes a subset of the same 66 characters.
 
-**Profile T trades that list, and says so.** Its 93 characters include the
-space, so a T value has to be quoted in a whitespace-separated log line and
-percent-encoded in a URL; §7 has the full consequence. It is an explicit
-opt-in and the default never reaches it. What it buys is §13.5: text with
-punctuation stays readable, which under the default it never does.
+**There is no wider alphabet to opt into.** An earlier revision offered one,
+and §7 says why it is gone: a guarantee that holds "except when" is not one.
 
 ## What it guarantees, so that the decision is easy
 
@@ -66,19 +61,16 @@ same, never worse.
 
 | Dimension | Against base64 | Standing |
 |---|---|---|
-| **Size** | never larger, `len(encode(x)) ≤ ceil(4·len(x)/3)` | **guaranteed**, per input, both profiles, no exception. The proof is one sentence: a raw block costs 50 characters where base64 costs 64, and every other block *is* base64 (§9.4) |
+| **Size** | never larger, `len(encode(x)) ≤ ceil(4·len(x)/3)` | **guaranteed**, per input, no exception. The proof is one sentence: a raw block costs 50 characters where base64 costs 64, and every other block *is* base64 (§9.4) |
 | **Readability** | a raw block stands in the clear; every other block *is* base64 | **guaranteed** by construction — the format never makes readable input less readable (§13.5) |
-| **Time** | at base64's time where the size is the same, usually faster where it is smaller | **measured**, not guaranteed: 99–101 % in both directions, with one named exception (§13.3) |
-
-The exception is named rather than smoothed over: `dickens` under profile T
-costs 18 % more encoding time and buys 4.9 % of size for it. It is the one
-input in the corpus that trades a dimension against another.
+| **Time** | at base64's time where the size is the same, usually faster where it is smaller | **measured**, not guaranteed: 99–101 % in both directions over the whole corpus, with no exception (§13.3) |
+| **Alphabet** | the output is always the same 66 characters | **guaranteed**, and it is what the other three are stated against (§7) |
 
 Two further properties follow from the encoder being a mapping rather than a
 search:
 
-**Byte equality: guaranteed.** `encode(x, profile)` determines its output from
-48 bytes per block. There is nothing two conforming encoders could hold
+**Byte equality: guaranteed.** `encode(x)` determines its output from 48 bytes
+per block. There is nothing two conforming encoders could hold
 different opinions about (§11).
 
 **The wire format: not guaranteed.** See the status above.
@@ -114,35 +106,24 @@ different opinions about (§11).
 
 The caller this format is for is the one who is unsure, and the head of this
 document says why that leaves nothing to weigh. What follows from it is the
-shape of the API: there is exactly one parameterless `encode` function that takes
-bytes and returns bytes. There are no presets, no modes, no thresholds. The
+shape of the API: exactly one parameterless `encode` function that takes bytes
+and returns bytes. No presets, no modes, no thresholds, no profiles. The
 encoder is explained in one sentence: **48 bytes of text stay text, everything
 else is base64.**
 
-Nothing has to be decided to use it. Profile U is the default, its 66-character
-alphabet goes into every container listed at the head of this document, and a
-caller who never reads §7 is already right.
+One thing exists beside it, and it is not a mode of the encoding:
+**`encode_base64url`** (§9.3) is the way *out* of the format, for a caller
+carrying a secret who wants none of it standing in the clear (§14), and for
+one who is only allowed to speak base64url.
 
-Two things exist beside it, and neither is a decision about the encoding:
-
-* **Profile T** (§7) admits 93 raw characters instead of 66 and buys
-  readability on text with punctuation at the price of the URL. It is a
-  statement about the *container*, not about the stream, and cannot be derived
-  from the stream (§7.2) — which is the only reason it is a parameter at all.
-* **`encode_base64url`** (§9.3) is not a mode of the format but the way out of
-  it: for a caller carrying a secret who wants none of it standing in the
-  clear (§14), and for one who is only allowed to speak base64url.
-
-Where the two profiles differ, by use:
-
-| Use | Profile | What matters |
-|---------|--------|-------------------|
-| URL query | U | URL safety without percent-encoding |
-| Cookie value | U | `cookie-octet` conformance (§7.1) |
-| HTTP header | U or T | ASCII, no separators |
-| Cache or dedup key | as the container | byte equality (§11) |
-| Log field, JSON string | T | that is where the text stays readable (§13.4) |
-| Token containing a secret | — | `encode_base64url`, no cleartext leaks (§14) |
+| Use | What matters |
+|---------|-------------------|
+| URL query | URL safety without percent-encoding (§7) |
+| Cookie value | `cookie-octet` conformance (§7.1) |
+| HTTP header | ASCII, no separators, no whitespace |
+| JSON string, log field | nothing to escape, nothing to quote |
+| Cache or dedup key | byte equality (§11) |
+| Token containing a secret | `encode_base64url`, no cleartext leaks (§14) |
 
 ### 0.2 What base65t *is*, in one sentence
 
@@ -151,8 +132,8 @@ Where the two profiles differ, by use:
 
 ### 0.3 What "one decoder for everything" means exactly
 
-> A conforming `decode()` takes an octet stream and a profile and needs **no
-> further parameter**. Alphabet variant (§5.2) and padding (§5.3) are
+> A conforming `decode()` takes an octet stream and needs **no parameter at
+> all**. Alphabet variant (§5.2) and padding (§5.3) are
 > determined from the stream itself and reported in the result.
 
 ### 0.4 Why not "Base85N with a URL alphabet"
@@ -223,8 +204,8 @@ as an *expected divergence*.
 ## 3. Notation
 
 * `byte` = a byte of the payload. `char` = a character of the output stream.
-* **Base65t produces an octet stream.** In both profiles every octet is
-  printable ASCII.
+* **Base65t produces an octet stream.** Every octet is printable ASCII, and
+  one of the 66 characters of §7.
 * Core alphabet per base64url (RFC 4648 §5): 0–25 `A`–`Z`, 26–51 `a`–`z`,
   52–61 `0`–`9`, 62 `-`, 63 `_`.
 * The 65th character is `~` (U+007E), not part of the alphabet, without value.
@@ -269,7 +250,7 @@ divisible by 6, which the reserved form of §17 would need; and large enough
 that the two marker characters of a raw block are four percent of it and not a
 third — at six bytes per block the raw form saves exactly nothing (§9.1).
 Larger blocks save little more and tip wholly to base64 more often, because a
-single byte outside the profile suffices.
+single byte outside the alphabet suffices.
 
 An empty stream is valid and decodes to zero bytes.
 
@@ -321,8 +302,10 @@ Any other combination → `E_PADDING`. An `=` at any other position →
 `E_CHARSET`.
 
 **Implementation trap.** Padding MUST NOT be stripped from the end of the
-stream up front. In profile T, `=` is a legal raw byte, and a raw tail runs to
-the end of the stream: `~~a=b=` is four bytes of payload (TV10).
+stream up front. A raw tail runs to the end of the stream, so a `=` there is
+part of the raw block and makes it invalid — `~~abcd=` is `E_PROFILE`. Strip
+the `=` first and the same stream decodes cleanly instead (TV10). An error and
+an acceptance are not the same answer.
 
 ### 5.4 Alphabet consistency (Rule A, normative)
 
@@ -331,9 +314,10 @@ the end of the stream: `~~a=b=` is four bytes of payload (TV10).
 > from {`-`,`_`} → `E_MIXED_ALPHABET`. The rule holds over the whole stream,
 > and so across the raw blocks that sit between two base64 blocks.
 
-Rule A concerns alphabet characters only. Raw bytes do not count — in profile
-U nearly every raw block contains `-` or `_`. Scanning the whole stream
-rejects valid streams (TV7).
+Rule A concerns alphabet characters only. Raw bytes do not count — `-` and
+`_` are both admitted raw and are the URL variant's own two characters, so
+nearly every raw block contains one. Scanning the whole stream rejects valid
+streams (TV7).
 
 ### 5.5 Reporting and the strict variant (normative)
 
@@ -370,45 +354,34 @@ misreading its streams.
 `~` followed by something that is neither `~` nor an alphabet character is not
 a reserved stream but a broken one: `E_CHARSET`.
 
-## 7. Profiles
+## 7. The alphabet
 
-| Profile | Admitted raw bytes | Direct in a URL query? |
-|--------|---------------------|-------------------|
-| **U** (default) | RFC 3986 *unreserved* (66 characters) | **yes** |
-| **T** | ASCII 0x20–0x7E without `"` and `\` (93 characters) | no |
+> **Rule.** A byte may stand raw if and only if it is in RFC 3986's
+> *unreserved* set: `A–Z`, `a–z`, `0–9`, `-`, `.`, `_`, `~`. 66 characters.
 
-A byte outside the profile costs its whole block: the block becomes base64.
-That is the coarseness this format traded for its speed, and §13.4 quantifies
-it.
+There is no second set and no parameter that selects one. That is the format's
+central property, not a simplification of it: the base64 alphabet is a subset
+of these 66 (§3), so **every character of every stream is one of them** — the
+base64 blocks, the `~~` markers and the raw bytes alike. One sentence covers
+the whole output, which is what §0.3 and the head of this document rest on.
 
-**Profile T** is JSON-string-safe, **not** CSV-structure-safe and **not**
-URL-safe. **And it contains the space** (0x20): a whitespace-separated log
-line has to quote a T value, a `key=value` format does not. Found by the
-container test of §16.5.
+A byte outside the set costs its whole block: the block becomes base64. That
+is the coarseness this format traded for its speed, and §13.4 quantifies it.
 
-**The space is the whole of profile T.** It is the one character that costs T
-a container the rest of its alphabet would pass, so whether it belongs is a
-fair question, and it is answered by measurement rather than by argument
-(`binary2textbench`, `--example tspace`, 118 samples). Removing it does not
-narrow profile T; it empties it. Over the corpus:
+**What is deliberately not admitted.** The space and the punctuation of
+ordinary prose — `,` `;` `:` `!` `?` `'` `"` `(` `)` `/` `+` `=` `&` `%` `@`
+and the rest. Each of them is the character that breaks some container: `=`
+and `&` a query string, `;` a cookie, the space a whitespace-separated log
+line, `"` and `\` a JSON string, `/` a path. Admitting any of them would buy
+readability on text and spend the one sentence above, and the sentence is
+worth more than the readability. §13.5 says what that costs: on a document
+with punctuation, nothing stands in the clear.
 
-| | size | cleartext share of all input bytes |
-|---|--:|--:|
-| profile T | 97.50 % | 11.5 % |
-| profile T without the space | 99.96 % | 0.2 % |
+An earlier revision offered a second, wider profile that admitted printable
+ASCII, and it is withdrawn for exactly this reason — the guarantee cannot hold
+"except when". `docs/history/README.md` has what it scored and what it cost.
 
-Twenty-four files are affected and **every one of them goes to exactly
-100.0 % size**, without exception: `xml` from 90.2 %, `dickens` from 94.8 %, a
-log line from 78.2 %, a SQL statement from 78.5 %. Text with punctuation is
-text with spaces, and 48 consecutive printable non-space characters
-effectively do not occur in it. A profile T without the space would be
-profile U with a longer specification.
-
-So the space stays, and what it costs is stated wherever T is offered rather
-than hidden: T is an opt-in, and quoting a log field is what the opt-in buys
-readability with.
-
-### 7.1 Cookie conformance of profile U (proved, not measured)
+### 7.1 Cookie conformance (proved, not measured)
 
 RFC 6265 §4.1.1 defines:
 
@@ -416,17 +389,13 @@ RFC 6265 §4.1.1 defines:
 cookie-octet = %x21 / %x23-2B / %x2D-3A / %x3C-5B / %x5D-7E
 ```
 
-Profile U's alphabet — 62 alphanumerics plus `-` (0x2D), `.` (0x2E), `_`
-(0x5F), `~` (0x7E) — lies entirely within those ranges. All 66 characters
-checked, no exception. The statement follows from the ABNF and is therefore
-**provable, not empirical**. Whether real cookie parsers hold to the ABNF is
-the weaker, empirical question; Python's `http.cookies` does (§16.5).
+The 66 characters — 62 alphanumerics plus `-` (0x2D), `.` (0x2E), `_` (0x5F),
+`~` (0x7E) — lie entirely within those ranges. All 66 checked, no exception.
+The statement follows from the ABNF and is therefore **provable, not
+empirical**. Whether real cookie parsers hold to the ABNF is the weaker,
+empirical question; Python's `http.cookies` does (§16.5).
 
-### 7.2 Why the profile stays a parameter
-
-The profile cannot be derived from the stream: a stream whose raw bytes happen
-to be *unreserved* only is equally valid under U and T. It describes the
-expectation of the **container**, not a property of the stream.
+### 7.2 Unused
 
 ## 8. Unused
 
@@ -436,14 +405,14 @@ Random access is §17.2.
 
 ### 9.0 Principle (normative)
 
-> For every block the encoder checks whether the profile admits **every** one
-> of its bytes. If it does and the block has at least four bytes, it writes
+> For every block the encoder checks whether the alphabet of §7 admits
+> **every** one of its bytes. If it does and the block has at least four bytes, it writes
 > `~~` and the bytes; otherwise it writes the block as base64.
 
-That is the whole rule. It is a mapping from 48 bytes and a profile to an
-output, without search, without state, and without a tie an ordering would
-have to break. A test vector therefore checks bytes rather than lengths, and
-`docs/vectors.json` does so over 173 vectors.
+That is the whole rule. It is a mapping from 48 bytes to an output, without
+search, without state, without a parameter, and without a tie an ordering
+would have to break. A test vector therefore checks bytes rather than lengths, and
+`docs/vectors.json` does so over 154 vectors.
 
 The four bytes are not a threshold but the point at which the raw form stops
 being more expensive: see §9.1.
@@ -472,32 +441,31 @@ costs nothing and text in the clear is what the format is for. The gain grows
 with the block size and runs against `(m+2)/(4m/3)`, so against 78 % size at
 48 bytes and 75 % in the limit.
 
-**All or nothing.** A single byte outside the profile costs its whole block.
+**All or nothing.** A single byte outside the alphabet costs its whole block.
 That is coarse, and it is the trade this format makes. A finer encoding is
 possible — §17.1 describes one, and it costs three times base64's time, which
 is why the code space for it is reserved (§6) rather than used. What the
 coarseness means on real data is in §13.4: short values consisting entirely of
-text reach 78 % size;
-large documents gain **nothing** in profile U and five to ten percent in
-profile T.
+text reach 78 % size; large documents with punctuation gain **nothing**.
 
 ### 9.2 Unused
 
 ### 9.3 Entry points
 
-| Function | What it does | Profile |
-|---|---|---|
-| `encode(x)` | the encoding | U |
-| `encode(x, profile)` | the same, in the profile the container demands | U or T |
-| `encode_base64url(x)` | base64url and nothing else (§14) | — |
+| Function | What it does |
+|---|---|
+| `encode(x)` | the encoding |
+| `encode_base64url(x)` | base64url and nothing else (§14) |
 
-A call without parameters MUST yield `encode` + profile U. Libraries SHOULD
-export exactly one parameterless `encode` function.
+`encode` MUST take the data and nothing else. A library MUST NOT offer a
+parameter that changes the alphabet, the block size or the block rule: those
+are the format, and a caller who can change them has to understand them
+first (§0.1).
 
 ### 9.4 Never-worse guarantee (normative)
 
 ```
-len(encode(x, profile)) <= ceil(4 * len(x) / 3)
+len(encode(x)) <= ceil(4 * len(x) / 3)
 ```
 
 **Per input, not on average, without exception.** Proof: a raw block costs
@@ -516,8 +484,8 @@ container overhead.
 
 Asking §9.0's question per block costs time, and on an input where the answer
 is always "no" it is the only time this format spends beyond base64. Such
-inputs are not only binary: English prose in profile U has a space in every
-block, so no block goes raw, and for this format it is as binary as a JPEG.
+inputs are not only binary: English prose has a space in every block, so no
+block goes raw, and for this format it is as binary as a JPEG.
 
 > **Rule.** Before encoding, the encoder applies §9.0 to the first **64
 > blocks**. If none of them yields the raw form, the whole stream MUST be
@@ -540,27 +508,31 @@ not an exception but an observation: the sample then sees every block §9.0
 sees anyway. If it says "yes", §9.0 applies unchanged; if it says "no", every
 block is base64 and §9.0 writes base64url by itself. The output is the same
 either way, and the reference implementation checks this over 2000 random
-inputs in both profiles. Implementing the rule literally is equally conforming
+inputs. Implementing the rule literally is equally conforming
 — the Python reference does exactly that, and the two implementations agree.
 
 **Why 64 blocks.** Two reasons, both of which count. Measured, it is the knee:
-at 32 blocks `xml` under profile T is misjudged and gives up 9.8 points of
-size on five megabytes, at 64 it is not, and above that almost nothing moves
-while fewer streams take the cheap path. And 64 blocks are **3072 bytes** —
-longer than every value §0.1 names. For a URL query, a cookie value, a header
-or a cache key the sample is therefore not a sample at all but the whole
-input, and it can give up nothing there.
+from 32 blocks on the sample costs nothing measurable at all, and 64 is the
+first power of two past that with room to spare. And 64 blocks are **3072
+bytes** — longer than every value §0.1 names. For a URL query, a cookie value,
+a header or a cache key the sample is therefore not a sample at all but the
+whole input, and it can give up nothing there. Both reasons point the same
+way, which is why the number is not a threshold anyone has to tune.
 
 **What it costs over the corpus**, against "always check"
 (`binary2textbench`, `--example sample`, 101 samples), as size:
 
-| | Profile U | Profile T | written as pure base64 |
+| sample size | size | files written as pure base64 | files that gave anything up |
 |---|--:|--:|--:|
-| always check | 99.95 % | 97.40 % | — |
-| sample, 64 blocks | 99.99 % | 97.50 % | 67 and 37 of 101 |
+| always check | 99.99 % | — | — |
+| k = 8 | 100.00 % | 69 of 101 | 2 |
+| k = 16 | 100.00 % | 69 of 101 | 2 |
+| **k = 64** | **99.99 %** | **67 of 101** | **0** |
+| k = 128 | 99.99 % | 67 of 101 | 0 |
 
-Four hundredths of a point in U and a tenth in T. In exchange, two thirds of
-all files in profile U are written byte for byte as base64, in base64's time.
+At the chosen size the sample costs nothing: not one file in the corpus is
+encoded larger because of it. In exchange, two thirds of all files are written
+byte for byte as base64, in base64's time.
 
 ## 10. Decoder
 
@@ -581,7 +553,7 @@ while pos < len:
     elif stream[pos+1] == '~':
         # Raw block: 48 bytes, or whatever remains.
         end := min(pos + 2 + 48, len)
-        check: every byte stream[pos+2..end] legal in profile  else E_PROFILE
+        check: every byte stream[pos+2..end] admitted by §7  else E_PROFILE
         emit stream[pos+2..end] ; pos := end
     elif stream[pos+1] is an alphabet character:          -> E_RESERVED    # §6
     else:                                                 -> E_CHARSET
@@ -620,8 +592,8 @@ or fails Rule P, not a length field.
 ### 10.2 Entry point
 
 ```
-decode(stream, profile)
-decode_url_strict(stream, profile)  # rejects '+' and '/' with E_NON_URL_ALPHABET
+decode(stream)
+decode_url_strict(stream)   # rejects '+' and '/' with E_NON_URL_ALPHABET
 ```
 
 ### 10.3 Unused
@@ -632,7 +604,7 @@ decode_url_strict(stream, profile)  # rejects '+' and '/' with E_NON_URL_ALPHABE
 |------|-----------|
 | `E_TRAILING_TILDE` | the stream ends with a single `~` |
 | `E_RESERVED` | `~` followed by an alphabet character (§6) |
-| `E_PROFILE` | a raw byte outside the profile's alphabet |
+| `E_PROFILE` | a raw byte outside the alphabet of §7 |
 | `E_ALIGN` | base64 run length `mod 4 == 1` |
 | `E_NONZERO_TAIL` | remainder bits in the last quantum ≠ 0 |
 | `E_CHARSET` | not an alphabet character at an alphabet position (including `~` inside a base64 run, `=` away from the end of the stream, and `~` followed by a character without value) |
@@ -652,17 +624,15 @@ on total size and running time.
 
 ## 11. Canonicity and signatures
 
-**The encoder is a mapping** (§9.0): per block, 48 bytes and the profile
-determine the output, and the blocks are independent. Two conforming encoders
-write the same bytes for the same input and the same profile. That is enough
+**The encoder is a mapping** (§9.0): per block, 48 bytes determine the output,
+and the blocks are independent. Two conforming encoders write the same bytes
+for the same input. That is enough
 for cache keys, dedup keys and content addresses, where the same side produces
 and compares.
 
-The *format* is nevertheless not canonical, for two reasons. First, **the
-profile is part of the input**: the same bytes yield different streams under U
-and T, so a stream alone does not determine what produced it. Second, the **decoder accepts forms no encoder writes**: the classic
-alphabet (§5.2), padding (§5.3), and a base64 block where a raw block would be
-shorter. A third party can rewrite the same stream without changing the
+The *format* is nevertheless not canonical, because the **decoder accepts
+forms no encoder writes**: the classic alphabet (§5.2), padding (§5.3), and a
+base64 block where a raw block would be shorter. A third party can rewrite the same stream without changing the
 decoded bytes.
 
 > **Rule:** never sign, hash or compare the output of `encode`. Sign the
@@ -676,8 +646,8 @@ Characters per input byte; less is better.
 
 | Input | Base64 | **Base65t** |
 |---------|--------|-------------|
-| A block with one byte outside the profile | 1.333 | **1.333** — the same bytes |
-| Purely profile-legal text | 1.333 | **1.0417** — `50/48`, every block raw |
+| A block with one byte outside the alphabet | 1.333 | **1.333** — the same bytes |
+| A block wholly inside it | 1.333 | **1.0417** — `50/48`, the block stands raw |
 
 There is nothing in between: a block is one or the other. What a file achieves
 therefore depends only on how many of its 48-byte blocks consist entirely of
@@ -686,19 +656,18 @@ admitted bytes.
 **Measured** over the binary2textbench corpus (69 samples, `--example gain`),
 size against unpadded base64:
 
-| | Profile U | Profile T |
-|---|--:|--:|
-| Sum over all samples | 99.99 % | 99.51 % |
-| Samples better than 95 % | 43 % | |
-| Indistinguishable from base64 (≥ 99.9 %) | 55 % | |
+| | |
+|---|--:|
+| Sum over all samples | 99.99 % |
+| Samples better than 95 % | 43 % |
+| Indistinguishable from base64 (≥ 99.9 %) | 55 % |
 
 **The sum line is honest and misleading at once**, because it is weighted by
-bytes and the corpus is dominated by megabyte files. On those this revision
-gains almost nothing: a document with a space every five characters has, in
-profile U, not one wholly admitted block. The distribution has two halves, and
-the interesting one is the small one:
+bytes and the corpus is dominated by megabyte files, which gain nothing. The
+distribution is not a gradient but two populations, and the interesting one is
+the small one — the values §0.1 is about:
 
-| Sample | Bytes | Profile U, size |
+| Sample | Bytes | Size |
 |---|--:|--:|
 | Git commit ID | 40 | **77.8 %** |
 | Session ID, 40 alnum | 40 | **77.8 %** |
@@ -707,39 +676,41 @@ the interesting one is the small one:
 | JWT, three segments | 155 | **78.7 %** |
 | Prose, XML, JSON, every megabyte file | | 100.0 % |
 
-Of the sum line, 0.01 points in U and 0.24 in T are what the sample of §9.6
-gives up; the rest is the coarseness of the block itself (§9.1).
+Nothing of the sum line is the sample of §9.6: at 64 blocks it costs no file
+anything (§9.6). The gap to 78 % on the large files is entirely the
+all-or-nothing block of §9.1.
 
 ## 13. Performance
 
-Measured against the base64 implementation of the bench, which lives in the
-same process and was built by the same compiler. Everything single-threaded,
-best of five runs, base64 = 100 %.
+Everything single-threaded. Where a figure compares against base64, the
+comparison is this crate's own `encode_base64url` and its decoder on a pure
+base64 stream (see the head of this document), and the statistic is the
+**median of paired ratios over 21 rounds**: the two sides are timed alternately
+within a round, so a runner that drifts moves both together and cancels.
 
 ### 13.1 What the check costs, and where it is not incurred
 
 A raw block is a `memcpy` in both directions, a base64 block is base64. The
 only work this format has beyond base64 is the question per block: does the
-profile admit **every** byte?
+alphabet of §7 admit **every** byte?
 
 It is built as cheaply as it can be without vector intrinsics — it breaks off
 at the first byte that settles it, tests a necessary condition up front with a
 single operation per 32 bytes, and its per-byte test is arithmetic rather than
 a table lookup, because a gather does not vectorise and six comparisons do.
-Measured against `encode_base64url` of the same implementation, median of
-paired ratios, as time:
+As time, on four megabytes:
 
 | Input, per 48-byte block | the check alone | encoding overall |
 |---|--:|--:|
-| wholly admitted (raw) | 33 % | **48 %** |
-| binary | 6 % | 109 % |
-| text, rejecting byte at the end of the block | 34 % | 145 % |
+| wholly admitted (raw) | 36 % | **46 %** |
+| binary | 7 % | 100 % |
+| text, rejecting byte at the end of the block | 36 % | 100 % |
 
-**And then it is mostly not incurred at all.** The second and third rows are
-exactly the cases where the sample of §9.6 says "no": the stream is written as
-base64url, no block is checked, and the row drops out of the reckoning. What
-remains is the first — the one where the format gains something and is faster
-than base64.
+**The second column is where §9.6 shows.** Rows two and three are exactly the
+inputs the sample turns down: no block is checked, the stream is written as
+base64url, and the encoding costs base64's time to the point of measurement.
+The check's own cost is real — the first column — but it is only paid on input
+that pays it back, which is row one.
 
 When **decoding** this work never arises: the form is in the first character.
 
@@ -754,80 +725,74 @@ It is non-conforming if it writes the wrong bytes.
 
 ### 13.3 Large files
 
-Against `encode_base64url` of the same implementation — the same loop shape,
-the same allocator — median of paired ratios over 21 rounds:
-
-| File | Profile | Size | Encode, time | Decode, time |
-|---|---|--:|--:|--:|
-| generated, wholly admitted | U | 78.1 % | **48 %** | **40 %** |
-| prose, space every 6 bytes | T | 78.1 % | **40 %** | **35 %** |
-| `xml` | T | 88.4 % | **91 %** | **68 %** |
-| `dickens` | T | 95.1 % | 118 % | **90 %** |
-| `dickens` | U | 100.0 % | **100 %** | **100 %** |
-| `xml` | U | 100.0 % | **99 %** | **100 %** |
-| `countries.json` | U | 100.0 % | **100 %** | 101 % |
-| `x-ray` (binary) | U | 100.0 % | 101 % | 101 % |
-| random bytes | U | 100.0 % | **100 %** | 101 % |
+| File | Bytes | Size | Encode, time | Decode, time |
+|---|--:|--:|--:|--:|
+| generated, wholly admitted | 4 000 000 | **78.1 %** | **47 %** | **40 %** |
+| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 101 % |
+| `xml` | 5 345 280 | 100.0 % | 100 % | 100 % |
+| `countries.json` | 1 408 911 | 100.0 % | 103 % | 98 % |
+| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 101 % |
+| random bytes | 262 144 | 100.0 % | 102 % | 99 % |
 
 **The table is sorted by size, and that is the whole statement.** Where the
-output is not shorter than base64, it is base64 and costs base64's time: 99 to
-101 %, in both directions. Where it is shorter, it is usually faster too,
-because a `memcpy` is less work than a base64 loop.
+output is not shorter than base64 it *is* base64 — the same bytes (§9.4) — and
+it costs base64's time: 98 to 103 % over two runs of the table, in both
+directions, which is the spread of the runner rather than of the format. Where
+the output is shorter, it is faster too, because a `memcpy` is less work than
+a base64 loop.
 
-One row falls out: `dickens` in profile T is 4.9 % smaller and costs 18 % more
-encoding time. There the sample rightly says "check" — there are raw blocks —
-but most blocks do contain a line break and become base64, and for those the
-check is overhead. That is the one case where the format trades size against
-time, and it is named rather than smoothed over.
+There is no row that trades size against time. That is the §9.6 sample doing
+its job: an input with no raw blocks never pays for the question.
 
 ### 13.4 Short values
 
-The 55 short samples, profile U, size against `ceil(4n/3)`, time against the
-bench's base64 (`--example short`):
+The 55 short samples, size against `ceil(4n/3)`, time against the bench's
+base64 (`--example short`):
 
 | Sample | Bytes | Form | Size | Encode, time | Decode, time |
 |---|--:|---|--:|--:|--:|
-| UUID v4 | 36 | raw | 79 % | **52 %** | **82 %** |
-| Session ID, 40 alnum | 40 | raw | 78 % | **54 %** | **68 %** |
-| SHA-512 digest, hex | 128 | raw | 78 % | **55 %** | **68 %** |
-| JWT, three segments | 155 | raw | 79 % | **59 %** | **65 %** |
-| Credit card number | 16 | raw | 82 % | **68 %** | **88 %** |
-| First and last name | 12 | base64 | 100 % | **93 %** | 119 % |
-| IPv6 address | 28 | base64 | 100 % | **96 %** | **97 %** |
-| SQL statement | 118 | base64 | 100 % | 104 % | **83 %** |
-| Log line | 93 | base64 | 100 % | 109 % | **90 %** |
-| 64 random bytes | 64 | base64 | 100 % | 104 % | **88 %** |
-| **all 55 samples, as time** | | | | **77 %** | **84 %** |
+| SHA-512 digest, hex | 128 | raw | 78 % | **38 %** | **33 %** |
+| Git commit ID | 40 | raw | 78 % | **43 %** | **60 %** |
+| Two UUIDs | 73 | raw | 79 % | **42 %** | **54 %** |
+| UUID v4 | 36 | raw | 79 % | **50 %** | **77 %** |
+| Credit card number | 16 | raw | 82 % | **69 %** | **98 %** |
+| SQL statement | 118 | base64 | 100 % | **79 %** | **92 %** |
+| Log line | 93 | base64 | 100 % | **74 %** | **91 %** |
+| IPv6 address | 28 | base64 | 100 % | **89 %** | **99 %** |
+| 64 random bytes | 64 | base64 | 100 % | **72 %** | **96 %** |
+| 8 random bytes | 8 | base64 | 100 % | **84 %** | 131 % |
+| **all 55 samples, as time** | | | | **65 %** | **84 %** |
 
-**On short values base65t is faster than base64, in both directions.** The
-reason is the work balance: base64 reads a byte, looks up four characters and
-writes four — per three bytes. A raw block reads 48 bytes, checks them with
-six comparisons per byte and copies them. Whoever writes less writes faster.
-The rows at 100 % size cost at most nine percent more time, and they decode
-faster.
+**On short values base65t is faster than base64, in both directions**, and on
+the rows where it saves nothing in size as well. The reason is the work
+balance: base64 reads a byte, looks up four characters and writes four — per
+three bytes. A raw block reads 48 bytes, checks them with six comparisons per
+byte and copies them. Whoever writes less writes faster. What is left above
+100 % is decoding the very shortest values, where the measurement is the
+allocation and not the codec.
 
 ### 13.5 What stays readable
 
 Share of bytes that stand in the stream as they do in the input
-(`--example clear`):
+(`--example clear`, 103 samples):
 
-| File | Profile U | Profile T |
-|---|--:|--:|
-| Prose (dickens) | **0 %** | **24 %** |
-| XML | **0 %** | **45 %** |
-| CSS | **0 %** | **10 %** |
-| JSON | **0 %** | **0 %** |
+| | Files |
+|---|--:|
+| 100 % readable | 32 |
+| nothing readable | 68 |
+| in between | 3 (1 %, 1 % and 5 %) |
 
-**That is this revision's price, and it is high.** A block goes raw only if
-all 48 bytes are admitted, and in a document with punctuation that does not
-happen in profile U. What stays readable is what holds together in runs of 48
-bytes: identifiers, IDs, hexadecimal values, and in profile T longer stretches
-of text without quotation marks.
+**Readability is not a gradient, it is a property of the value.** A block goes
+raw only if all 48 of its bytes are admitted, so a value made of identifiers,
+IDs, digests or hexadecimal comes through entirely, and a document with
+punctuation comes through not at all: prose, XML, CSS and JSON are all 0 %.
+The three in between are large files with a stretch of identifier-shaped data
+somewhere in them.
 
-Whoever wants readable mixed text will not find it here. That is a decision,
-not a gap. A form that delivers it is described in §17.1, and it costs three
-times base64's time; this format lives on the decision to use it costing
-nothing (§0.1, §6).
+**That is the price of one alphabet, and it is named rather than softened.** A
+wider alphabet would make text with punctuation readable; §7 says why there
+isn't one, and `docs/history/README.md` has what a wider one scored. Whoever
+needs readable mixed text needs a different format, and §0.5 says which.
 
 ## 14. Security
 
@@ -844,17 +809,16 @@ nothing (§0.1, §6).
   fuzzing is mandatory, not optional.
 * **No padding oracle** — padding is only validated, never produced.
 * **Malleability** is excluded at block level, reduced at alphabet and padding
-  level, and **not** excluded at profile level nor against a third party
-  rewriting a raw block as a base64 block (§11).
+  level, and **not** excluded against a third party rewriting a raw block as
+  a base64 block (§11).
 * Decoded output is **untrusted binary**, not text.
 
 ## 15. Test vectors
 
 Twelve vectors, each a test in `rust/tests/vectors.rs`. The machine-checkable
-set — 173 entries over both entry points and both profiles — is in
-`docs/vectors.json`.
+set — 154 entries over both entry points — is in `docs/vectors.json`.
 
-### TV1–TV4 — the two forms (profile U)
+### TV1–TV4 — the two forms
 
 | # | Input | Stream | Length | Base64 would be |
 |---|---------|-------|-------|-------------|
@@ -874,12 +838,18 @@ fixed. `hello~Alice` becomes `~~hello~Alice`.
 ### TV5 — one byte decides the block
 
 ```
-Input:     the quick brown fox jumps over the lazy dog. again      (50 bytes)
-Profile U: dGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gYWdhaW4
-           67 characters, byte for byte base64url — the space is not admitted in U
-Profile T: ~~the quick brown fox jumps over the lazy dog. aga  aW4
-           53 characters: the first block raw, the two remaining bytes as base64
+48 bytes, all admitted:
+  the-quick-brown-fox-jumps-over-the-lazy-dog.abcd
+  ~~the-quick-brown-fox-jumps-over-the-lazy-dog.abcd    50 characters, raw
+
+The same text with spaces, 49 bytes:
+  the quick brown fox jumps over the lazy dog. again
+  dGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gYWdhaW4
+  67 characters, byte for byte base64url -- the space is not admitted (§7)
 ```
+
+And it is the byte, not its position: put a space at any of the 48 positions
+of the first input and the whole block becomes base64.
 
 ### TV5b — the reserved form
 
@@ -903,8 +873,10 @@ invisible, because base64 blocks tile.
 
 `PDw_Pz8+Pg` and `PDw/Pz8-Pg` → `E_MIXED_ALPHABET`. The rule holds across raw
 blocks: a URL base64 block, a raw block, a classic block →
-`E_MIXED_ALPHABET`. Raw bytes do not count: `~~a+b/c-d_e` in profile T has
-`alphabet_seen = none`.
+`E_MIXED_ALPHABET`. Raw bytes do not count: `-` and `_` are the URL variant's
+own two characters and are also admitted raw, so `~~a-b_c-d_e` has
+`alphabet_seen = none` while `PDw_Pz8-Pg` has `url`. This is the stream a
+whole-stream scanner misreads.
 
 ### TV8 — what may follow a `~`
 
@@ -922,8 +894,10 @@ YWxpY2U==    -> E_PADDING
 ```
 
 An `=` at the end of the 64th character of a base64 block followed by another
-block is `E_CHARSET`. TV10, profile T: `~~a=b=` is a raw tail carrying four
-bytes, two of them `=`; in profile U it is `E_PROFILE`.
+block is `E_CHARSET`. TV10: `~~abcd=` is `E_PROFILE`, because a raw tail runs
+to the end of the stream and `=` is not admitted — while `~~abcd` decodes
+cleanly. Stripping the padding first turns the error into an acceptance, which
+is why §5.3 forbids it.
 
 ### TV11 — error cases
 
@@ -932,7 +906,7 @@ bytes, two of them `=`; in profile U it is `E_PROFILE`.
 | `abcde` | `E_ALIGN` |
 | `~` | `E_TRAILING_TILDE` |
 | `~Aabc` | `E_RESERVED` |
-| `~~a b` | `E_PROFILE` (profile U) |
+| `~~a b` | `E_PROFILE` |
 | `YWxp==` | `E_PADDING` |
 | `YWxpY2V` | `E_NONZERO_TAIL` |
 | `YW~x` | `E_CHARSET` |
@@ -960,7 +934,7 @@ are not normative.
 
 ### 16.1 Round trip
 
-**`decode(encode(x)) == x`** for both profiles, over a fuzzing corpus.
+**`decode(encode(x)) == x`**, over a fuzzing corpus.
 
 ### 16.2 Reading base64
 
@@ -971,12 +945,12 @@ standard base64 library of the language in question. Expected divergences
 
 ### 16.3 Two implementations
 
-**`encode(x, profile)` byte-identical across two independent
-implementations**, over the whole vector set.
+**`encode(x)` byte-identical across two independent implementations**, over
+the whole vector set.
 
 **Discharged, with a named gap.** `rust/` and `conformance/reference.py`, the
 second written from this document and without a line of shared code. They
-agree on all 308 vector pairs, on fifteen error cases, and on a 262923-byte
+agree on all 154 vectors, on sixteen error cases, and on a 262923-byte
 input character for character (`conformance/test_large.py`). The gap: the same
 author.
 
@@ -989,10 +963,12 @@ samples for the sample of §9.6.
 
 ### 16.5 Container test with real parsers
 
-**Done for Python's parsers**, `conformance/test_containers.py`. Profile U
-passes through URL, cookie, JSON, filename and log line unchanged; profile T
-needs percent-encoding in a URL and contains the space. This is the weaker,
-empirical counterpart to §7.1, which proves the cookie case from the ABNF.
+**Done for Python's parsers**, `conformance/test_containers.py`. The output
+passes through URL query, cookie, JSON string, filename, log line and
+`key=value` unchanged. **Classic base64 is the control** and fails four of
+those checks on the same data, which is what shows the alphabet doing the work
+rather than the output merely being ASCII. This is the weaker, empirical
+counterpart to §7.1, which proves the cookie case from the ABNF.
 
 ### 16.6 API shape
 
@@ -1003,7 +979,7 @@ explicitly **not** a second implementation in the sense of §16.3.
 
 ### 16.7 Vector set
 
-`docs/vectors.json` carries 173 vectors. They cover the block boundary at 48,
+`docs/vectors.json` carries 154 vectors. They cover the block boundary at 48,
 the tails from 1 to 6 bytes where the raw form takes over, and blocks one byte
 short of the raw form.
 
@@ -1018,8 +994,8 @@ Carrying a mixed block partly in the clear: `~`, eight mask characters with
 one bit per byte, the admitted bytes, then base64 of the rest. `~` followed by
 an alphabet character is reserved for it (§6).
 
-A complete design exists and was measured: it takes English prose in profile U
-from 0 % readable to 76 %, and it costs **three times** base64's time in both
+A complete design exists and was measured: it takes English prose from 0 %
+readable to 76 %, and it costs **three times** base64's time in both
 directions, because it does three times as much work per block. It was
 optimised to the limit of what is possible without vector intrinsics and
 stayed there. `docs/history/spec-v0.4-maske.de.md` has it in full, which is
@@ -1034,9 +1010,14 @@ Block boundaries lie at fixed input offsets but at variable output offsets. An
 index of block starts, kept outside the stream, gives O(1) access. This is why
 the format needs no second mode for it.
 
-### 17.3 Profile negotiation
+### 17.3 A wider alphabet
 
-In principle not derivable from the stream (§7.2).
+An alphabet that admitted the space and ordinary punctuation would make text
+with punctuation readable — §13.5 says it is 0 % today. A revision that wants
+it has to answer the question §7 answers with "no": what the container
+statements at the head of this document become when the alphabet is no longer
+one set. `docs/history/README.md` has what a wider alphabet scored when it was
+tried, and why it was withdrawn.
 
 ### 17.4 A different block size
 

@@ -7,8 +7,8 @@ is byte for byte what a Rust caller gets.
 ```python
 import base65t
 
-stream = base65t.encode(b"alice.jones")        # profile U
-assert stream == b"~Lalice.jones"
+stream = base65t.encode(b"alice.jones")
+assert stream == b"~~alice.jones"
 assert base65t.decode(stream).bytes == b"alice.jones"
 ```
 
@@ -16,12 +16,12 @@ assert base65t.decode(stream).bytes == b"alice.jones"
 to name: a caller who has to choose between a dense encoder and a fast one has
 to know what those words mean before encoding a byte, and a caller who is
 unsure writes base64. The encoder decides for itself (specification section
-9.6). `profile` is not such a choice — it is a statement about the container
-the stream has to survive, and `"U"` is the default.
+9.6). There is no profile either: the output is always the 66 characters of
+RFC 3986 *unreserved*, exported as `base65t.ALPHABET`.
 
-The return is `bytes` and not `str` although both profiles produce printable
-ASCII: section 3 calls the output an octet stream, and the return type says
-what the format guarantees. `.decode("ascii")` is free where it is wanted.
+The return is `bytes` and not `str` although the output is printable ASCII:
+section 3 calls the output an octet stream, and the return type says what the
+format guarantees. `.decode("ascii")` is free where it is wanted.
 
 `encode_base64url` is the way out of the format rather than a mode of it, for a
 caller carrying a secret who wants no part of it left in the clear. Its output

@@ -30,20 +30,20 @@ fn samples() -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn encode_into_appends_exactly_what_encode_with_returns() {
+fn encode_into_appends_exactly_what_encode_returns() {
     for data in samples() {
-        for profile in [Profile::U, Profile::T] {
-            let want = encode_with(&data, profile);
+        {
+            let want = encode(&data);
             // Into an empty buffer, and into one that already holds
             // something: appending is the contract, not overwriting.
             let mut fresh = Vec::new();
-            encode_into(&data, profile, &mut fresh);
-            assert_eq!(fresh, want, "{profile:?}, {} bytes", data.len());
+            encode_into(&data, &mut fresh);
+            assert_eq!(fresh, want, "{} bytes", data.len());
 
             let mut used = b"already here".to_vec();
-            encode_into(&data, profile, &mut used);
+            encode_into(&data, &mut used);
             assert_eq!(&used[..12], b"already here");
-            assert_eq!(&used[12..], &want[..], "{profile:?}");
+            assert_eq!(&used[12..], &want[..]);
         }
     }
 }
@@ -51,14 +51,14 @@ fn encode_into_appends_exactly_what_encode_with_returns() {
 #[test]
 fn decode_into_appends_exactly_what_decode_returns() {
     for data in samples() {
-        for profile in [Profile::U, Profile::T] {
-            for stream in [encode_with(&data, profile), encode_base64url(&data)] {
-                let want = decode(&stream, profile).unwrap();
+        {
+            for stream in [encode(&data), encode_base64url(&data)] {
+                let want = decode(&stream).unwrap();
 
                 let mut used = b"already here".to_vec();
-                let meta = decode_into(&stream, profile, &mut used).unwrap();
+                let meta = decode_into(&stream, &mut used).unwrap();
                 assert_eq!(&used[..12], b"already here");
-                assert_eq!(&used[12..], &want.bytes[..], "{profile:?}");
+                assert_eq!(&used[12..], &want.bytes[..]);
                 assert_eq!(meta.alphabet_seen, want.alphabet_seen);
                 assert_eq!(meta.padding_seen, want.padding_seen);
             }
@@ -79,9 +79,9 @@ fn a_rejected_stream_leaves_the_buffer_alone() {
         b"~Labcdefghij".to_vec(),                  // E_TRUNCATED
     ];
     for stream in bad {
-        for profile in [Profile::U, Profile::T] {
+        {
             let mut buf = b"untouched".to_vec();
-            let r = decode_into(&stream, profile, &mut buf);
+            let r = decode_into(&stream, &mut buf);
             assert!(r.is_err(), "{stream:?} decoded");
             assert_eq!(buf, b"untouched", "{stream:?} left something behind");
         }
