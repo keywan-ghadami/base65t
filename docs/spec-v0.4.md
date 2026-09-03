@@ -1,17 +1,75 @@
 # Base65t — Specification v0.4
 
-**Status:** current. **Wire format: not stable.** v0.4 replaces the segment
-format of v0.1 through v0.3 with fixed-length blocks, and nothing promises
-that v0.5 keeps the blocks. What is stable is the contract: bytes in,
-printable ASCII out, never longer than base64, and every base64 stream is
-read. Whoever stores streams today stores the version number next to them.
+**Status:** current. **Wire format: not stable** — v0.4 replaces the segment
+format of v0.1 through v0.3, and nothing promises that v0.5 keeps its blocks.
+What is stable is the contract, not the bytes: bytes in, printable ASCII out,
+never longer than base64, and every base64 stream reads back. Store the version
+number alongside any stream you keep.
 
-The earlier revisions are in `docs/history/`, together with an index of what
-was cut between revisions and why. They are in German, as written.
+## What it is
 
-**In brief:** base64url extended by a 65th character (`~`). The input is cut
-into blocks of 48 bytes; a block whose bytes the profile admits in full stands
-raw, every other block is base64.
+Base64url extended by a 65th character, `~`. The input is cut into blocks of 48
+bytes; a block whose bytes the profile admits in full stands raw after `~~`,
+every other block is base64.
+
+```
+~~alice.jones                    11 bytes of text, 13 characters
+3q2-73Nlc3Npb24tZXUtY2VudHJhbA   4 binary bytes and 18 of text: base64
+YWxpY2U=                         ordinary base64, and it decodes to "alice"
+```
+
+### The alphabet, and what carries it unchanged
+
+The output is exactly the 64 base64url characters plus `~`, plus — inside raw
+blocks — the bytes the profile admits. Both profiles are printable ASCII
+throughout, and profile U is chosen so that the whole output stays inside the
+character sets the common containers accept:
+
+| Container | Profile U | Profile T |
+|---|---|---|
+| URL query, path segment | **unchanged** — RFC 3986 *unreserved*, no percent-encoding | needs percent-encoding |
+| Cookie value | **unchanged** — every character is a `cookie-octet`, proved from the ABNF (§7.1) | contains the space |
+| HTTP header value | **unchanged** — no separators, no whitespace | contains the space |
+| JSON string | **unchanged** | **unchanged** — `"` and `\` are excluded (§7) |
+| Filename | **unchanged** | contains characters some filesystems reject |
+| Log line, whitespace-separated | **unchanged** | has to be quoted |
+| A single `key=value` field | **unchanged** | **unchanged** — no whitespace problem, unlike the log line above |
+| A `key=value` **list** (`;` or `&` separated) | **unchanged** | contains `=`, `;` and `&`; not structure-safe (§7) |
+
+Profile U is therefore the default and needs no thought; profile T buys
+readability on text with punctuation and gives up the URL. Checked against
+Python's own parsers in `conformance/test_containers.py` (§16.5).
+
+`encode_base64url` (§9.3) is the way out of the format for a caller who wants
+none of it: its output is ordinary base64url, and every row above holds for it
+as well.
+
+## What it guarantees, so that the decision is easy
+
+This format is for the caller who is unsure. They know base64, base64 is never
+wrong, and anything they would have to weigh first is a reason not to bother.
+The aim is therefore that there is nothing to weigh: in each of the three
+dimensions a caller could worry about, base65t is better than base64 or the
+same, never worse.
+
+| Dimension | Against base64 | Standing |
+|---|---|---|
+| **Size** | never larger, `len(encode(x)) ≤ ceil(4·len(x)/3)` | **guaranteed**, per input, both profiles, no exception. The proof is one sentence: a raw block costs 50 characters where base64 costs 64, and every other block *is* base64 (§9.4) |
+| **Readability** | a raw block stands in the clear; every other block *is* base64 | **guaranteed** by construction — the format never makes readable input less readable (§13.5) |
+| **Time** | at base64's time where the size is the same, usually faster where it is smaller | **measured**, not guaranteed: 99–101 % in both directions, with one named exception (§13.3) |
+
+The exception is named rather than smoothed over: `dickens` under profile T
+costs 18 % more encoding time and buys 4.9 % of size for it. It is the one
+input in the corpus that trades a dimension against another.
+
+Two further properties follow from the encoder being a mapping rather than a
+search:
+
+**Byte equality: guaranteed.** `encode(x, profile)` determines its output from
+48 bytes per block. There is nothing two conforming encoders could hold
+different opinions about (§11).
+
+**The wire format: not guaranteed.** See the status above.
 
 > **Requirements language.** The key words "MUST", "MUST NOT", "REQUIRED",
 > "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT
@@ -19,7 +77,7 @@ raw, every other block is base64.
 > as described in BCP 14 (RFC 2119, RFC 8174) when, and only when, they appear
 > in all capitals, as shown here.
 >
-> Numbers not marked *exact* are measurements on the corpus named in §16.5.
+> Numbers not marked *exact* are measurements on the corpus named in §16.4.
 
 > **How to read the percentages.** This document names two ratios, and they
 > point in **opposite directions**. Every number therefore says which one it
@@ -37,9 +95,10 @@ raw, every other block is base64.
 
 ## Changes from the segment format
 
-Section numbers are kept where the subject is the same, so that references
-from `docs/history/` still land. Where a section now describes something else,
-it says so at its start.
+The earlier revisions are in `docs/history/`, together with an index of what
+was cut between them and why. Section numbers are kept here where the subject
+is the same, so that references from that folder still land. Where a section
+now describes something else, it says so at its start.
 
 | § | Change |
 |---|---|
@@ -53,35 +112,13 @@ it says so at its start.
 | 14 | The decoder no longer parses an attacker-chosen length |
 | 15 | Twelve vectors, new |
 
-## What v0.4 guarantees, and what it does not
-
-**Size: guaranteed, per input, not on average.** `len(encode(x)) ≤
-ceil(4·len(x)/3)` for every input and both profiles, without exception (§9.4).
-The proof is one sentence: a raw block costs 50 characters where base64 costs
-64, and every other block *is* base64.
-
-**Byte equality: guaranteed.** `encode(x, profile)` is a mapping that
-determines an output from 48 bytes per block. There is nothing two encoders
-could hold different opinions about (§11).
-
-**Throughput: a guarantee of the form "where not smaller, then equal".** Where
-the output is not shorter than base64, it *is* base64 — the same bytes and the
-same time (§9.6, §13). Where it is shorter, it is usually faster too. The
-specification cannot guarantee a number for every case; §13 measures.
-
-**The wire format: not guaranteed.** See above.
-
 ## 0. Positioning (non-normative)
 
 ### 0.1 One format, one encoder
 
-Base65t is meant for the case where somebody is **unsure**: they have
-something that is already text, and have to send it through a channel that has
-to accept bytes. They know base64, everyone understands base64, base64 is
-never wrong. Anything they would have to learn about another scheme first is a
-reason not to bother.
-
-There is therefore exactly one parameterless `encode` function that takes
+The caller this format is for is the one who is unsure, and the head of this
+document says why that leaves nothing to weigh. What follows from it is the
+shape of the API: there is exactly one parameterless `encode` function that takes
 bytes and returns bytes. There are no presets, no modes, no thresholds. The
 encoder is explained in one sentence: **48 bytes of text stay text, everything
 else is base64.**
@@ -99,6 +136,9 @@ Two parameters remain, and neither is a choice about the encoding:
 * **`encode_base64url`** (§9.3) is not a mode of the format but the way out of
   it: for a caller carrying a secret who wants none of it standing in the
   clear (§14), and for one who is only allowed to speak base64url.
+
+Which profile a use calls for, where the table at the head of this document
+says what each one carries unchanged:
 
 | Use | Profile | What matters |
 |---------|--------|-------------------|
@@ -347,7 +387,7 @@ it.
 **Profile T** is JSON-string-safe, **not** CSV-structure-safe and **not**
 URL-safe. **And it contains the space** (0x20): a whitespace-separated log
 line has to quote a T value, a `key=value` format does not. Found by the
-container test of §16.6.
+container test of §16.5.
 
 ### 7.1 Cookie conformance of profile U (proved, not measured)
 
@@ -361,7 +401,7 @@ Profile U's alphabet — 62 alphanumerics plus `-` (0x2D), `.` (0x2E), `_`
 (0x5F), `~` (0x7E) — lies entirely within those ranges. All 66 characters
 checked, no exception. The statement follows from the ABNF and is therefore
 **provable, not empirical**. Whether real cookie parsers hold to the ABNF is
-the weaker, empirical question; Python's `http.cookies` does (§16.6).
+the weaker, empirical question; Python's `http.cookies` does (§16.5).
 
 ### 7.2 Why the profile stays a parameter
 
@@ -919,38 +959,58 @@ the raw form. After a full raw block:
 
 ## 16. Conformance
 
-An implementation counts as conforming once it evidences the following three
-properties:
+§16.1 to §16.3 are what an implementation MUST evidence to count as
+conforming. §16.4 to §16.7 are supplementary work on this implementation and
+are not normative.
 
-1. **`decode(encode(x)) == x`** for both profiles, over a fuzzing corpus.
-2. **`decode(base64(x)) == x`** and **`decode(base64url(x)) == x`** for all
-   canonical inputs, padded and unpadded — by differential fuzzing against the
-   standard base64 library of the language in question. Expected divergences
-   (`E_NONZERO_TAIL`, §1.1) belong in the corpus as such.
-3. **`encode(x, profile)` byte-identical across two independent
-   implementations**, over the whole vector set.
-   **Discharged, with a named gap.** `rust/` and `conformance/reference.py`,
-   the second written from this document and without a line of shared code.
-   They agree on all 308 vector pairs, on fifteen error cases, and on a
-   262923-byte input character for character (`conformance/test_large.py`).
-   The gap: the same author.
+### 16.1 Round trip
 
-Supplementary work, non-normative:
+**`decode(encode(x)) == x`** for both profiles, over a fuzzing corpus.
 
-4. Measurement (§12, §13): corpus density and throughput over
-   binary2textbench — **done**, the numbers are there.
-5. Container test with real parsers — **done for Python's parsers**,
-   `conformance/test_containers.py`. Profile U passes through URL, cookie,
-   JSON, filename and log line unchanged; profile T needs percent-encoding in
-   a URL and contains the space.
-6. API shape per target language: `encode` / `decode` analogous to that
-   language's `base64`; additionally `decode_url_strict` and
-   `encode_base64url`, and nothing else. Rust is included; `python/` is a PyO3
-   binding over it. A binding is explicitly **not** a second implementation in
-   the sense of item 3.
-7. Vector set: `docs/vectors.json` carries 173 vectors. They cover the block
-   boundary at 48, the tails from 1 to 6 bytes where the raw form takes over,
-   and blocks one byte short of the raw form.
+### 16.2 Reading base64
+
+**`decode(base64(x)) == x`** and **`decode(base64url(x)) == x`** for all
+canonical inputs, padded and unpadded — by differential fuzzing against the
+standard base64 library of the language in question. Expected divergences
+(`E_NONZERO_TAIL`, §1.1) belong in the corpus as such.
+
+### 16.3 Two implementations
+
+**`encode(x, profile)` byte-identical across two independent
+implementations**, over the whole vector set.
+
+**Discharged, with a named gap.** `rust/` and `conformance/reference.py`, the
+second written from this document and without a line of shared code. They
+agree on all 308 vector pairs, on fifteen error cases, and on a 262923-byte
+input character for character (`conformance/test_large.py`). The gap: the same
+author.
+
+### 16.4 Measurement
+
+Corpus density and throughput over binary2textbench (§12, §13) — **done**, the
+numbers are there. Every measured number in this document comes from that
+corpus: 69 corpus samples and 55 short values for density and time, 101
+samples for the sample of §9.6.
+
+### 16.5 Container test with real parsers
+
+**Done for Python's parsers**, `conformance/test_containers.py`. Profile U
+passes through URL, cookie, JSON, filename and log line unchanged; profile T
+needs percent-encoding in a URL and contains the space. This is the weaker,
+empirical counterpart to §7.1, which proves the cookie case from the ABNF.
+
+### 16.6 API shape
+
+Per target language: `encode` / `decode` analogous to that language's
+`base64`; additionally `decode_url_strict` and `encode_base64url`, and nothing
+else. Rust is included; `python/` is a PyO3 binding over it. A binding is
+explicitly **not** a second implementation in the sense of §16.3.
+
+### 16.7 Vector set
+
+`docs/vectors.json` carries 173 vectors. They cover the block boundary at 48,
+the tails from 1 to 6 bytes where the raw form takes over, and blocks one byte
+short of the raw form.
 
 ## 17. Candidates for extension (not part of v0.4)
 

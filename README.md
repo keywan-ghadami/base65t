@@ -25,7 +25,7 @@ decoder will reject it.
 earlier versions with these blocks, and nothing promises v0.5 keeps them. What
 is stable is the contract: bytes in, printable ASCII out, never longer and
 never meaningfully slower than base64, and any base64 stream reads back.
-`docs/history/` has the earlier versions and what a day of measuring taught.
+`docs/history/` has the earlier versions and the measurements that dropped them.
 
 > **Reading the percentages.** Two ratios appear below and they point in
 > opposite directions, so every number says which it is. **Size** is
