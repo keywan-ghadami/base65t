@@ -1,6 +1,6 @@
 # Base65t v0.1 — Errata
 
-> **Historie.** Der aktuelle Stand ist `docs/spec-v0.4.de.md`. Dieses Dokument
+> **Historie.** Der aktuelle Stand ist `docs/spec-v0.4.md`. Dieses Dokument
 > ist nicht normativ; es liegt hier, weil es trägt, wie es dazu kam.
 > `docs/history/README.md` sagt, was zwischen den Fassungen gestrichen wurde
 > und warum.

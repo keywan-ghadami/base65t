@@ -5,7 +5,7 @@
 > die die zulässigen Bytes eines gemischten Blocks im Klartext ließ. Sie ist
 > die lesbarste Fassung, die es je gab, und die einzige, die dafür einen
 > messbaren Preis verlangte — §13.1 darin ist die Messung. Der aktuelle Stand
-> ist `docs/spec-v0.4.de.md`; `docs/history/README.md` sagt, warum.
+> ist `docs/spec-v0.4.md`; `docs/history/README.md` sagt, warum.
 
 
 **Status:** aktuell. **Wire-Format: nicht stabil.** v0.4 ersetzt das

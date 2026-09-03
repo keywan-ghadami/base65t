@@ -218,9 +218,11 @@ passages without a quotation mark.
 
 ## What is here
 
-* **`docs/spec-v0.4.de.md`** — the specification, v0.4, in German. The
-  normative document; everything else is downstream of it. The wire format
-  is marked not stable.
+* **`docs/spec-v0.4.md`** — the specification, v0.4. The normative document;
+  everything else is downstream of it. The wire format is marked not stable.
+  It is the only normative document, so there is no translation to drift out
+  of step with it; the earlier revisions in `docs/history/` stay in German, as
+  they were written.
 * **`rust/`** — the reference implementation. No dependencies, no features to
   turn on, and `#![forbid(unsafe_code)]`, written to be read against the
   specification rather than to be fast: the section numbers are in the

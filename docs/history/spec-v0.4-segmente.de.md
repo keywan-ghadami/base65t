@@ -3,7 +3,7 @@
 > **Historie.** Diese Fassung trug die Nummer v0.4 für einen Tag. Sie ist das
 > Segmentformat von v0.1 bis v0.3 mit einem Encoder statt fünf, und sie wurde
 > am selben Tag durch das Blockformat ersetzt, das jetzt unter
-> `docs/spec-v0.4.de.md` steht. Sie liegt hier, weil sie die vollständigste
+> `docs/spec-v0.4.md` steht. Sie liegt hier, weil sie die vollständigste
 > Beschreibung des Segmentformats ist und weil §13.3 die Messung enthält, an
 > der es gescheitert ist. `docs/history/README.md` sagt, was zwischen den
 > beiden lag.

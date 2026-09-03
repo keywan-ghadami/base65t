@@ -1,116 +1,119 @@
-# Wie es dazu kam
+# How it got here
 
-Hier liegt nichts, wonach man implementieren soll. Der Stand steht in
-`docs/spec-v0.4.de.md`; dieser Ordner beantwortet die andere Frage — **warum
-steht es so da** — und er beantwortet sie, weil die interessanten
-Entscheidungen alle gegen die naheliegende Variante ausgefallen sind.
+Nothing here is meant to be implemented against. The current state is in
+`docs/spec-v0.4.md`; this folder answers the other question — **why does it say
+that** — and it answers it because the interesting decisions all went against
+the obvious option.
 
-Wer das Format benutzen will, braucht diesen Ordner nicht. Wer es
-weiterentwickeln oder ein zweites Mal implementieren will, findet hier die
-Begründungen und vor allem die Messungen, die einzelne Sätze der Spezifikation
-erzwungen haben.
+Anyone who wants to use the format does not need this folder. Anyone who wants
+to develop it further, or implement it a second time, finds the reasoning here
+and above all the measurements that forced individual sentences of the
+specification.
 
-## Die Dokumente
+**The documents below are in German, as they were written.** They are records;
+translating them would make them something other than what was decided at the
+time. The current specification, the README and the code are English.
 
-| Datei | Was darin steht |
+## The documents
+
+| File | What is in it |
 |---|---|
-| `spec-v0.1.de.md` | Die erste Fassung. Fünf Presets, Framed Mode, drei Profile, ein Greedy-Encoder als zulässige Alternative. Vollständig überholt, aber jede spätere Abschnittsnummer stammt von hier |
-| `errata-v0.1.de.md` | Zehn Entscheidungen (E1–E10), die beim Implementieren von v0.1 fällig wurden. E1 ist der Fund, dass §11.1 zwei einander widersprechende Definitionen der kanonischen Form enthielt |
-| `spec-v0.2.de.md` | v0.1 + Errata, plus die lineare Regel und `dense-fast`. Der Zwischenstand, gegen den die Performance-Arbeit gemessen wurde |
-| `spec-v0.4-segmente.de.md` | Das Segmentformat mit **einem** Encoder statt fünf, am Kopf entschieden, exakt programmiert, gefenstert. Trug die Nummer v0.4 einen Tag lang; §13.3 darin ist die Messung, die es gekippt hat |
-| `spec-v0.4-maske.de.md` | Das Blockformat mit einer **dritten** Blockform: einer Maske mit einem Bit je Byte, die die zulässigen Bytes eines gemischten Blocks im Klartext ließ. Ebenfalls einen Tag; §13.1 darin ist die Messung, die sie gekippt hat |
-| `FINDINGS.md` | Was das Implementieren gefunden hat: Widersprüche, zu enge Suchräume, Zahlen, die nicht stimmten. Chronologisch, nicht redigiert |
-| `PREREGISTRATION.md` | Die Sweetspot-Messung, festgelegt **bevor** sie lief. Damit der Schwellwert `L_min = 11` nicht das Ergebnis einer nachträglich passend gewählten Auswertung ist |
+| `spec-v0.1.de.md` | The first revision. Five presets, a framed mode, three profiles, a greedy encoder as a permitted alternative. Wholly superseded, but every later section number comes from here |
+| `errata-v0.1.de.md` | Ten decisions (E1–E10) that fell due while implementing v0.1. E1 is the finding that §11.1 contained two mutually contradictory definitions of the canonical form |
+| `spec-v0.2.de.md` | v0.1 + errata, plus the linear rule and `dense-fast`. The intermediate state the performance work was measured against |
+| `spec-v0.4-segmente.de.md` | The segment format with **one** encoder instead of five, decided at the head, programmed exactly, windowed. It carried the number v0.4 before being withdrawn; its §13.3 is the measurement that toppled it |
+| `spec-v0.4-maske.de.md` | The block format with a **third** block form: a mask with one bit per byte, leaving the admitted bytes of a mixed block in the clear. Also withdrawn; its §13.1 is the measurement that toppled it |
+| `FINDINGS.md` | What implementing found: contradictions, search spaces too narrow, numbers that were wrong. Chronological, not edited |
+| `PREREGISTRATION.md` | The sweet-spot measurement, fixed **before** it ran, so that the threshold `L_min = 11` is not the result of an evaluation chosen to fit afterwards |
 
-## Was zwischen v0.2 und v0.4 passiert ist
+## What happened between v0.2 and v0.4
 
-Es gibt kein `spec-v0.3.de.md`. v0.3 war ein Stand im Code, kein Dokument: die
-lineare Regel, die Parallelisierung, das Preset `dense-fast`, die
-vektorisierte Base64-Schleife. Was daran überlebt hat, steht in v0.4; was nicht
-überlebt hat, steht in der Commit-Historie und hier zusammengefasst, weil vier
-gestrichene Ideen mehr über das Format sagen als die vier, die geblieben sind.
+There is no `spec-v0.3.de.md`. v0.3 was a state in the code, not a document:
+the linear rule, the parallelisation, the `dense-fast` preset, the vectorised
+base64 loop. What survived of it is in v0.4; what did not survive is in the
+commit history and summarised here, because four dropped ideas say more about
+the format than the four that stayed.
 
-**Gestrichen: `legible`.** Ein Preset, das bei Längengleichstand die lesbarere
-Segmentierung wählt. Der Tie-Break brauchte eine zweite Kostenkomponente, und
-deren lexikografischer Vergleich kostete das Programm aus §9.2 zwischen 60 und
-190 % — bei *jedem* Preset, auch den vieren, die ihn nie verlangt haben. Ein
-Feature, das nur einer wollte, hat allen die Rechnung geschickt.
+**Dropped: `legible`.** A preset choosing the more readable segmentation on a
+length tie. The tie-break needed a second cost component, and comparing those
+lexicographically cost the program of §9.2 between 60 and 190 % more time — in
+*every* preset, including the four that never asked for it. A feature only one
+caller wanted sent the bill to all of them.
 
-**Gestrichen: der Framed Mode.** Er war die eine Stelle, die §9.4 nicht abdecken
-konnte, und eine Garantie mit Ausnahme ist eine Garantie, die niemand zitiert.
-Der Preis wären fünf Zeichen je 64 KiB gewesen; der Gegenwert war ein
-Zufallszugriff, den niemand angefragt hatte. `~A` bleibt reserviert, damit eine
-spätere Revision die Frage neu stellen kann.
+**Dropped: the framed mode.** It was the one place §9.4 could not cover, and a
+guarantee with an exception is a guarantee nobody quotes. The price would have
+been five characters per 64 KiB; the return was random access nobody had asked
+for. `~A` stays reserved so a later revision can put the question again.
 
-**Gestrichen: Profil B.** Ein Profil, in dem ein Literal jedes Oktett tragen
-darf. Damit ist die Ausgabe kein Text mehr, und „die Ausgabe ist Text" ist der
-Satz, wegen dem jemand das Format überhaupt anschaut. Ein Profil, das den
-Kernsatz mit einer Fußnote versieht, kostet mehr als es bringt.
+**Dropped: profile B.** A profile in which a literal may carry any octet. With
+it the output is no longer text, and "the output is text" is the sentence that
+makes anyone look at this format at all. A profile that puts a footnote on the
+core sentence costs more than it returns.
 
-**Gestrichen: die Presets selbst.** Fünf, dann sechs, dann null. Der Grund
-steht in §0.1 der v0.4: wer zwischen einem dichten und einem schnellen Encoder
-wählen muss, muss erst wissen, was diese Wörter bedeuten, und wer unsicher ist,
-greift zu Base64. Die Wahl trifft jetzt §9.6 anhand des Dateikopfs.
+**Dropped: the presets themselves.** Five, then six, then none. The reason is
+in §0.1 of v0.4: whoever has to choose between a dense and a fast encoder has
+to learn what those words mean first, and whoever is unsure reaches for base64.
+The choice is now made by §9.6, from the first 64 blocks.
 
-**Gestrichen: die lineare Regel.** Sie war die Antwort auf „der exakte DP ist
-zu langsam für große Daten" und hat 0,22 % Dichte gekostet. Die bessere Antwort
-war, bei großen Daten *gar nicht erst hinzuschauen*, wenn der Kopf sagt, dass
-nichts zu finden ist — und den exakten DP zu behalten, wo etwas zu finden ist.
-Der Faktor, um den der DP langsamer ist, wurde dabei zweimal falsch berichtet
-(erst „12×", dann gemessen 21–63×); die Korrektur steht in `FINDINGS.md`.
+**Dropped: the linear rule.** It was the answer to "the exact DP is too slow
+for large data" and cost 0.22 points of size. The better answer was not to look
+at large data *at all* where nothing is to be found — and to keep the exact DP
+where something is. The factor by which the DP is slower was reported wrongly
+twice along the way (first "12×", then measured 21–63×); the correction is in
+`FINDINGS.md`.
 
-## Und dann das Segmentformat selbst
+## And then the segment format itself
 
-Mit einem Encoder statt fünf war das Segmentformat konsequent, und es war
-gemessen: auf durchgehend legalen kurzen Werten schneller als Base64, auf
-komprimierten Daten byteweise Base64. Dazwischen, auf gemischtem Text, kostete
-das exakte Programm das Sechs- bis Elffache der Base64-Zeit für null bis
-anderthalb Prozent Größe — und jeder Versuch, das zu beheben, war ein weiterer
-Mechanismus: eine Kopfentscheidung, eine Fensterung, eine geschlossene Form,
-eine Stichprobe. Fünf Mechanismen, um eine Idee bezahlbar zu machen.
+With one encoder instead of five the segment format was coherent, and it was
+measured: faster than base64 on short values that were legal throughout, byte
+for byte base64 on compressed data. In between, on mixed text, the exact
+program cost six to eleven times base64's time for zero to one and a half
+points of size — and every attempt to fix that was one more mechanism: a head
+decision, a windowing, a closed form, a sample. Five mechanisms to make one
+idea affordable.
 
-Die Frage, die das beendet hat, war nicht "wie machen wir das Programm
-schneller", sondern "warum müssen wir überhaupt nachschauen". Ein Block fester
-Länge, ein festes Mapping, kein Suchen, kein Zustand, keine Längen im Strom.
+The question that ended it was not "how do we make the program faster" but "why
+do we have to look at all". A block of fixed length, a fixed mapping, no
+search, no state, no lengths in the stream.
 
-## Und dann die Maske
+## And then the mask
 
-Die erste Blockfassung hatte drei Formen. Die dritte war eine Maske mit einem
-Bit je Byte, die aus einem gemischten Block die zulässigen Bytes im Klartext
-stehen ließ und den Rest als Base64 anhängte. Sie war die eleganteste Idee
-dieses Projekts: sie machte englische Prosa in Profil U von 17 % auf 76 %
-lesbar, bei kleinerer Ausgabe als das Segmentformat, und sie kostete keine
-einzige Suche.
+The first block revision had three forms. The third was a mask with one bit per
+byte, leaving the admitted bytes of a mixed block standing in the clear and
+appending the rest as base64. It was the most elegant idea in this project: it
+took English prose in profile U from 17 % readable to 76 %, at a smaller output
+than the segment format, and it cost not a single search.
 
-Sie ist trotzdem gestrichen, und der Grund ist kein Messfehler, sondern die
-Positionierung. Ein Maskenblock kostete gemessen das **Dreifache** der
-Base64-Zeit, in beide Richtungen, weil er dreimal so viel tut: die Maske
-schreiben oder lesen, 48 Bytes auf zwei Ziele trennen oder aus zweien
-zusammensetzen, und den Rest als Base64. Optimiert wurde er bis an die Grenze
-dessen, was skalar geht — verzweigungsfrei, Stack-Puffer, Tabellen über
-Achtergruppen, Tabellen-Popcount —, und blieb beim Dreifachen.
+It is dropped anyway, and the reason is not a measurement error but the
+positioning. A mask block cost, measured, **three times** base64's time in both
+directions, because it does three times as much: write or read the mask,
+separate 48 bytes onto two destinations or reassemble them from two, and the
+rest as base64. It was optimised to the limit of what is possible scalar —
+branch-free, stack buffers, tables over groups of eight, table popcount — and
+stayed at three times.
 
-„Dreimal langsamer auf meinen JSON-Blobs" ist der Satz, der die Entscheidung
-für dieses Format kippt. Es lebt nicht von seinem Mehrwert, der klein ist,
-sondern davon, dass die Entscheidung dafür **nichts kostet**. Lesbarer
-gemischter Text ist schön, aber er ist nicht der Grund, aus dem jemand das
-Format nimmt, und er ist eine Tür weiter bei Base85N zu haben.
+"Three times slower on my JSON blobs" is the sentence that tips the decision
+for this format. It does not live on its gain, which is small, but on the
+decision to use it costing **nothing**. Readable mixed text is a fine thing,
+but it is not the reason anyone picks this format up, and it is available one
+door further at Base85N.
 
-`~` gefolgt von einem Alphabetzeichen bleibt reserviert und ist heute ein
-Fehler. Eine spätere Fassung kann die Maske zurückholen, wenn sie zeigt, dass
-sie ohne diesen Preis geht; ein Dekoder von heute scheitert dann laut statt
-falsch zu lesen.
+`~` followed by an alphabet character stays reserved and is an error today. A
+later revision can bring the mask back if it shows that it goes without that
+price; a decoder of today then fails loudly instead of reading wrongly.
 
-## Was daraus geworden ist
+## What came of it
 
-Zwei Blockformen, ein Vergleich je Block: `docs/spec-v0.4.de.md`. Auf kurzen
-Werten schneller als Base64 in beide Richtungen (77 % und 84 % der Zeit), auf
-großen Dateien zwischen 86 und 122 % beim Kodieren und durchweg schneller beim
-Dekodieren. Der Preis steht in §13.5 der aktuellen Fassung: gemischter Text
-ist nicht mehr lesbar, und auf großen Dokumenten holt das Format in Profil U
-nichts mehr.
+Two block forms, one question per block: `docs/spec-v0.4.md`. Faster than
+base64 on short values in both directions (77 % and 84 % of the time), and on
+large files at base64's time — 99 to 101 % encoding where the output is the
+same size, and faster than base64 where it is smaller. The price is in §13.5 of
+the current revision: mixed text is no longer readable, and on large documents
+the format gains nothing in profile U.
 
-**Geblieben aus der Segmentzeit:** die Maske über 64 Bytes (sie ist jetzt das
-ganze Encoder-Innere), die Regel-A-Erkenntnis, dass Alphabet-Konsistenz eine
-Suche und keine Dekodierung ist, und die Base64-Schleife, die ein Segment in
-ein Slice bekannter Länge schreibt.
+**Kept from the segment era:** the base64 loop that writes into a slice of
+known length, and the Rule A insight that alphabet consistency is a search and
+not a decoding. The per-byte membership test survived too, but inverted: it
+used to build a 64-bit mask and compare it; it now answers one question and
+breaks off at the first byte that settles it, which is where most of the
+encoder's speed comes from (§13.1).

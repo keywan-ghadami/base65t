@@ -4,7 +4,7 @@
 
 //! Base65t — Base64URL plus a 65th character.
 //!
-//! The reference implementation of `docs/spec-v0.4.de.md`. Section numbers in
+//! The reference implementation of `docs/spec-v0.4.md`. Section numbers in
 //! the comments are that document's; `docs/history/` holds the earlier
 //! versions and the record of how each decision was reached.
 //!

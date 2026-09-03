@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Base65t v0.4, written from ``docs/spec-v0.4.de.md``.
+"""Base65t v0.4, written from ``docs/spec-v0.4.md``.
 
 This is the second implementation §16.3 asks for, and it is deliberately not a
 translation of the Rust one: it was written from the specification, it tests

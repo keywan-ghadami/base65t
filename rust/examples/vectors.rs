@@ -124,7 +124,7 @@ fn main() {
     let profiles: [(&str, Profile); 2] = [("U", Profile::U), ("T", Profile::T)];
 
     println!("{{");
-    println!("  \"spec\": \"base65t v0.4, docs/spec-v0.4.de.md\",");
+    println!("  \"spec\": \"base65t v0.4, docs/spec-v0.4.md\",");
     println!(
         "  \"note\": \"Every entry is: the named entry point over (input, profile) is exactly stream, and \
          decode(stream, profile) is exactly input. Bytes are hex. A second implementation that \
