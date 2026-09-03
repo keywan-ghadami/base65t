@@ -250,7 +250,7 @@ mod tests {
             if n % 97 != 0 && n != SAMPLE_BLOCKS * BLOCK_BYTES {
                 continue;
             }
-            for tail in [b'a', b' '] {
+            for tail in *b"a " {
                 let mut data = vec![b'a'; n];
                 *data.last_mut().unwrap() = tail;
                 let mut out = Vec::new();
