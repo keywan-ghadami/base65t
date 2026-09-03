@@ -611,7 +611,7 @@ Läufen, Base64 = 100 %.
 
 Ein Raw-Block ist ein `memcpy` in beide Richtungen, ein Base64-Block ist
 Base64. Der einzige Aufwand, den dieses Format über Base64 hinaus hat, ist
-die Frage je Block, welche Form er bekommt, und die ist eine Maske über 48
+die Frage je Block, welche Form er bekommt, und die ist ein Bitfeld über 48
 Bytes — 48 Tabellenzugriffe ohne Verzweigung, gemessen 2285 MiB/s, also rund
 ein Fünftel Nanosekunde je Byte.
 
@@ -707,14 +707,14 @@ Entscheidung dafür nichts kostet (§0.1, §6).
 
 ## 14. Sicherheit
 
-* **Der Dekoder parst keine angreifergewählte Länge.** Die Segmentfassung
-  stand hier hinter Base64: ihr Dekoder las Längen bis 4158 aus dem Strom.
-  Dieser liest eine Maske, und eine Maske kann nichts hinter ihrem eigenen
-  Block adressieren. Was bleibt, ist dasselbe wie bei Base64: die
-  Gesamtlänge der Eingabe.
+* **Der Dekoder parst überhaupt keine Länge.** Die Segmentfassung stand hier
+  hinter Base64: ihr Dekoder las Längen bis 4158 aus dem Strom, die ein
+  Angreifer wählen konnte. Hier steht keine Länge im Strom; jede folgt aus
+  der Blockform und der Blockgröße. Was bleibt, ist dasselbe wie bei Base64:
+  die Gesamtlänge der Eingabe.
 * **Rohe Bytes lecken Struktur** — welche Blöcke ganz aus Text bestehen, ist
-  im Strom sichtbar, und ihr Inhalt steht im Klartext. Dafür ist `encode_base64url` da (§9.3); seine
-  Ausgabe ist gewöhnliches Base64URL.
+  im Strom sichtbar, und ihr Inhalt steht im Klartext. Dafür ist
+  `encode_base64url` da (§9.3); seine Ausgabe ist gewöhnliches Base64URL.
 * **Zwei Auto-Erkennungen sind zwei Parser-Differential-Flächen:** Alphabet
   (§5.2) und Padding (§5.3). Gegenmaßnahmen: Regel A, Regel P,
   `alphabet_seen` / `padding_seen` und `decode_url_strict` (§5.5).
