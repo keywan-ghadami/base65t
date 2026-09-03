@@ -144,21 +144,36 @@ and copies them.
 | 64 random bytes | 64 | base64 | 100 % | 104 % | **88 %** |
 | **all 55, summed as time** | | | | **77 %** | **84 %** |
 
-Large files:
+Large files, against the crate's own `encode_base64url` — the same loop shape
+and the same allocator, so the ratio is the format and not a handicap. Median
+of paired ratios over fifteen rounds, because a shared runner drifts more than
+the effect being measured:
 
 | file | profile | size | encode | decode |
 |---|---|--:|--:|--:|
-| `dickens` (prose) | U | 100.0 % | 104 % | **90 %** |
-| `mozilla` | U | 99.8 % | 105 % | **98 %** |
-| `x-ray` (binary) | U | 100.0 % | 115 % | **83 %** |
-| `xml` | U | 100.0 % | 122 % | **84 %** |
-| `xml` | T | 90.2 % | **86 %** | **87 %** |
-| `dickens` (prose) | T | 94.8 % | **92 %** | **90 %** |
+| `dickens` (prose) | U | 100.0 % | 118 % | **101 %** |
+| `xml` | U | 100.0 % | 121 % | **99 %** |
+| `x-ray` (binary) | U | 100.0 % | 119 % | **100 %** |
+| `dickens` (prose) | T | 95.1 % | 112 % | **86 %** |
+| `xml` | T | 88.4 % | **90 %** | **66 %** |
 
-Encoding costs between 86 and 122 %, and the whole of that spread is one
-thing: the mask that asks whether a block is all text. Where it often says yes
-the encoder beats base64, because a `memcpy` is cheaper than a base64 loop.
-Decoding is faster than base64 everywhere, for the same reason.
+Encoding costs between 90 and 121 %, and the whole of that is one thing: the
+check that asks whether a block is all text. It exits at the first byte that
+settles the question, so on binary it costs a sixth of base64's time and on a
+block whose only rejecting byte is the last it costs half:
+
+| block content | check alone | encode |
+|---|--:|--:|
+| all admitted (raw) | 46 % | **50 %** |
+| binary | 16 % | 118 % |
+| text, rejecting byte first | 15 % | 119 % |
+| text, rejecting byte last | 45 % | 145 % |
+
+That is a floor and not sloppiness: the encoder has to look at every byte to
+answer, and it looks once. What would remove it is looking at 32 bytes per
+instruction instead of one, and that needs `unsafe` or a standard library
+that is not stable yet — the crate has neither. Decoding never pays it at
+all, because the form is in the first character.
 
 For comparison on `dickens`: the segment format this replaced encoded at
 1137 %, the mask version at 169 %, this at 104 %.

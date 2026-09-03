@@ -102,17 +102,10 @@ impl Decoder<'_> {
 
     /// §7: every byte of a raw payload must be one the profile admits.
     ///
-    /// Through the same mask the encoder builds, so it does not branch on
-    /// the data: forty-eight lookups and one compare.
+    /// The same question the encoder asks, through the same function.
     #[inline]
     fn check_profile(&self, bytes: &[u8]) -> Result<(), Error> {
-        debug_assert!(bytes.len() <= 64);
-        let want = if bytes.len() == 64 {
-            u64::MAX
-        } else {
-            (1u64 << bytes.len()) - 1
-        };
-        if self.profile.mask_short(bytes) == want {
+        if self.profile.admits_all(bytes) {
             Ok(())
         } else {
             Err(Error::Profile)

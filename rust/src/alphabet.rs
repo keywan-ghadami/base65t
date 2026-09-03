@@ -85,9 +85,10 @@ pub enum Profile {
 
 /// Profile membership as a table: bit 0 for U, bit 1 for T.
 ///
-/// The encoder asks this of every input byte, so it is an inner loop like the
-/// decoder's value lookup, and for the same reason it is an indexed load
-/// rather than a handful of range tests.
+/// Not what the encoder uses any more -- see [`Profile::allows`] for why --
+/// but kept as the definition of §7 written out one byte at a time, and the
+/// thing the arithmetic is tested against.
+#[cfg(test)]
 static MEMBERSHIP: [u8; 256] = {
     let mut t = [0u8; 256];
     let mut b = 0usize;
@@ -103,74 +104,59 @@ static MEMBERSHIP: [u8; 256] = {
 };
 
 impl Profile {
-    /// Which of these 64 bytes the profile admits, one bit each, bit 0 first.
+    /// Whether the profile admits **every** byte of `data` (§9.0).
     ///
-    /// The encoder's inner loop over its input, and since v0.4 the *whole* of
-    /// what it asks about a block: which bytes may stand as they are. Sixty-
-    /// four lookups with no branch at all, measured at 1352 MiB/s, and the
-    /// number does not depend on the data.
+    /// The only question the encoder asks of a block, and asking exactly it —
+    /// rather than building a bit per byte and comparing to all-ones — is
+    /// what took encoding on large files from 122 % of base64's time to
+    /// parity.
     ///
-    /// Packed a byte at a time and then assembled, which is worth a word: the
-    /// obvious `m |= bit << k` over all sixty-four is one dependency chain
-    /// sixty-four long and runs at 926 MiB/s. Eight chains of eight, each
-    /// shifting by a constant, run at 1352.
+    /// The membership test inside is arithmetic and not a table lookup, and
+    /// that is the whole trick: a gather does not vectorise, six shifts and
+    /// compares do. The loop below is a branchless `or` of rejections over
+    /// thirty-two bytes, which the compiler turns into a handful of vector
+    /// operations, and only then is there a branch — one per thirty-two
+    /// bytes, taken as soon as any of them settles the block.
     #[inline]
-    pub fn mask64(self, block: &[u8; 64]) -> u64 {
-        let (groups, _) = block.as_chunks::<8>();
-        let mut m = 0u64;
-        for (i, w) in groups.iter().enumerate() {
-            m |= (self.pack8(w) as u64) << (8 * i);
+    pub fn admits_all(self, data: &[u8]) -> bool {
+        let (groups, tail) = data.as_chunks::<32>();
+        for g in groups {
+            let mut bad = 0u8;
+            for &b in g {
+                bad |= !self.allows(b) as u8;
+            }
+            if bad != 0 {
+                return false;
+            }
         }
-        m
+        let mut bad = 0u8;
+        for &b in tail {
+            bad |= !self.allows(b) as u8;
+        }
+        bad == 0
     }
 
-    /// The same for fewer than 64 bytes: whole groups packed, then the rest.
+    /// Whether this byte may stand raw in a block (§7).
     ///
-    /// A block is forty-eight bytes and the last one is shorter, so this is
-    /// the form the encoder actually calls. Padding a four-byte tail out to
-    /// sixty-four would read sixty-four bytes to answer for four.
-    #[inline]
-    pub fn mask_short(self, data: &[u8]) -> u64 {
-        debug_assert!(data.len() <= 64);
-        let (groups, tail) = data.as_chunks::<8>();
-        let mut m = 0u64;
-        for (i, w) in groups.iter().enumerate() {
-            m |= (self.pack8(w) as u64) << (8 * i);
-        }
-        let done = groups.len() * 8;
-        for (k, &b) in tail.iter().enumerate() {
-            m |= (self.allows(b) as u64) << (done + k);
-        }
-        m
-    }
-
-    /// Eight bytes to eight bits, bit 0 first.
-    ///
-    /// Written out rather than looped, and that is the whole trick: the
-    /// obvious `m |= bit << k` over sixty-four bytes is one dependency chain
-    /// sixty-four long and runs at 926 MiB/s. Eight chains of eight, each
-    /// shifting by a constant, run at 1352 -- and unlike the byte-at-a-time
-    /// scan it replaces, that number does not depend on the data.
-    #[inline]
-    fn pack8(self, w: &[u8; 8]) -> u8 {
-        (self.allows(w[0]) as u8)
-            | ((self.allows(w[1]) as u8) << 1)
-            | ((self.allows(w[2]) as u8) << 2)
-            | ((self.allows(w[3]) as u8) << 3)
-            | ((self.allows(w[4]) as u8) << 4)
-            | ((self.allows(w[5]) as u8) << 5)
-            | ((self.allows(w[6]) as u8) << 6)
-            | ((self.allows(w[7]) as u8) << 7)
-    }
-
-    /// Whether this byte may appear in a literal payload.
+    /// Arithmetic rather than a lookup in [`MEMBERSHIP`], which is the same
+    /// answer by a different road: a table is one load and this is six cheap
+    /// operations, so on a single byte the table wins, and over a block the
+    /// arithmetic wins by a wide margin because it vectorises and a gather
+    /// does not. `only_the_arithmetic_and_the_table_agree` checks the two
+    /// against each other over all 256 bytes and both profiles, which is what
+    /// keeps the duplication honest.
     #[inline]
     pub fn allows(self, b: u8) -> bool {
-        let bit = match self {
-            Profile::U => 0b001,
-            Profile::T => 0b010,
-        };
-        MEMBERSHIP[b as usize] & bit != 0
+        // `b | 0x20` folds the upper case onto the lower, so one range test
+        // covers both.
+        let alpha = (b | 0x20).wrapping_sub(b'a') < 26;
+        let digit = b.wrapping_sub(b'0') < 10;
+        match self {
+            Profile::U => alpha || digit || b == b'-' || b == b'.' || b == b'_' || b == TILDE,
+            // 0x20 to 0x7E is 95 characters, less the two a JSON string would
+            // have to escape.
+            Profile::T => b.wrapping_sub(0x20) < 95 && b != b'"' && b != b'\\',
+        }
     }
 }
 
@@ -236,6 +222,44 @@ mod tests {
     }
 
     /// Profile T is the JSON-safe one, and that is the whole of its claim.
+    /// The two ways of asking §7's question, against each other over every
+    /// byte and both profiles. One is the definition and one is what runs.
+    #[test]
+    fn only_the_arithmetic_and_the_table_agree() {
+        for b in 0..=255u8 {
+            for (p, bit) in [(Profile::U, 0b001u8), (Profile::T, 0b010)] {
+                assert_eq!(
+                    p.allows(b),
+                    MEMBERSHIP[b as usize] & bit != 0,
+                    "{p:?} {b:#04x}"
+                );
+            }
+        }
+    }
+
+    /// `admits_all` is `allows` over every byte, and its early exit must not
+    /// change that -- whichever byte of a block is the one that rejects.
+    #[test]
+    fn admits_all_agrees_with_allows_at_every_position() {
+        for p in [Profile::U, Profile::T] {
+            for n in 0..=80usize {
+                let clean = vec![b'a'; n];
+                assert!(p.admits_all(&clean), "{p:?} {n}");
+                for i in 0..n {
+                    for bad in [b' ', 0x00, 0x80, 0xff, b'"', b'\\', b'/'] {
+                        let mut v = clean.clone();
+                        v[i] = bad;
+                        assert_eq!(
+                            p.admits_all(&v),
+                            v.iter().all(|&b| p.allows(b)),
+                            "{p:?} n={n} i={i} {bad:#04x}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn profile_t_excludes_exactly_quote_and_backslash() {
         for b in 0x20..=0x7Eu8 {

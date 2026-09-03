@@ -145,10 +145,7 @@ fn every_form_occurs_and_round_trips() {
     let mut seen = [false; 2];
     for (_, data) in corpus() {
         for block in data.chunks(BLOCK_BYTES) {
-            let mask = (0..block.len())
-                .filter(|&i| Profile::U.allows(block[i]))
-                .fold(0u64, |m, i| m | 1 << i);
-            let (form, _) = choose(block.len(), mask);
+            let (form, _) = choose(block.len(), Profile::U.admits_all(block));
             seen[form as usize] = true;
         }
     }

@@ -45,17 +45,16 @@ pub enum Form {
     Raw,
 }
 
-/// Which form a block of `m` bytes takes, given which of them the profile
-/// admits, and how many characters it costs (§9.0).
+/// Which form a block of `m` bytes takes, given whether the profile admits
+/// all of them, and how many characters it costs (§9.0).
 ///
 /// Raw where every byte is admitted and raw is no longer than base64, which
 /// is every length from four up; base64 otherwise. On the tie at four, five
 /// and six bytes raw wins, because a tie costs nothing and text in the clear
 /// is what the format is for.
-pub fn choose(m: usize, mask: u64) -> (Form, usize) {
+pub fn choose(m: usize, admits_all: bool) -> (Form, usize) {
     debug_assert!(m <= BLOCK_BYTES);
-    let all = if m == 64 { u64::MAX } else { (1u64 << m) - 1 };
-    if mask == all && m + 2 <= base64_len(m) {
+    if admits_all && m + 2 <= base64_len(m) {
         (Form::Raw, m + 2)
     } else {
         (Form::Base64, base64_len(m))
@@ -73,8 +72,7 @@ pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
     let mut pending = 0..0;
     for (k, block) in data.chunks(BLOCK_BYTES).enumerate() {
         let start = k * BLOCK_BYTES;
-        let mask = profile.mask_short(block);
-        let form = choose(block.len(), mask).0;
+        let form = choose(block.len(), profile.admits_all(block)).0;
         if form == Form::Base64 {
             if pending.end == start {
                 pending.end = start + block.len();
@@ -129,15 +127,21 @@ mod tests {
     use super::*;
 
     /// §9.1: a full block is raw at 50 when every byte is admitted, and base64
-    /// at 64 the moment one is not.
+    /// at 64 the moment one is not -- wherever that one byte sits, which is
+    /// what `admits_all`'s early exit could get wrong.
     #[test]
     fn a_full_block_is_all_or_nothing() {
-        assert_eq!(choose(48, (1u64 << 48) - 1), (Form::Raw, 50));
+        let clean = [b'a'; 48];
+        assert!(Profile::U.admits_all(&clean));
+        assert_eq!(choose(48, true), (Form::Raw, 50));
         for missing in 0..48 {
-            let mask = ((1u64 << 48) - 1) & !(1 << missing);
-            assert_eq!(choose(48, mask), (Form::Base64, 64), "byte {missing}");
+            let mut block = clean;
+            block[missing] = b' ';
+            assert!(!Profile::U.admits_all(&block), "byte {missing}");
+            block[missing] = 0x80;
+            assert!(!Profile::U.admits_all(&block), "byte {missing}, high bit");
         }
-        assert_eq!(choose(48, 0), (Form::Base64, 64));
+        assert_eq!(choose(48, false), (Form::Base64, 64));
     }
 
     /// Short tails: raw needs four bytes to pay for its two marker characters,
@@ -145,14 +149,10 @@ mod tests {
     #[test]
     fn short_tails() {
         for m in 1..=3 {
-            assert_eq!(
-                choose(m, (1 << m) - 1),
-                (Form::Base64, base64_len(m)),
-                "{m}"
-            );
+            assert_eq!(choose(m, true), (Form::Base64, base64_len(m)), "{m}");
         }
         for m in 4..=48 {
-            assert_eq!(choose(m, (1 << m) - 1), (Form::Raw, m + 2), "{m}");
+            assert_eq!(choose(m, true), (Form::Raw, m + 2), "{m}");
         }
     }
 
@@ -169,7 +169,7 @@ mod tests {
                 encode_into(&data, Profile::U, &mut out);
                 let want: usize = data
                     .chunks(BLOCK_BYTES)
-                    .map(|b| choose(b.len(), Profile::U.mask_short(b)).1)
+                    .map(|b| choose(b.len(), Profile::U.admits_all(b)).1)
                     .sum();
                 assert_eq!(out.len(), want, "n = {n}, bad at {bad_at:?}");
                 assert!(out.len() <= base64_len(n));

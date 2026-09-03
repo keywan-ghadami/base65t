@@ -607,17 +607,46 @@ Gemessen gegen die Base64-Implementierung des Benches, die im selben Prozess
 lebt und vom selben Compiler gebaut wurde. Alles einthreadig, bestes von fünf
 Läufen, Base64 = 100 %.
 
-### 13.1 Die zwei Blockformen
+### 13.1 Was die Prüfung kostet
 
 Ein Raw-Block ist ein `memcpy` in beide Richtungen, ein Base64-Block ist
-Base64. Der einzige Aufwand, den dieses Format über Base64 hinaus hat, ist
-die Frage je Block, welche Form er bekommt, und die ist ein Bitfeld über 48
-Bytes — 48 Tabellenzugriffe ohne Verzweigung, gemessen 2285 MiB/s, also rund
-ein Fünftel Nanosekunde je Byte.
+Base64. Der einzige Aufwand, den dieses Format über Base64 hinaus hat, ist die
+Frage je Block: lässt das Profil **jedes** Byte zu?
 
-Beim Dekodieren gibt es diesen Aufwand nicht: die Form steht im ersten
-Zeichen. Ein Raw-Block spart dort sogar Arbeit gegenüber Base64, weil er
-nichts zu rechnen hat.
+Diese Frage ist genau die, die gestellt werden muss — nicht mehr. Eine
+frühere Fassung baute je Block ein Bit je Byte und verglich mit
+Alles-Einsen; das beantwortet dieselbe Frage und kostet sechsmal so viel,
+weil es jedes Byte ansehen muss, auch wenn das erste die Sache schon
+entscheidet. Die Prüfung heute bricht ab, sobald ein Byte sie entscheidet,
+und ihr Test je Byte ist Arithmetik statt Tabellenzugriff — ein Gather
+vektorisiert nicht, sechs Vergleiche schon.
+
+**Gemessen**, jeweils gegen `encode_base64url` derselben Implementierung,
+also gegen dieselbe Schleifenform und denselben Allokator (Median gepaarter
+Quotienten über fünfzehn Runden, weil die Streuung eines geteilten Runners
+größer ist als der Effekt):
+
+| Eingabe je 48-Byte-Block | nur die Prüfung | Kodieren gesamt |
+|---|--:|--:|
+| ganz zulässig (Raw) | 46 % | **50 %** |
+| Binärdaten | 16 % | **118 %** |
+| Text, das abweisende Byte am Blockanfang | 15 % | **119 %** |
+| Text, das abweisende Byte am Blockende | 45 % | **145 %** |
+
+Die Tabelle sagt alles über den Aufschlag. Wo die Prüfung früh abbricht,
+kostet sie ein Sechstel der Base64-Zeit; wo sie den ganzen Block lesen muss,
+knapp die Hälfte. Wo sie „ja" sagt, entfällt die Base64-Schleife und das
+Kodieren ist **doppelt so schnell wie Base64**.
+
+**Eine Untergrenze, keine Nachlässigkeit.** Der Encoder muss jedes Byte
+ansehen, um die Frage zu beantworten; unter „einmal lesen" geht es nicht.
+Was ginge, ist dasselbe Lesen mit Vektorbefehlen — 32 Bytes je Operation
+statt eines —, und das braucht entweder `unsafe` oder eine noch nicht
+stabile Standardbibliothek. Die Referenzimplementierung verzichtet auf
+beides (§14); §17 nennt es als Kandidaten.
+
+Beim **Dekodieren** gibt es diesen Aufwand nicht: die Form steht im ersten
+Zeichen. Ein Raw-Block spart dort sogar Arbeit gegenüber Base64.
 
 ### 13.2 Das Durchsatz-Kriterium
 
@@ -630,28 +659,27 @@ Base64. Er ist es, wenn er die falschen Bytes schreibt.
 
 ### 13.3 Große Dateien
 
-Silesia und Korpusdateien, MiB/s und Base65t als Anteil an der Base64-Zeit
-(`--example large`):
+Silesia und Korpusdateien, gegen `encode_base64url` derselben
+Implementierung, Median gepaarter Quotienten:
 
-| Datei | Profil | Größe | Base64 enc | Base65t enc | enc | Base64 dec | Base65t dec | dec |
-|---|---|--:|--:|--:|--:|--:|--:|--:|
-| `dickens` | U | 100,0 % | 729 | 699 | **104 %** | 1026 | 1140 | **90 %** |
-| `mozilla` | U | 99,8 % | 555 | 530 | **105 %** | 783 | 797 | **98 %** |
-| `x-ray` | U | 100,0 % | 826 | 720 | **115 %** | 1114 | 1335 | **83 %** |
-| `countries.json` | U | 100,0 % | 894 | 761 | **117 %** | 1164 | 1387 | **84 %** |
-| `xml` | U | 100,0 % | 878 | 721 | **122 %** | 1144 | 1361 | **84 %** |
-| `xml` | T | 90,2 % | 782 | 912 | **86 %** | 1141 | 1314 | **87 %** |
-| `dickens` | T | 94,8 % | 707 | 766 | **92 %** | 1050 | 1172 | **90 %** |
-| `countries.json` | T | 100,0 % | 819 | 755 | **109 %** | 1155 | 1376 | **84 %** |
+| Datei | Profil | Größe | Kodieren | Dekodieren |
+|---|---|--:|--:|--:|
+| `dickens` | U | 100,0 % | 118 % | **101 %** |
+| `xml` | U | 100,0 % | 121 % | **99 %** |
+| `x-ray` | U | 100,0 % | 119 % | **100 %** |
+| `countries.json` | U | 100,0 % | 121 % | **100 %** |
+| `dickens` | T | 95,1 % | 112 % | **86 %** |
+| `xml` | T | 88,4 % | **90 %** | **66 %** |
+| `x-ray` | T | 100,0 % | 113 % | **98 %** |
+| `countries.json` | T | 100,0 % | 113 % | **100 %** |
 
-**Kodieren kostet zwischen 86 und 122 %, Dekodieren zwischen 83 und 98 %.**
-Der Aufschlag beim Kodieren ist die Maske aus §13.1; wo sie oft „roh" sagt,
-wie bei XML in Profil T, ist der Encoder sogar schneller als Base64, weil ein
-`memcpy` billiger ist als eine Base64-Schleife. Dekodiert wird durchweg
-schneller als Base64, aus demselben Grund.
+**Kodieren kostet zwischen 90 und 121 %, Dekodieren zwischen 66 und 101 %.**
+Der Aufschlag beim Kodieren ist die Prüfung aus §13.1 und nichts sonst; wo
+sie oft „ja" sagt, wie bei XML in Profil T, ist der Encoder schneller als
+Base64. Dekodiert wird nie langsamer.
 
 Zum Vergleich, dieselben Dateien: die Segmentfassung kostete auf `dickens`
-1137 % beim Kodieren, die Maskenfassung 169 %. Diese Fassung kostet 104 %.
+1137 % beim Kodieren, die Maskenfassung 169 %, diese 118 %.
 
 ### 13.4 Kurze Werte
 
@@ -675,9 +703,9 @@ Base64 des Benches (`--example short`):
 **Auf kurzen Werten ist Base65t schneller als Base64, in beide Richtungen.**
 Der Grund ist die Arbeitsbilanz: Base64 liest ein Byte, schlägt vier Zeichen
 nach und schreibt vier — je drei Bytes. Ein Raw-Block liest 48 Bytes, prüft
-sie gegen eine Tabelle und kopiert sie. Wer weniger schreibt, schreibt
-schneller. Die Zeilen, die 100 % Größe haben, kosten höchstens neun Prozent
-mehr Zeit, und dekodiert werden sie schneller.
+sie mit sechs Vergleichen je Byte und kopiert sie. Wer weniger schreibt,
+schreibt schneller. Die Zeilen, die 100 % Größe haben, kosten höchstens neun
+Prozent mehr Zeit, und dekodiert werden sie schneller.
 
 Zum Vergleich: die Segmentfassung lag hier bei 355 % beim Kodieren, die
 Maskenfassung bei 98 % / 123 %.
@@ -883,3 +911,10 @@ Ergänzende Arbeiten, nicht normativ:
    größere Blockgröße drückt die rohe Form gegen 75 % und lässt gleichzeitig
    häufiger einen ganzen Block nach Base64 kippen; wo das Optimum liegt, ist
    eine Messfrage. Wer die Zahl ändert, ändert die Versionsnummer.
+5. **Eine vektorisierte Profilprüfung.** Kein Formatthema, aber die einzige
+   Stelle, an der diese Implementierung noch etwas verschenkt: die Prüfung
+   aus §13.1 liest ein Byte je Operation, wo ein Vektorbefehl 32 läse. Sie
+   ist der ganze Aufschlag beim Kodieren. Der Weg dahin verlangt `unsafe`
+   oder eine noch nicht stabile Standardbibliothek, und beides steht §14
+   entgegen; sobald `std::simd` stabil ist, ist es eine Änderung von wenigen
+   Zeilen, die kein Byte der Ausgabe bewegt.
