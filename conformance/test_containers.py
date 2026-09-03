@@ -30,8 +30,13 @@ import reference as base65t  # noqa: E402
 # is entirely unreserved encodes identically under U and T, and then "T is not
 # URL-safe" is never exercised. The second sample uses characters T admits and
 # U does not -- a space, a slash, a comma, an equals sign.
-SAMPLE_U = b"\xde\xad\xbe\xefsession-eu-central-1.frankfurt~alice"
-SAMPLE_T = b"\xde\xad\xbe\xefGET /api/v2?id=42, status=ok; done"
+#
+# Both are entirely legal in their profile and at least four bytes long, so
+# each is a raw block and its bytes stand in the output (§9.0). That is what
+# a container test needs: a stream that is pure base64 would tell us only
+# that base64 goes through a URL, which nobody doubts.
+SAMPLE_U = b"session-eu-central-1.frankfurt~alice.jones-2026"
+SAMPLE_T = b"GET /api/v2?id=42, status=ok; done"
 
 failures = []
 
@@ -49,6 +54,8 @@ def main() -> int:
     t = base65t.encode_with(SAMPLE_T, "T").decode("ascii")
     print(f"profile U: {u}\nprofile T: {t}\n")
     assert any(c in t for c in " /?=,;"), "the T sample must exercise T"
+    assert u.startswith("~~"), "the U sample must be a raw block"
+    assert t.startswith("~~"), "the T sample must be a raw block"
 
     print("URL query (urllib.parse)")
     check("U survives quote() unchanged", urllib.parse.quote(u, safe="") == u)

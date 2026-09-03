@@ -52,27 +52,27 @@ def main() -> int:
 
 
 def errors() -> int:
-    """The ten codes of §10.4, on the vectors of §15.
+    """The nine codes of §10.4, on the vectors of §15.
 
     A second implementation that agrees on every valid stream and disagrees on
     what is invalid has not agreed about the format.
     """
     cases = [
         (b"YWJj" * 16 + b"~", "U", "decode", "E_TRAILING_TILDE"),
-        (b"~AAA", "U", "decode", "E_TRUNCATED"),
-        (b"~4AAAAAAAab", "U", "decode", "E_TRUNCATED"),
+        (b"~", "U", "decode", "E_TRAILING_TILDE"),
+        (b"~Aabc", "U", "decode", "E_RESERVED"),
+        (b"~7abc", "U", "decode", "E_RESERVED"),
         (b"~~a b", "U", "decode", "E_PROFILE"),
+        (b"~~a=b=", "U", "decode", "E_PROFILE"),               # TV10
         (b"abcde", "U", "decode", "E_ALIGN"),
         (b"YWxpY2V", "U", "decode", "E_NONZERO_TAIL"),
         (b"YW*j", "U", "decode", "E_CHARSET"),
-        (b"~=AAAAAAA", "U", "decode", "E_CHARSET"),
+        (b"YW~x", "U", "decode", "E_CHARSET"),
+        (b"~=", "U", "decode", "E_CHARSET"),
         (b"YWxp==", "U", "decode", "E_PADDING"),
         (b"YWxpY2U==", "U", "decode", "E_PADDING"),
         (b"PDw_Pz8+Pg", "U", "decode", "E_MIXED_ALPHABET"),
         (b"PDw/Pz8+Pg", "U", "decode_url_strict", "E_NON_URL_ALPHABET"),
-        (b"~AAAAAAABa", "U", "decode", "E_MASK"),
-        (b"~~a=b=", "U", "decode", "E_PROFILE"),               # TV10
-        (b"~", "U", "decode", "E_TRAILING_TILDE"),
     ]
     bad = 0
     for stream, profile, entry, want in cases:
@@ -91,7 +91,7 @@ def errors() -> int:
         (b"YWxpY2U=", "U", b"alice"),
         (b"YWxpY2Uu", "U", b"alice."),
         (b"~~a+b/c-d_e", "T", b"a+b/c-d_e"),
-        (b"~4AAAAAAAabc", "U", b"abc"),
+        (b"~~", "U", b""),
     ]:
         got = base65t.decode(stream, profile).bytes
         if got != expect:

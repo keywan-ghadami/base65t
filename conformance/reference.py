@@ -5,9 +5,9 @@
 """Base65t v0.4, written from ``docs/spec-v0.4.de.md``.
 
 This is the second implementation §16.3 asks for, and it is deliberately not a
-translation of the Rust one: it was written from the specification, it builds
-the mask by hand rather than through a packed lookup, and it shares no code,
-no tables and no structure with it. Where the two disagree, one of them has
+translation of the Rust one: it was written from the specification, it tests
+each byte of a block one at a time rather than through a packed mask, and it
+shares no code, no tables and no structure with it. Where the two disagree, one of them has
 misread the document -- which is the entire point of asking for two.
 
 What it is not: written by somebody else. That gap stays open and is named in
@@ -21,7 +21,6 @@ from __future__ import annotations
 ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 TILDE = 0x7E
 BLOCK_BYTES = 48          # §4
-MASK_CHARS = BLOCK_BYTES // 6
 
 _VALUE = {}
 for _i, _c in enumerate(ALPHABET):
@@ -31,7 +30,7 @@ _VALUE[ord("/")] = 63
 
 
 class Base65tError(Exception):
-    """One of the ten codes of §10.4."""
+    """One of the nine codes of §10.4."""
 
     def __init__(self, code: str):
         super().__init__(code)
@@ -122,39 +121,10 @@ class _Decoder:
                 end = min(pos + 2 + BLOCK_BYTES, n)
                 self.raw(stream[pos + 2:end])
                 pos = end
+            elif stream[pos + 1] in _VALUE:
+                raise Base65tError("E_RESERVED")       # §17
             else:
-                pos = self.mask_block(stream, pos + 1)
-
-    def mask_block(self, stream: bytes, pos: int) -> int:
-        """§6: the mask form, from its first mask character."""
-        n = len(stream)
-        if pos + MASK_CHARS > n:
-            raise Base65tError("E_TRUNCATED")
-        bits = []
-        for j in range(MASK_CHARS):
-            v = self.read(stream[pos + j])
-            # First byte in the top bit, so the mask reads like the bytes.
-            bits.extend((v >> (5 - t)) & 1 for t in range(6))
-        pos += MASK_CHARS
-        admitted = sum(bits)
-        if pos + admitted > n:
-            raise Base65tError("E_TRUNCATED")
-        clear = stream[pos:pos + admitted]
-        for b in clear:
-            if not allows(self.profile, b):
-                raise Base65tError("E_PROFILE")
-        pos += admitted
-        full = _b64_len(BLOCK_BYTES - admitted)
-        at_end = n - pos <= full
-        end = n if at_end else pos + full
-        rest = self.base64(stream[pos:end], at_end)
-        m = admitted + len(rest)
-        if m > BLOCK_BYTES or any(bits[m:]):
-            raise Base65tError("E_MASK")
-        clear_it, rest_it = iter(clear), iter(rest)
-        for i in range(m):
-            self.out.append(next(clear_it) if bits[i] else next(rest_it))
-        return end
+                raise Base65tError("E_CHARSET")
 
     def base64(self, seg: bytes, at_stream_end: bool) -> bytes:
         k = 0
@@ -215,42 +185,13 @@ def _b64(chunk: bytes) -> bytes:
     return bytes(out)
 
 
-def _forms(block: bytes, profile: str):
-    """§9.0: the three forms a block may take, each with its length.
-
-    Listed in the order the tie-break prefers them *least*: base64 first, so
-    that a later form of equal length replaces it.
-    """
-    bits = [allows(profile, b) for b in block]
-    m, admitted = len(block), sum(bits)
-    forms = [("base64", _b64_len(m))]
-    forms.append(("mask", 1 + MASK_CHARS + admitted + _b64_len(m - admitted)))
-    if admitted == m:
-        forms.append(("raw", m + 2))
-    return bits, forms
-
-
 def _encode_block(block: bytes, profile: str) -> bytes:
-    bits, forms = _forms(block, profile)
-    best = None
-    for form, length in forms:
-        if best is None or length <= best[1]:
-            best = (form, length)
-    form = best[0]
-    if form == "base64":
-        return _b64(block)
-    if form == "raw":
+    """§9.0: raw when every byte is admitted and raw is no longer than
+    base64, which is four bytes and up; base64 otherwise."""
+    m = len(block)
+    if all(allows(profile, b) for b in block) and m + 2 <= _b64_len(m):
         return b"~~" + block
-    out = bytearray(b"~")
-    for j in range(MASK_CHARS):
-        v = 0
-        for t in range(6):
-            i = 6 * j + t
-            v = v << 1 | (1 if i < len(block) and bits[i] else 0)
-        out.append(ALPHABET[v])
-    out += bytes(b for b, ok in zip(block, bits) if ok)
-    out += _b64(bytes(b for b, ok in zip(block, bits) if not ok))
-    return bytes(out)
+    return _b64(block)
 
 
 def encode_base64url(data: bytes, profile: str = "U") -> bytes:

@@ -17,6 +17,5 @@ def decode_url_strict(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
 
 PROFILES: Final[list[str]]
 BLOCK_BYTES: Final[int]
-MASK_CHARS: Final[int]
 SPEC_VERSION: Final[str]
 __version__: Final[str]

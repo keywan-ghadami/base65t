@@ -18,6 +18,7 @@ erzwungen haben.
 | `errata-v0.1.de.md` | Zehn Entscheidungen (E1–E10), die beim Implementieren von v0.1 fällig wurden. E1 ist der Fund, dass §11.1 zwei einander widersprechende Definitionen der kanonischen Form enthielt |
 | `spec-v0.2.de.md` | v0.1 + Errata, plus die lineare Regel und `dense-fast`. Der Zwischenstand, gegen den die Performance-Arbeit gemessen wurde |
 | `spec-v0.4-segmente.de.md` | Das Segmentformat mit **einem** Encoder statt fünf, am Kopf entschieden, exakt programmiert, gefenstert. Trug die Nummer v0.4 einen Tag lang; §13.3 darin ist die Messung, die es gekippt hat |
+| `spec-v0.4-maske.de.md` | Das Blockformat mit einer **dritten** Blockform: einer Maske mit einem Bit je Byte, die die zulässigen Bytes eines gemischten Blocks im Klartext ließ. Ebenfalls einen Tag; §13.1 darin ist die Messung, die sie gekippt hat |
 | `FINDINGS.md` | Was das Implementieren gefunden hat: Widersprüche, zu enge Suchräume, Zahlen, die nicht stimmten. Chronologisch, nicht redigiert |
 | `PREREGISTRATION.md` | Die Sweetspot-Messung, festgelegt **bevor** sie lief. Damit der Schwellwert `L_min = 11` nicht das Ergebnis einer nachträglich passend gewählten Auswertung ist |
 
@@ -70,10 +71,44 @@ eine Stichprobe. Fünf Mechanismen, um eine Idee bezahlbar zu machen.
 
 Die Frage, die das beendet hat, war nicht "wie machen wir das Programm
 schneller", sondern "warum müssen wir überhaupt nachschauen". Ein Block fester
-Länge, drei Formen, ein Bit je Byte für die Maske, das häufigste Muster mit
-einem eigenen kurzen Code. Kein Suchen, kein Zustand, keine Längen im Strom.
-Das ist `docs/spec-v0.4.de.md`, und die Segmentfassung liegt daneben als das,
-was ein Tag Messen kostet und lehrt.
+Länge, ein festes Mapping, kein Suchen, kein Zustand, keine Längen im Strom.
+
+## Und dann die Maske
+
+Die erste Blockfassung hatte drei Formen. Die dritte war eine Maske mit einem
+Bit je Byte, die aus einem gemischten Block die zulässigen Bytes im Klartext
+stehen ließ und den Rest als Base64 anhängte. Sie war die eleganteste Idee
+dieses Projekts: sie machte englische Prosa in Profil U von 17 % auf 76 %
+lesbar, bei kleinerer Ausgabe als das Segmentformat, und sie kostete keine
+einzige Suche.
+
+Sie ist trotzdem gestrichen, und der Grund ist kein Messfehler, sondern die
+Positionierung. Ein Maskenblock kostete gemessen das **Dreifache** der
+Base64-Zeit, in beide Richtungen, weil er dreimal so viel tut: die Maske
+schreiben oder lesen, 48 Bytes auf zwei Ziele trennen oder aus zweien
+zusammensetzen, und den Rest als Base64. Optimiert wurde er bis an die Grenze
+dessen, was skalar geht — verzweigungsfrei, Stack-Puffer, Tabellen über
+Achtergruppen, Tabellen-Popcount —, und blieb beim Dreifachen.
+
+„Dreimal langsamer auf meinen JSON-Blobs" ist der Satz, der die Entscheidung
+für dieses Format kippt. Es lebt nicht von seinem Mehrwert, der klein ist,
+sondern davon, dass die Entscheidung dafür **nichts kostet**. Lesbarer
+gemischter Text ist schön, aber er ist nicht der Grund, aus dem jemand das
+Format nimmt, und er ist eine Tür weiter bei Base85N zu haben.
+
+`~` gefolgt von einem Alphabetzeichen bleibt reserviert und ist heute ein
+Fehler. Eine spätere Fassung kann die Maske zurückholen, wenn sie zeigt, dass
+sie ohne diesen Preis geht; ein Dekoder von heute scheitert dann laut statt
+falsch zu lesen.
+
+## Was daraus geworden ist
+
+Zwei Blockformen, ein Vergleich je Block: `docs/spec-v0.4.de.md`. Auf kurzen
+Werten schneller als Base64 in beide Richtungen (77 % und 84 % der Zeit), auf
+großen Dateien zwischen 86 und 122 % beim Kodieren und durchweg schneller beim
+Dekodieren. Der Preis steht in §13.5 der aktuellen Fassung: gemischter Text
+ist nicht mehr lesbar, und auf großen Dokumenten holt das Format in Profil U
+nichts mehr.
 
 **Geblieben aus der Segmentzeit:** die Maske über 64 Bytes (sie ist jetzt das
 ganze Encoder-Innere), die Regel-A-Erkenntnis, dass Alphabet-Konsistenz eine

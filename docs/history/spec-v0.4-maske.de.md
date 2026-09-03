@@ -1,4 +1,12 @@
-# Base65t — Spezifikation v0.4
+# Base65t — Spezifikation v0.4, Maskenfassung (zurückgezogen)
+
+> **Historie.** Diese Fassung trug die Nummer v0.4 für einen Tag. Sie ist das
+> Blockformat mit einer dritten Blockform: einer Maske mit einem Bit je Byte,
+> die die zulässigen Bytes eines gemischten Blocks im Klartext ließ. Sie ist
+> die lesbarste Fassung, die es je gab, und die einzige, die dafür einen
+> messbaren Preis verlangte — §13.1 darin ist die Messung. Der aktuelle Stand
+> ist `docs/spec-v0.4.de.md`; `docs/history/README.md` sagt, warum.
+
 
 **Status:** aktuell. **Wire-Format: nicht stabil.** v0.4 ersetzt das
 Segmentformat der Fassungen v0.1 bis v0.3 durch Blöcke fester Länge, und
@@ -11,8 +19,9 @@ Die früheren Fassungen liegen in `docs/history/`, zusammen mit einem
 Verzeichnis dessen, was zwischen den Fassungen gestrichen wurde und warum.
 
 **Kurzfassung:** Base64URL, erweitert um ein 65. Zeichen (`~`). Die Eingabe
-wird in Blöcke von 48 Bytes geschnitten; ein Block, dessen Bytes das Profil
-alle zulässt, steht roh da, jeder andere ist Base64.
+wird in Blöcke von 48 Bytes geschnitten; jeder Block ist entweder Base64,
+oder er steht roh da, oder er trägt eine Maske, die sagt, welche seiner Bytes
+roh dastehen und welche als Base64 folgen.
 
 > Normative Aussagen sind als solche gekennzeichnet und verwenden MUSS / DARF NICHT /
 > SOLLTE nach RFC 2119. Zahlen, die nicht als *exakt* markiert sind, sind Messungen
@@ -26,11 +35,11 @@ beschreibt als vorher, steht das am Anfang des Abschnitts.
 
 | § | Änderung |
 |---|---|
-| 4 | **Blöcke statt Segmente.** Zwei Blockformen fester Länge; keine Längen im Strom |
-| 6 | War das Literal-Segment mit Längen-Header; ist jetzt die reservierte Form |
+| 4 | **Blöcke statt Segmente.** Drei Blockformen fester Länge; keine Längen im Strom |
+| 6 | War das Literal-Segment mit Längen-Header; ist jetzt der Maskenblock |
 | 9 | Der Encoder ist eine Abbildung je Block, ohne Suche und ohne Zustand. §9.2 (das Programm), §9.2.1 (Fensterung), §9.2.4 (geschlossene Form), §9.6 (Kopfentscheidung) entfallen |
 | 10 | Der Dekoder kennt vor dem Lesen eines Blocks dessen Länge |
-| 10.4 | `E_RESERVED_LEN` und `E_TRUNCATED` entfallen, `E_RESERVED` kommt hinzu |
+| 10.4 | `E_RESERVED_LEN` entfällt, `E_MASK` kommt hinzu |
 | 11 | Kanonizität folgt aus der Abbildung; die Ordnung `B < L < S` entfällt |
 | 13 | Neu gemessen. Kodieren und Dekodieren liegen in beiden Profilen bei Base64 |
 | 14 | Der Dekoder parst keine angreifergewählte Länge mehr |
@@ -40,12 +49,12 @@ beschreibt als vorher, steht das am Anfang des Abschnitts.
 
 **Größe: zugesichert, je Eingabe, nicht im Mittel.** `len(encode(x)) ≤
 ceil(4·len(x)/3)` für jede Eingabe und beide Profile, ohne Ausnahme (§9.4).
-Der Beweis ist ein Satz: ein Roh-Block kostet 50 Zeichen, wo Base64 64
-kostet, und jeder andere Block *ist* Base64.
+Der Beweis ist ein Satz: jeder Block nimmt die kürzeste von drei Formen, und
+Base64 ist eine davon.
 
 **Bytegleichheit: zugesichert.** `encode(x, profil)` ist eine Abbildung, die
-je Block aus 48 Bytes eine Ausgabe bestimmt. Es gibt nichts, worüber zwei
-Encoder verschiedener Meinung sein könnten (§11).
+je Block aus 48 Bytes und einer Maske eine Ausgabe bestimmt. Es gibt nichts,
+worüber zwei Encoder verschiedener Meinung sein könnten (§11).
 
 **Durchsatz: gemessen, nicht zugesichert.** §13.
 
@@ -63,13 +72,8 @@ ist ein Grund, es bleiben zu lassen.
 
 Deshalb gibt es genau eine parameterlose `encode`-Funktion, die Bytes nimmt
 und Bytes liefert. Es gibt keine Presets, keine Modi, keine Schwellwerte. Der
-Encoder ist in einem Satz erklärt: **48 Bytes Text bleiben Text, alles andere
-ist Base64.**
-
-Eine dritte Blockform hat es einen Tag lang gegeben: eine Maske, die je Byte
-sagte, welche Bytes eines gemischten Blocks im Klartext stehen. Sie war
-gemessen dreimal so teuer wie Base64 auf jedem Block, für den sie galt.
-`docs/history/` beschreibt sie; §17 hält die Tür für sie offen.
+Encoder ist in einem Satz erklärt: **48 Bytes Text bleiben Text, sonst
+Base64, und dazwischen sagt eine Maske, was was ist.**
 
 Zwei Parameter bleiben, und keiner davon ist eine Wahl über die Kodierung:
 
@@ -92,7 +96,7 @@ Zwei Parameter bleiben, und keiner davon ist eine Wahl über die Kodierung:
 ### 0.2 Was Base65t *ist*, in einem Satz
 
 > Base64URL in Blöcken von 48 Bytes, wobei ein Block seine Bytes roh tragen
-> darf und ein 65. Zeichen sagt, welche Blöcke das sind.
+> darf und ein 65. Zeichen sagt, ob und welche.
 
 ### 0.3 Was „ein Dekoder für alles" genau heißt
 
@@ -115,18 +119,14 @@ Base65t ist der **Wegbereiter**, nicht der Höhepunkt. Base85N führt denselben
 Durchreich-Gedanken weiter und ist dichter; Base91z komprimiert. Beide
 verlangen vom Aufrufer, ein Verfahren zu lernen, das er noch nicht kennt.
 Base65t verlangt das nicht: der Kern *ist* Base64URL, die Ausgabe ist niemals
-größer und niemals nennenswert langsamer, und die einzige Frage, die bleibt,
-ist das Profil.
-
-Der Mehrwert ist entsprechend klein — auf kurzen Werten 21 % — und die Kosten
-sind es auch. Das ist die Absicht: wer den ersten Schritt macht, soll ihn
-ohne Abwägung machen können. Wer danach gemischten Text lesbar haben will
-oder Dichte braucht, geht eine Tür weiter.
+größer, und die einzige Frage, die bleibt, ist das Profil. Der Mehrwert ist
+entsprechend klein — auf kurzen Werten 21 %, über den Korpus 1,4 % in
+Profil U und 5 % in T — aber die Kosten sind es auch.
 
 ## 1. Zielsetzung
 
 1. **Nie schlechter als Base64** (§9.4).
-2. Text durchreichen, wo er in Stücken von 48 Bytes zusammenhängt (§13.4).
+2. Text durchreichen, auch wenn Satzzeichen dazwischenstehen (§6, §13.4).
 3. Lesbar bleiben.
 4. **Kein Escaping** — auch nicht für `~`.
 5. **Abwärtskompatibel lesen** — jeder kanonische Base64- oder Base64URL-Strom,
@@ -135,7 +135,6 @@ oder Dichte braucht, geht eine Tür weiter.
    nicht konfiguriert (§0.3).
 7. Bytegleich reproduzierbar (§11).
 8. **Zustandslos.** Kein Block hängt von einem anderen ab (§4).
-9. **Nicht nennenswert langsamer als Base64**, in beide Richtungen (§13).
 
 ### 1.1 Die Kompatibilität ist asymmetrisch
 
@@ -175,22 +174,28 @@ als *erwartete Abweichung*.
 * Bitreihenfolge MSB-first. MUSS / DARF NICHT / SOLLTE nach RFC 2119.
 
 **Alphabetzeichen.** Ein Oktett heißt *Alphabetzeichen*, wenn der Dekoder es als
-Wert 0–63 interpretiert: die Zeichen von Base64-Läufen — **nicht** die rohen
-Bytes eines Blocks. Tragend für §5.4.
+Wert 0–63 interpretiert: die Zeichen von Base64-Läufen und die Maskenzeichen
+— **nicht** die rohen Bytes eines Blocks. Tragend für §5.4.
 
 ## 4. Streamstruktur
 
 ```
 Stream      := Block*
-Block       := Base64Block | RawBlock
+Block       := Base64Block | RawBlock | MaskBlock
 Base64Block := <64 Alphabetzeichen>                        # 48 Bytes
 RawBlock    := "~~" <48 rohe Bytes>
+MaskBlock   := "~" Mask <L rohe Bytes> <Base64 der übrigen 48−L Bytes>
+Mask        := <8 Alphabetzeichen>                          # 48 Bit
 ```
 
 **Die Eingabe wird an absoluten Offsets `k · 48` geschnitten.** Jeder Block
 außer dem letzten deckt genau 48 Eingabebytes ab; der letzte deckt die
-restlichen `m ≤ 48` und ist entsprechend kürzer: ein Base64-Tail hat
-`ceil(4m/3)` Zeichen, ein Raw-Tail `2 + m` und läuft bis zum Stromende.
+restlichen `m ≤ 48` und ist entsprechend kürzer:
+
+* ein Base64-Tail hat `ceil(4m/3)` Zeichen,
+* ein Raw-Tail hat `2 + m` Zeichen und läuft bis zum Stromende,
+* ein Masken-Tail hat `1 + 8 + L + ceil(4(m−L)/3)` Zeichen, und die Maskenbits
+  `≥ m` MÜSSEN 0 sein (§6.2).
 
 **Blöcke sind unabhängig (normativ).** Die Kodierung eines Blocks hängt nur
 von seinen eigenen Bytes ab. Daraus folgt alles, was dieses Format von seinen
@@ -204,17 +209,12 @@ Base64-Blöcke sind ein Base64-Lauf. Deshalb ist ein reiner Base64-Strom ein
 gültiger Strom, und deshalb DARF ein Dekoder aufeinanderfolgende
 Base64-Blöcke als einen Lauf lesen (§10.1).
 
-**`~` gefolgt von einem Alphabetzeichen ist reserviert (normativ).** Kein
-Encoder schreibt es, und ein Dekoder MUSS es mit `E_RESERVED` abweisen. Damit
-kann eine spätere Fassung eine dritte Blockform einführen, ohne dass ein
-Dekoder dieser Fassung sie stillschweigend falsch liest (§17).
-
-**Warum 48.** Drei Bedingungen: durch 3 teilbar, damit Base64-Blöcke kacheln;
-durch 6 teilbar, was die reservierte Form aus §17 brauchen würde; und groß
+**Warum 48.** Drei Bedingungen zugleich: durch 3 teilbar, damit Base64-Blöcke
+kacheln; durch 6 teilbar, damit die Maske aus ganzen Zeichen besteht; und groß
 genug, dass die zwei Marker-Zeichen eines Raw-Blocks vier Prozent davon sind
 und nicht ein Drittel — bei sechs Bytes je Block spart die rohe Form genau
-nichts (§9.1). Größere Blöcke sparen wenig zusätzlich und kippen häufiger
-ganz nach Base64, weil ein einziges profilwidriges Byte genügt.
+nichts (§9.1). Größere Blöcke sparen wenig zusätzlich und schieben mehr Bytes
+in den Base64-Anhang eines Maskenblocks.
 
 Ein leerer Strom ist gültig und dekodiert zu null Bytes.
 
@@ -230,7 +230,8 @@ Base64URL. Sei `n` die Zeichenzahl ohne Padding:
 | 1 | — | **nein** (`E_ALIGN`) |
 
 **Kanonizität:** ungenutzte Bits im letzten Zeichen MÜSSEN 0 sein
-(`E_NONZERO_TAIL`).
+(`E_NONZERO_TAIL`). Das gilt für jeden Base64-Lauf, auch für den Anhang eines
+Maskenblocks, der für sich allein ein Lauf ist.
 
 ### 5.1 Encoder-Alphabet
 
@@ -248,6 +249,7 @@ Encoder erzeugt **niemals** Padding (§5.3).
 ### 5.2 Permissive Dekodierung (normativ)
 
 Jeder konforme Dekoder MUSS beide Alphabete akzeptieren: `-`/`+` → 62, `_`/`/` → 63.
+Gilt für Base64-Läufe **und** Maskenzeichen.
 
 ### 5.3 Padding (normativ)
 
@@ -272,8 +274,7 @@ zum Stromende: `~~a=b=` sind vier Bytes Nutzlast (TV10).
 
 > **Regel A.** Ein Strom DARF NICHT beide Alphabetvarianten mischen. Enthält die
 > Menge der **Alphabetzeichen** sowohl ein Zeichen aus {`+`,`/`} als auch eines aus
-> {`-`,`_`} → `E_MIXED_ALPHABET`. Die Regel gilt über den ganzen Strom, also
-> auch über die Raw-Blöcke hinweg, die zwischen zwei Base64-Blöcken stehen.
+> {`-`,`_`} → `E_MIXED_ALPHABET`.
 
 Regel A betrifft ausschließlich Alphabetzeichen. Rohe Bytes zählen nicht mit
 — in Profil U enthält fast jeder Raw-Block `-` oder `_`. Wer den Gesamtstrom
@@ -291,27 +292,42 @@ padding_seen  : bool
 Zusätzlich MUSS `decode_url_strict` angeboten werden (weist `classic` mit
 `E_NON_URL_ALPHABET` ab).
 
-## 6. Die reservierte Form
+## 6. Der Maskenblock
 
 ```
-"~" <Alphabetzeichen> ...          # reserviert, E_RESERVED
+MaskBlock := "~" Mask <L rohe Bytes> <Base64 der übrigen Bytes>
 ```
 
-Kein Encoder dieser Fassung schreibt `~` gefolgt von einem Alphabetzeichen,
-und ein Dekoder MUSS es abweisen. Die zwei Zeichen kosten heute nichts und
-halten die Tür offen: v0.4 hatte für einen Tag eine dritte Blockform, die
-hier ansetzte — `~`, acht Maskenzeichen mit einem Bit je Byte, die zulässigen
-Bytes im Klartext, dann Base64 des Rests. Sie hat einen gemischten Block zu
-zwei Dritteln lesbar gemacht und dafür das Dreifache der Base64-Zeit gekostet
-(`docs/history/`).
+Der Block, der dieses Format von seinen Vorgängern unterscheidet. Ein Block,
+in dem manche Bytes das Profil erfüllen und manche nicht, wird nicht als
+Ganzes nach Base64 geschickt. Die Maske sagt je Byte, ob es roh dasteht; die
+rohen Bytes folgen in Eingabereihenfolge, dann als ein Base64-Lauf die
+übrigen, ebenfalls in Eingabereihenfolge.
 
-Der Grund, sie zu streichen, ist §0.1: das Format lebt davon, dass die
-Entscheidung dafür nichts kostet. „Dreimal langsamer auf meinen JSON-Blobs"
-ist ein Satz, der genau diese Entscheidung kippt, und lesbarer gemischter
-Text ist nicht das, wofür das Format wirbt.
+### 6.1 Die Maske
 
-`~` gefolgt von etwas, das weder `~` noch ein Alphabetzeichen ist, ist kein
-reservierter, sondern ein kaputter Strom: `E_CHARSET`.
+Acht Alphabetzeichen, 48 Bit, **ein Bit je Eingabebyte des Blocks**. Zeichen
+`j` trägt die Bytes `6j` bis `6j+5`; das erste davon steht im **höchsten** Bit
+des Zeichenwerts, damit die Maske sich von links nach rechts liest wie die
+Bytes, die sie beschreibt.
+
+```
+Zeichenwert(j) = Σ_{t=0..5}  legal(6j + t) << (5 − t)
+```
+
+Beispiel: die ersten sechs Bytes `the qu` in Profil U sind legal, illegal
+(Leerzeichen), legal, legal, legal, legal → `110111`? Nein: `t h e _ q u` ist
+`1 1 1 0 1 1` = 59 = `7`. TV5 zeigt den ganzen Block.
+
+### 6.2 Zulässigkeit
+
+* Ein Bit DARF nur für ein Byte gesetzt sein, das das Profil zulässt
+  (`E_PROFILE` beim Dekodieren, weil der Dekoder die rohen Bytes prüft).
+* In einem Tail von `m < 48` Bytes MÜSSEN die Bits `≥ m` null sein
+  (`E_MASK`). Der Dekoder bestimmt `m` als Summe aus gesetzten Bits und
+  dekodierten Base64-Bytes (§10.1).
+* Eine Maske mit allen 48 Bits gesetzt ist gültig, aber kein Encoder schreibt
+  sie: die rohe Form ist kürzer (§9.0). Eine Maske ohne gesetztes Bit ebenso.
 
 ## 7. Profile
 
@@ -320,9 +336,9 @@ reservierter, sondern ein kaputter Strom: `E_CHARSET`.
 | **U** (Default) | RFC-3986-*unreserved* (66 Zeichen) | **ja** |
 | **T** | ASCII 0x20–0x7E ohne `"` und `\` (93 Zeichen) | nein |
 
-Ein profilwidriges Byte kostet seinen ganzen Block: der Block wird Base64.
-Das ist die Grobheit, die dieses Format gegen die Geschwindigkeit
-eingetauscht hat, und §13.4 beziffert sie.
+Ein profilwidriges Byte ist kein Sonderfall: es landet im Base64-Anhang des
+Maskenblocks oder, wenn zu wenige Bytes legal sind, der Block als Ganzes in
+Base64.
 
 **Profil T** ist JSON-String-sicher, **nicht** CSV-struktursicher und **nicht**
 URL-sicher. **Und es enthält das Leerzeichen** (0x20): eine
@@ -361,53 +377,64 @@ und das ist ein Erweiterungskandidat (§17), keine Formatfrage.
 
 ### 9.0 Grundprinzip (normativ)
 
-> Für jeden Block prüft der Encoder, ob das Profil **jedes** seiner Bytes
-> zulässt. Wenn ja und der Block mindestens vier Bytes hat, schreibt er `~~`
-> und die Bytes; sonst schreibt er den Block als Base64.
+> Für jeden Block bestimmt der Encoder die Maske — welche Bytes das Profil
+> zulässt — und schreibt den Block in der **kürzesten** der drei Formen aus
+> §4. Sind zwei Formen gleich lang, MUSS er die nehmen, in der **mehr Bytes
+> roh** dastehen.
 
-Das ist die ganze Regel. Sie ist eine Abbildung von 48 Bytes und einem Profil
-auf eine Ausgabe, ohne Suche, ohne Zustand und ohne Gleichstand, den eine
-Ordnung auflösen müsste. Damit prüft ein Testvektor Bytes statt Längen, und
-`docs/vectors.json` tut das über 173 Vektoren.
-
-Die vier Bytes sind kein Schwellwert, sondern die Stelle, an der die rohe Form
-aufhört, teurer zu sein: siehe §9.1.
-
-### 9.1 Was die Formen kosten
-
-Für einen Block von `m` Bytes:
+Das ist die ganze Regel. Die Länge jeder Form ist eine Funktion von `m` und
+der Anzahl gesetzter Bits `L`:
 
 ```
 Base64:  ceil(4m/3)
-Raw:     m + 2                          nur wenn jedes Byte zulässig ist
+Raw:     m + 2                          nur wenn L = m
+Mask:    1 + 8 + L + ceil(4(m−L)/3)
 ```
 
-| `m` | Base64 | Raw | |
+Der Tie-Break trifft genau zwei Fälle: die Maske gegen Base64 bei `L = 27`
+in einem vollen Block, und Raw gegen Base64 bei Tails von 4, 5 und 6 Bytes.
+In beiden Fällen kostet die Wahl nichts, und Lesbarkeit ist, wofür das Format
+da ist.
+
+Damit prüft ein Testvektor Bytes statt Längen, und `docs/vectors.json` tut das
+über 183 Vektoren.
+
+### 9.1 Was die Formen kosten
+
+Für einen vollen Block gegen dessen 64 Base64-Zeichen:
+
+| legale Bytes `L` | Raw | Maske | Gewinner |
 |--:|--:|--:|---|
-| 1 | 2 | 3 | Base64 |
-| 3 | 4 | 5 | Base64 |
-| 4 | 6 | 6 | Gleichstand → Raw |
-| 6 | 8 | 8 | Gleichstand → Raw |
-| 7 | 10 | 9 | Raw |
-| 48 | 64 | 50 | Raw, 78 % |
+| 48 | 50 | 57 | Raw, 78 % |
+| 40 | — | 60 | Maske, 94 % |
+| 30 | — | 63 | Maske, 98 % |
+| 27 | — | 64 | Maske, Gleichstand |
+| 26 | — | 65 | Base64 |
+| 0 | — | 73 | Base64 |
 
-Ab vier Bytes ist die rohe Form nie länger, und bei vier, fünf und sechs
-genau gleich lang; dort nimmt der Encoder sie trotzdem, weil ein Gleichstand
-nichts kostet und Text im Klartext ist, wofür das Format da ist. Der Gewinn
-wächst mit der Blockgröße und läuft gegen `(m+2)/(4m/3)`, also gegen 75 %; bei
-48 Bytes sind 78 % erreicht.
+Die Maske zahlt ein Bit je Byte, also ein Sechstel Zeichen, plus ein Zeichen
+Marker. Ein rohes Byte spart gegenüber Base64 ein Drittel Zeichen. Der
+Maskenblock lohnt sich deshalb, sobald mehr als 27 von 48 Bytes legal sind,
+und er kann nie mehr als 7/64 gegenüber Base64 sparen. Die rohe Form hat
+diese Grenze nicht: sie zahlt zwei Zeichen je 48 Bytes und kommt auf 78 %.
 
-**Alles oder nichts.** Ein einziges profilwidriges Byte kostet seinen ganzen
-Block. Das ist grob, und es ist der Tausch, den diese Fassung macht: eine
-feinere Kodierung — eine Maske je Byte — gab es einen Tag lang und kostete
-das Dreifache der Base64-Zeit (§6, `docs/history/`). Was die Grobheit auf
-echten Daten bedeutet, steht in §13.4: kurze Werte, die ganz aus Text
-bestehen, holen 78 %; große Dokumente holen in Profil U **nichts** und in
-Profil T fünf bis zehn Prozent.
+Das ist auch die Antwort darauf, warum ein Byte je Block und nicht ein Bit je
+Byte für *alle* Blöcke: das häufigste Muster — alles legal — bekommt den
+kürzesten Code. Eine winzige Entropiekodierung des Maskenraums.
+
+**Was gegenüber der Segmentfassung verloren geht**, ist langer sauberer
+Text: dort kostete ein Literal-Header zwei bis vier Zeichen je 4158 Bytes,
+hier kosten zwei Zeichen je 48. Prosa in Profil T kommt auf 88 % statt 80 %.
+Was gewonnen wird, ist gemischter Text: dieselbe Prosa in Profil U zeigt
+76 % ihrer Bytes statt 17 %, weil die Maske je Byte zahlt statt je Lauf und
+ein Lauf von fünf Bytes zwischen zwei Leerzeichen keinen Header wert war.
+§13.4 hat die Tabelle.
 
 ### 9.2 Optimale Segmentierung — **entfällt**
 
-Es gibt nichts zu segmentieren.
+Es gibt nichts zu segmentieren. Der Encoder der Segmentfassung war ein
+Programm über Läufe datenabhängiger Länge; dieses ist eine Abbildung über
+Blöcke fester Länge, und §9.0 ist die vollständige Beschreibung.
 
 ### 9.3 Einstiegspunkte
 
@@ -426,24 +453,27 @@ SOLLTEN genau eine parameterlose `encode`-Funktion exportieren.
 len(encode(x, profil)) <= ceil(4 * len(x) / 3)
 ```
 
-**Je Eingabe, nicht im Mittel, ohne Ausnahme.** Beweis: ein Roh-Block kostet
-`m + 2 ≤ ceil(4m/3)` (§9.1), jeder andere Block *ist* Base64, und
-Base64-Blöcke kacheln, also ist die Summe der Base64-Formen genau
-`ceil(4n/3)`. ∎
+**Je Eingabe, nicht im Mittel, ohne Ausnahme.** Beweis: jeder Block nimmt die
+kürzeste von drei Formen, und Base64 ist eine davon; Base64-Blöcke kacheln,
+also ist die Summe der Base64-Formen genau `ceil(4n/3)`. ∎
 
-**Schärfer:** wo kein Block roh wird, schreibt der Encoder nicht nur gleich
-viele Zeichen wie Base64URL, sondern **dieselben Bytes**.
+**Schärfer:** wo kein Block eine andere Form nimmt, schreibt der Encoder nicht
+nur gleich viele Zeichen wie Base64URL, sondern **dieselben Bytes**.
 
 **Geltungsbereich.** Die Länge des kodierten Stroms in Oktetten, nicht
 Transport- oder Container-Overhead.
 
 ### 9.5 Segmentwechselrate — **entfällt**
 
-Es gibt keine Segmentwechsel.
+Es gibt keine Segmentwechsel. Ein Block hat eine Form, und der Übergang zum
+nächsten Block ist eine Position, die der Dekoder kennt, bevor er hinschaut.
 
 ### 9.6 Kopfentscheidung — **entfällt**
 
-Der Encoder sucht nicht, also gibt es nichts zu überspringen.
+Die Segmentfassung entschied am Dateianfang, ob sich Suchen lohnt, weil
+Suchen die teuerste Operation ihres Encoders war. Dieser Encoder sucht nicht.
+Auf komprimierten Daten ist jeder Block ein Base64-Block, und die Maske,
+die das feststellt, kostet weniger als das Schreiben des Blocks (§13).
 
 ## 10. Dekoder
 
@@ -466,8 +496,25 @@ while pos < len:
         end := min(pos + 2 + 48, len)
         prüfe: alle Bytes stream[pos+2..end] profil-legal    sonst E_PROFILE
         emit stream[pos+2..end] ; pos := end
-    elif stream[pos+1] ist Alphabetzeichen:               -> E_RESERVED       # §6
-    else:                                                 -> E_CHARSET
+    else:
+        # Maskenblock.
+        prüfe: pos + 9 <= len                                sonst E_TRUNCATED
+        prüfe: stream[pos+1..pos+9] Alphabetzeichen          sonst E_CHARSET   # (1)
+        note_alphabet für jedes davon                                           # (2)
+        mask := 48 Bit aus den acht Zeichen (§6.1) ; pos += 9
+        L := popcount(mask)
+        prüfe: pos + L <= len                                sonst E_TRUNCATED
+        clear := stream[pos..pos+L]
+        prüfe: alle Bytes von clear profil-legal             sonst E_PROFILE
+        pos += L
+        full := ceil(4·(48 − L)/3)
+        tail := (len − pos <= full)
+        n := tail ? len − pos : full
+        rest := base64_decode(stream[pos..pos+n], padding_erlaubt = tail)
+        pos += n
+        m := L + len(rest)
+        prüfe: m <= 48 and (mask >> m) == 0                  sonst E_MASK       # (3)
+        emit: für i in 0..m: bit i gesetzt ? nächstes Byte aus clear : aus rest
 
 base64_decode(seg, padding_erlaubt):                       # §5, §5.3
     k := padding_erlaubt ? Anzahl '=' am Ende (max 2) : 0
@@ -477,7 +524,7 @@ base64_decode(seg, padding_erlaubt):                       # §5, §5.3
     if k > 0: padding_seen := true
     prüfe: n mod 4 != 1                                      sonst E_ALIGN
     prüfe: alle n Zeichen Alphabetzeichen                    sonst E_CHARSET
-    note_alphabet für jedes Zeichen mit Wert 62/63
+    note_alphabet für jedes Zeichen mit Wert 62/63                              # (2)
     prüfe: Restbits des letzten Quantums == 0                sonst E_NONZERO_TAIL
     return Bytes
 
@@ -488,17 +535,22 @@ note_alphabet(c):
                         else alphabet_seen := url
 ```
 
-**Es gibt keine Suche und keine Länge.** Der Dekoder liest nie „bis zum
-nächsten `~`". Jede Blocklänge steht fest, bevor er ein Nutzbyte anfasst, und
-keine davon steht im Strom. Das ist mehr als eine Bequemlichkeit: ein Byte
-`~` in einem Raw-Block ist Nutzlast, und ein Dekoder, der danach sucht, liest
-ihn falsch (TV3).
+**(1)** Ohne diese Prüfung wird `value()` auf wertlosen Zeichen aufgerufen —
+undefiniert oder Lookup außerhalb der Tabelle. **(2)** implementiert Regel A.
+**(3)** Ein voller Block hat `m = 48`, und dann ist `mask >> 48` ohnehin null;
+die Prüfung greift im Tail, wo die Maske Bits für Bytes tragen könnte, die es
+nicht gibt.
 
-**Warum der Tail eindeutig ist.** Ein Raw-Tail läuft bis zum Stromende, ein
-Base64-Tail ebenso. „Es bleiben weniger Zeichen als ein voller Block braucht"
-ist die ganze Tail-Erkennung, und weil kein Block eine Länge ankündigt, kann
-auch nichts abgeschnitten sein: ein gekürzter Strom dekodiert zu einem Präfix
-der Eingabe oder scheitert an Regel P, nicht an einer Längenangabe.
+**Es gibt keine Suche.** Der Dekoder liest nie „bis zum nächsten `~`"; jede
+Länge steht fest, bevor er ein Nutzbyte anfasst. Das ist mehr als eine
+Bequemlichkeit: ein Byte `~` in einem Raw-Block oder im Klartext eines
+Maskenblocks ist Nutzlast, und ein Dekoder, der danach sucht, liest ihn
+falsch (TV3).
+
+**Warum der Tail eindeutig ist.** Ein Masken-Tail mit `m < 48` Bytes und
+derselben Maske ist immer kürzer als der volle Block, weil `ceil(4x/3)` in `x`
+streng wächst. „Es bleiben weniger Zeichen als ein voller Block braucht" ist
+deshalb die ganze Tail-Erkennung. Für Raw- und Base64-Blöcke ebenso.
 
 ### 10.2 Einstiegspunkt
 
@@ -516,25 +568,26 @@ Siehe §8.
 | Code | Bedingung |
 |------|-----------|
 | `E_TRAILING_TILDE` | Strom endet mit einem einzelnen `~` |
-| `E_RESERVED` | `~` gefolgt von einem Alphabetzeichen (§6) |
+| `E_TRUNCATED` | Maskenblock endet vor dem Ende der Maske oder der Klartext-Bytes |
 | `E_PROFILE` | rohes Byte außerhalb des Profil-Alphabets |
 | `E_ALIGN` | Base64-Lauflänge `mod 4 == 1` |
 | `E_NONZERO_TAIL` | Restbits im letzten Quantum ≠ 0 |
-| `E_CHARSET` | kein Alphabetzeichen an Alphabetposition (inkl. `~` in einem Base64-Lauf, `=` außerhalb des Stromendes, und `~` gefolgt von einem wertlosen Zeichen) |
+| `E_CHARSET` | kein Alphabetzeichen an Alphabetposition (inkl. `~` in einem Base64-Lauf, Maskenposition, `=` außerhalb des Stromendes) |
 | `E_PADDING` | Regel P verletzt |
 | `E_MIXED_ALPHABET` | Regel A verletzt |
 | `E_NON_URL_ALPHABET` | nur `decode_url_strict` |
-
-Neun Codes. `E_TRUNCATED` gibt es nicht mehr, weil es nichts gibt, was
-abgeschnitten sein könnte.
+| `E_MASK` | Maske beansprucht ein Byte hinter dem Blockende |
 
 **Allokationsgrenzen.** Es gibt im Strom keine Länge, die ein Sender wählt.
-Ein Raw-Block hat höchstens 48 Bytes, ein Base64-Lauf ergibt drei Bytes je
-vier Zeichen. Daraus folgt: die Spezifikation braucht **kein
-protokollseitiges Limit für einzelne Blöcke**, und die Klasse der
-Einzelallokations-Bugs, die §14 der Segmentfassung als ihre eine Schwäche
-gegenüber Base64 nannte, existiert nicht. Die Zahl der Blöcke ist unbegrenzt;
-Implementierungen SOLLTEN Gesamtgrößen- und Laufzeitlimits anbieten.
+Eine Maske kann höchstens 48 Bytes benennen, ein Raw-Block hat höchstens 48,
+ein Base64-Lauf ergibt drei Bytes je vier Zeichen. Daraus folgt: die
+Spezifikation braucht **kein protokollseitiges Limit für einzelne Blöcke**,
+und die Klasse der Einzelallokations-Bugs, die §14 der Segmentfassung als
+ihre eine Schwäche gegenüber Base64 nannte, existiert nicht.
+
+Daraus folgt **nicht**, dass gar kein Limit nötig wäre. Die Zahl der Blöcke
+ist unbegrenzt. Implementierungen SOLLTEN Gesamtgrößen- und Laufzeitlimits
+anbieten.
 
 ## 11. Kanonizität und Signaturen
 
@@ -547,8 +600,8 @@ und vergleicht.
 Kanonisch ist das *Format* trotzdem nicht, aus zwei Gründen. Erstens ist das
 **Profil eine Wahl**: derselbe Input ergibt unter U und T verschiedene Ströme.
 Zweitens akzeptiert der **Dekoder Formen, die kein Encoder schreibt**: das
-Classic-Alphabet (§5.2), Padding (§5.3), und einen Base64-Block, wo ein
-Raw-Block kürzer wäre. Ein Dritter kann denselben Strom umschreiben, ohne die
+Classic-Alphabet (§5.2), Padding (§5.3), einen Maskenblock, wo Raw oder Base64
+kürzer wäre (§6.2). Ein Dritter kann denselben Strom umschreiben, ohne die
 dekodierten Bytes zu ändern.
 
 > **Regel:** Signiere, hashe und vergleiche niemals die Ausgabe von `encode`.
@@ -556,8 +609,8 @@ dekodierten Bytes zu ändern.
 
 **Die Ordnung `B < L < S`** der Segmentfassung gibt es nicht mehr. Sie war
 nötig, weil dort mehrere Segmentierungen gleich lang sein konnten und eine
-davon gewählt werden musste. Hier gibt es je Block zwei Formen und eine
-Bedingung, die entscheidet.
+davon gewählt werden musste. Hier gibt es je Block drei Formen, und §9.0 sagt
+in einem Satz, welche.
 
 ## 12. Dichte
 
@@ -565,41 +618,27 @@ Bedingung, die entscheidet.
 
 | Eingabe | Base64 | **Base65t** |
 |---------|--------|-------------|
-| Ein Block mit einem profilwidrigen Byte | 1,333 | **1,333** — dieselben Bytes |
+| Rein binär | 1,333 | **1,333** — dieselben Bytes |
 | Rein profil-legaler Text | 1,333 | **1,0417** — `50/48`, jeder Block roh |
-
-Dazwischen gibt es nichts: ein Block ist das eine oder das andere. Was eine
-Datei erreicht, hängt daher nur daran, wie viele ihrer 48-Byte-Blöcke ganz
-aus zulässigen Bytes bestehen.
+| Ein Block mit `L` legalen Bytes, `27 ≤ L < 48` | 1,333 | `(9 + L + ceil(4(48−L)/3)) / 48` |
 
 **Gemessen** über den Korpus von binary2textbench (69 Proben, `--example
 gain`), Größe gegen ungepaddetes Base64:
 
 | | Profil U | Profil T |
 |---|--:|--:|
-| Summe über alle Proben | 99,98 % | 99,27 % |
-| Proben besser als 95 % | 43 % | |
-| von Base64 nicht zu unterscheiden (≥ 99,9 %) | 55 % | |
+| Summe über alle Proben | 98,65 % | 95,03 % |
+| Proben besser als 95 % | 46 % | |
+| Proben besser als 99 % | 65 % | |
+| von Base64 nicht zu unterscheiden (≥ 99,9 %) | 29 % | |
 
-**Die Summenzeile ist ehrlich und irreführend zugleich**, weil sie nach Bytes
-gewichtet ist und der Korpus von Megabyte-Dateien bestimmt wird. Auf denen
-holt diese Fassung fast nichts: ein Dokument mit Leerzeichen alle fünf
-Zeichen hat in Profil U keinen einzigen ganz zulässigen Block. Die Verteilung
-ist zweigeteilt, und die interessante Hälfte ist die kleine:
+Die Verteilung ist keine Kurve, sondern zwei Populationen: Werte, die schon
+Text sind, bei 78 bis 79 %; komprimierte und zufällige Daten bei 100 %; und
+dazwischen gemischter Text, der mit der Maske zwischen 94 und 99 % liegt.
 
-| Probe | Bytes | Profil U |
-|---|--:|--:|
-| Git-Commit-ID | 40 | **77,8 %** |
-| Session-ID, 40 alnum | 40 | **77,8 %** |
-| SHA-512-Digest, hex | 128 | **78,4 %** |
-| zwei UUIDs | 73 | **78,6 %** |
-| JWT, drei Segmente | 155 | **78,7 %** |
-| Prosa, XML, JSON, jede Megabyte-Datei | | 100,0 % |
-
-**Gegenüber den früheren Fassungen**, dieselben Proben: die Segmentfassung
-kam auf 98,57 % in U, die Maskenfassung auf 98,65 %. Diese Fassung ist auf
-großen Dateien schlechter und auf kurzen Werten gleich gut — und §13 sagt,
-was sie dafür bekommt.
+**Die Segmentfassung zum Vergleich**, dieselben Proben: Profil U 98,57 %,
+Profil T 93,60 %. Das Blockformat ist in U um 0,08 Punkte und in T um 1,4
+Punkte größer. Was es dafür bekommt, steht in §13.
 
 ## 13. Performance
 
@@ -607,17 +646,26 @@ Gemessen gegen die Base64-Implementierung des Benches, die im selben Prozess
 lebt und vom selben Compiler gebaut wurde. Alles einthreadig, bestes von fünf
 Läufen, Base64 = 100 %.
 
-### 13.1 Die zwei Blockformen
+### 13.1 Die drei Blockformen, isoliert
 
-Ein Raw-Block ist ein `memcpy` in beide Richtungen, ein Base64-Block ist
-Base64. Der einzige Aufwand, den dieses Format über Base64 hinaus hat, ist
-die Frage je Block, welche Form er bekommt, und die ist eine Maske über 48
-Bytes — 48 Tabellenzugriffe ohne Verzweigung, gemessen 2285 MiB/s, also rund
-ein Fünftel Nanosekunde je Byte.
+Auf erzeugten Eingaben, die je nur eine Form erzeugen, gegen die Base64-Schleife
+der Referenzimplementierung selbst (`--example prof`, im Verlauf der
+Entwicklung):
 
-Beim Dekodieren gibt es diesen Aufwand nicht: die Form steht im ersten
-Zeichen. Ein Raw-Block spart dort sogar Arbeit gegenüber Base64, weil er
-nichts zu rechnen hat.
+| Blockform | Kodieren | Dekodieren |
+|---|--:|--:|
+| Raw (`~~` + 48 Bytes) | 97 % | 94 % |
+| Base64 | 190 % | 100 % |
+| Maske | 290 % | 320 % |
+
+Raw-Blöcke sind ein `memcpy` je Richtung und laufen auf Base64-Niveau.
+Base64-Blöcke dekodieren auf Parität, weil aufeinanderfolgende Blöcke als ein
+Lauf gelesen werden; beim Kodieren kostet die Maske, die feststellt, dass der
+Block Base64 wird, ein Fünftel Nanosekunde je Byte, und das ist der ganze
+Abstand. **Der Maskenblock ist der eine Pfad, der dreimal Base64 kostet**, und
+zwar auf beiden Seiten, weil er dreimal so viel tut: die Maske schreiben oder
+lesen, 48 Bytes nach zwei Zielen trennen oder aus zweien zusammensetzen, und
+den Rest als Base64.
 
 ### 13.2 Das Durchsatz-Kriterium
 
@@ -635,75 +683,71 @@ Silesia und Korpusdateien, MiB/s und Base65t als Anteil an der Base64-Zeit
 
 | Datei | Profil | Größe | Base64 enc | Base65t enc | enc | Base64 dec | Base65t dec | dec |
 |---|---|--:|--:|--:|--:|--:|--:|--:|
-| `dickens` | U | 100,0 % | 729 | 699 | **104 %** | 1026 | 1140 | **90 %** |
-| `mozilla` | U | 99,8 % | 555 | 530 | **105 %** | 783 | 797 | **98 %** |
-| `x-ray` | U | 100,0 % | 826 | 720 | **115 %** | 1114 | 1335 | **83 %** |
-| `countries.json` | U | 100,0 % | 894 | 761 | **117 %** | 1164 | 1387 | **84 %** |
-| `xml` | U | 100,0 % | 878 | 721 | **122 %** | 1144 | 1361 | **84 %** |
-| `xml` | T | 90,2 % | 782 | 912 | **86 %** | 1141 | 1314 | **87 %** |
-| `dickens` | T | 94,8 % | 707 | 766 | **92 %** | 1050 | 1172 | **90 %** |
-| `countries.json` | T | 100,0 % | 819 | 755 | **109 %** | 1155 | 1376 | **84 %** |
+| `x-ray` | U | 100,0 % | 692 | 695 | **100 %** | 1149 | 1300 | **88 %** |
+| `mozilla` | U | 99,0 % | 544 | 474 | **115 %** | 764 | 667 | **115 %** |
+| `countries.json` | U | 99,3 % | 821 | 577 | **142 %** | 1183 | 812 | **146 %** |
+| `dickens` | U | 95,6 % | 671 | 398 | **169 %** | 1099 | 341 | **322 %** |
+| `xml` | U | 97,1 % | 721 | 398 | **181 %** | 1163 | 363 | **320 %** |
+| `dickens` | T | 87,9 % | 665 | 494 | **135 %** | 1081 | 482 | **224 %** |
+| `xml` | T | 85,2 % | 730 | 602 | **121 %** | 1142 | 531 | **215 %** |
+| `countries.json` | T | 93,5 % | 768 | 422 | **182 %** | 1152 | 328 | **351 %** |
 
-**Kodieren kostet zwischen 86 und 122 %, Dekodieren zwischen 83 und 98 %.**
-Der Aufschlag beim Kodieren ist die Maske aus §13.1; wo sie oft „roh" sagt,
-wie bei XML in Profil T, ist der Encoder sogar schneller als Base64, weil ein
-`memcpy` billiger ist als eine Base64-Schleife. Dekodiert wird durchweg
-schneller als Base64, aus demselben Grund.
+Die Tabelle liest sich über §13.1: je mehr Maskenblöcke eine Datei erzeugt,
+desto näher liegt sie am Dreifachen. Binärdaten sind Base64-Blöcke und laufen
+auf Parität oder darunter. Prosa in Profil U ist fast durchgehend Maske und
+kostet das Drei­fache beim Dekodieren. Dieselbe Prosa in Profil T ist zu
+neun Zehnteln roh, und die verbleibenden Maskenblöcke — die mit einem
+Anführungszeichen — kosten das Doppelte.
 
-Zum Vergleich, dieselben Dateien: die Segmentfassung kostete auf `dickens`
-1137 % beim Kodieren, die Maskenfassung 169 %. Diese Fassung kostet 104 %.
+**Gegenüber der Segmentfassung:** dort kostete das exakte Programm auf
+`dickens` 1137 % beim Kodieren, hier 169 %; auf `xml` 922 %, hier 181 %. Der
+Dekoder der Segmentfassung war schneller (165 % auf `dickens`), weil er
+lange Base64-Läufe las und wenige Literale; dieser liest Maskenblöcke, und
+die kosten. Was er dafür liefert, steht in §13.4.
 
-### 13.4 Kurze Werte
+### 13.4 Kurze Werte, und was lesbar bleibt
 
 Die 55 kurzen Proben, Profil U, Größe gegen `ceil(4n/3)`, Zeit gegen die
 Base64 des Benches (`--example short`):
 
 | Probe | Bytes | Form | Größe | Kodieren | Dekodieren |
 |---|--:|---|--:|--:|--:|
-| UUID v4 | 36 | roh | 79 % | **52 %** | **82 %** |
-| Session-ID, 40 alnum | 40 | roh | 78 % | **54 %** | **68 %** |
-| SHA-512-Digest, hex | 128 | roh | 78 % | **55 %** | **68 %** |
-| JWT, drei Segmente | 155 | roh | 79 % | **59 %** | **65 %** |
-| Kreditkartennummer | 16 | roh | 82 % | **68 %** | **88 %** |
-| Vor- und Nachname | 12 | Base64 | 100 % | **93 %** | 119 % |
-| IPv6-Adresse | 28 | Base64 | 100 % | **96 %** | **97 %** |
-| SQL-Statement | 118 | Base64 | 100 % | 104 % | **83 %** |
-| Logzeile | 93 | Base64 | 100 % | 109 % | **90 %** |
-| zufällige 64 Bytes | 64 | Base64 | 100 % | 104 % | **88 %** |
-| **alle 55 Proben, als Zeit** | | | | **77 %** | **84 %** |
+| SHA-512-Digest, hex | 128 | roh | 78 % | **68 %** | **80 %** |
+| JWT, drei Segmente | 155 | roh | 79 % | **64 %** | **80 %** |
+| Session-ID, 40 alnum | 40 | roh | 78 % | **62 %** | **81 %** |
+| UUID v4 | 36 | roh | 79 % | **64 %** | **87 %** |
+| Kreditkartennummer | 16 | roh | 82 % | **71 %** | 110 % |
+| Vor- und Nachname | 12 | Base64 | 100 % | 95 % | 151 % |
+| IPv6-Adresse | 28 | Base64 | 100 % | 109 % | 100 % |
+| zufällige 64 Bytes | 64 | Base64 | 100 % | 117 % | 92 % |
+| Logzeile | 93 | Maske | 94 % | 170 % | 239 % |
+| SQL-Statement | 118 | Maske | 96 % | 166 % | 209 % |
+| JSON-Datensatz | 92 | Maske | 98 % | 181 % | 236 % |
+| **alle 55 Proben, als Zeit** | | | | **98 %** | **123 %** |
 
-**Auf kurzen Werten ist Base65t schneller als Base64, in beide Richtungen.**
-Der Grund ist die Arbeitsbilanz: Base64 liest ein Byte, schlägt vier Zeichen
-nach und schreibt vier — je drei Bytes. Ein Raw-Block liest 48 Bytes, prüft
-sie gegen eine Tabelle und kopiert sie. Wer weniger schreibt, schreibt
-schneller. Die Zeilen, die 100 % Größe haben, kosten höchstens neun Prozent
-mehr Zeit, und dekodiert werden sie schneller.
+Die Summenzeile ist nach Zeit gewichtet und erreicht Parität beim Kodieren.
+Die Segmentfassung lag hier bei 355 %, weil ihr exaktes Programm auf jeder
+Probe mit einem Leerzeichen das Acht- bis Zehnfache kostete; hier kostet
+dieselbe Probe das Doppelte und ist dafür lesbar.
 
-Zum Vergleich: die Segmentfassung lag hier bei 355 % beim Kodieren, die
-Maskenfassung bei 98 % / 123 %.
+**Was lesbar bleibt**, Anteil der Bytes, die im Strom stehen wie in der
+Eingabe (`--example clear`):
 
-### 13.5 Was lesbar bleibt
+| Datei | Profil | Segmentfassung | **Blockformat** |
+|---|---|--:|--:|
+| Prosa (dickens) | U | 99 % / 17 % | **96 % / 76 %** |
+| XML | U | 98 % / 21 % | **97 % / 66 %** |
+| CSS | U | 92 % / 54 % | **96 % / 72 %** |
+| JSON | T | 94 % / 47 % | **94 % / 84 %** |
+| Prosa (dickens) | T | 80 % / 91 % | 88 % / 96 % |
+| XML | T | 80 % / 92 % | 85 % / 97 % |
 
-Anteil der Bytes, die im Strom stehen wie in der Eingabe
-(`--example clear`):
-
-| Datei | Segmentfassung U | Maskenfassung U | **v0.4 U** | **v0.4 T** |
-|---|--:|--:|--:|--:|
-| Prosa (dickens) | 17 % | 76 % | **0 %** | **24 %** |
-| XML | 21 % | 66 % | **0 %** | **45 %** |
-| CSS | 54 % | 72 % | **0 %** | **10 %** |
-| JSON | 9 % | 15 % | **0 %** | **0 %** |
-
-**Das ist der Preis dieser Fassung, und er ist hoch.** Ein Block wird nur roh,
-wenn alle 48 Bytes zulässig sind, und in einem Dokument mit Satzzeichen
-kommt das in Profil U nicht vor. Lesbar bleibt, was in Stücken von 48 Bytes
-zusammenhängt: Bezeichner, IDs, hexadezimale Werte, in Profil T auch längere
-Textabschnitte ohne Anführungszeichen.
-
-Wer lesbaren gemischten Text will, findet ihn nicht hier. Das ist eine
-Entscheidung, keine Lücke: die Maskenfassung hat ihn geliefert und dafür das
-Dreifache der Base64-Zeit gekostet, und dieses Format lebt davon, dass die
-Entscheidung dafür nichts kostet (§0.1, §6).
+Das ist der Tausch, den §9.1 beschreibt, in Zahlen. Die Maske zahlt ein Bit
+je Byte, unabhängig davon, wie die legalen Bytes verteilt sind, und
+gemischter Text wird dreimal so lesbar. Langer sauberer Text zahlt zwei
+Zeichen je 48 Bytes statt zwei je 4158 und verliert fünf bis acht Punkte
+Größe. Wer ein Megabyte sauberen Text kodiert, hat einen Kompressor
+verdient; wer eine Logzeile kodiert, hat sie jetzt lesbar.
 
 ## 14. Sicherheit
 
@@ -712,8 +756,8 @@ Entscheidung dafür nichts kostet (§0.1, §6).
   Dieser liest eine Maske, und eine Maske kann nichts hinter ihrem eigenen
   Block adressieren. Was bleibt, ist dasselbe wie bei Base64: die
   Gesamtlänge der Eingabe.
-* **Rohe Bytes lecken Struktur** — welche Blöcke ganz aus Text bestehen, ist
-  im Strom sichtbar, und ihr Inhalt steht im Klartext. Dafür ist `encode_base64url` da (§9.3); seine
+* **Rohe Bytes lecken Struktur** — welche Bytes Text sind und welche nicht,
+  ist im Strom sichtbar. Dafür ist `encode_base64url` da (§9.3); seine
   Ausgabe ist gewöhnliches Base64URL.
 * **Zwei Auto-Erkennungen sind zwei Parser-Differential-Flächen:** Alphabet
   (§5.2) und Padding (§5.3). Gegenmaßnahmen: Regel A, Regel P,
@@ -721,18 +765,17 @@ Entscheidung dafür nichts kostet (§0.1, §6).
   Differential-Fuzzing ist Pflicht, nicht Kür.
 * **Kein Padding-Orakel** — Padding wird nur validiert, nie erzeugt.
 * **Malleability** ausgeschlossen auf Blockebene, reduziert auf Alphabet- und
-  Padding-Ebene, **nicht** auf Profilebene und nicht dagegen, dass ein
-  Fremder einen Raw-Block als Base64-Block umschreibt (§11).
+  Padding-Ebene, **nicht** auf Profil- und Formebene (§11).
 * Dekodierte Ausgabe ist **untrusted binary**, nicht Text.
 
 ## 15. Testvektoren
 
 Zwölf Vektoren, jeder als Test in `rust/tests/vectors.rs`. Der maschinell
-prüfbare Satz — 173 Einträge über beide Einstiegspunkte und beide Profile —
-steht in `docs/vectors.json`. Die Vektoren der früheren Fassungen liegen in
+prüfbare Satz — 183 Einträge über beide Einstiegspunkte und beide Profile —
+steht in `docs/vectors.json`. Die Vektoren der Segmentfassung liegen in
 `docs/history/`; ihre *Eingaben* wurden übernommen, ihre Ströme nicht.
 
-### TV1–TV4 — die zwei Formen (Profil U)
+### TV1–TV4 — die drei Formen (Profil U)
 
 | # | Eingabe | Strom | Länge | Base64 wäre |
 |---|---------|-------|-------|-------------|
@@ -741,29 +784,32 @@ steht in `docs/vectors.json`. Die Vektoren der früheren Fassungen liegen in
 | TV3 | `sub~alice~jones` | `~~sub~alice~jones` | 17 | 20 |
 | TV4 | 100 × `a` | `~~` + 48 `a`, `~~` + 48 `a`, `~~aaaa` | 106 | 134 |
 
-**Zu TV2.** Vier der 22 Bytes sind nicht zulässig, also ist der Block Base64,
-und der Strom ist byteweise `encode_base64url`. Die Segmentfassung schrieb
-diese Eingabe in 26 Zeichen; das ist der Preis für einen Encoder, der eine
-Vergleichsoperation ist.
+**Zu TV2.** Ein Tail von 22 Bytes mit 18 legalen: die Maske kostete
+`9 + 18 + 6 = 33`, Base64 30. Die Segmentfassung schrieb diese Eingabe in
+26 Zeichen; das Blockformat gibt das auf und bekommt dafür TV5.
 
 **Zu TV3.** `~` in einem Raw-Block braucht nichts, weil die Blocklänge
 feststeht. `hello~Alice` wird `~~hello~Alice`.
 
-### TV5 — ein Byte entscheidet den Block
+### TV5 — der Maskenblock
+
+Fünfzig Bytes Englisch in Profil U. Der erste Block hat neun Leerzeichen und
+einen Punkt; die Segmentfassung hätte ihn als zehn kurze Base64-Läufe
+geschrieben, weil kein Lauf lang genug für ein Literal war.
 
 ```
-Eingabe:  the quick brown fox jumps over the lazy dog. again      (50 Bytes)
-Profil U: dGhlIHF1aWNrIGJyb3duIGZveCBqdW1wcyBvdmVyIHRoZSBsYXp5IGRvZy4gYWdhaW4
-          67 Zeichen, byteweise Base64URL — das Leerzeichen ist in U nicht zulässig
-Profil T: ~~the quick brown fox jumps over the lazy dog. aga  aW4
-          53 Zeichen: der erste Block roh, die zwei Rest-Bytes als Base64
+Eingabe:  the quick brown fox jumps over the lazy dog. again
+Strom:    ~777vvd73thequickbrownfoxjumpsoverthelazydog.agaICAgICAgICAgaW4
+          ^ ^^^^^^^^ ^                                     ^           ^
+          | Maske    | 39 legale Bytes                     | 9 Leerz.  | Tail "in"
 ```
 
-### TV5b — die reservierte Form
+63 Zeichen, Base64 wären 67. Das erste Maskenzeichen ist `7`: `t h e _ q u`
+ist `1 1 1 0 1 1` = 59. In Profil T ist das Leerzeichen legal, der erste
+Block wird roh, und der Strom ist `~~the quick … aga` + `aW4`, 53 Zeichen.
 
-`~AAAAAAAA`, `~7abc`, `~_` → `E_RESERVED`. `~=`, `~ a` → `E_CHARSET`. Der
-Unterschied ist normativ: das erste ist ein Strom einer Fassung, die dieser
-Dekoder nicht kennt, das zweite ist kaputt.
+**TV5b, der Gleichstand.** 27 legale Bytes und 21 Leerzeichen: Maske 64,
+Base64 64 → die Maske, mit `____4AAA`. 26 legale: Base64, byteweise.
 
 ### TV6 — Abwärtskompatibilität
 
@@ -779,16 +825,15 @@ das ist unsichtbar, weil Base64-Blöcke kacheln.
 
 ### TV7 — Alphabet-Konsistenz
 
-`PDw_Pz8+Pg` und `PDw/Pz8-Pg` → `E_MIXED_ALPHABET`. Die Regel gilt über
-Raw-Blöcke hinweg: ein URL-Base64-Block, ein Raw-Block, ein Classic-Block →
-`E_MIXED_ALPHABET`. Rohe Bytes zählen nicht mit: `~~a+b/c-d_e` in Profil T
-ist `alphabet_seen = none`.
+`PDw_Pz8+Pg` und `PDw/Pz8-Pg` → `E_MIXED_ALPHABET`. Maskenzeichen sind
+Alphabetpositionen: die Maske `////4AAA` statt `____4AAA` liest denselben
+Block im Classic-Alphabet, `_///4AAA` ist gemischt. Rohe Bytes zählen nicht:
+`~~a+b/c-d_e` in Profil T ist `alphabet_seen = none`.
 
-### TV8 — was auf ein `~` folgen darf
+### TV8 — Maskenpositionen werden vor dem Lesen geprüft
 
-`~` → `E_TRAILING_TILDE`. `~~` → leerer Raw-Block, gültig, null Bytes.
-`~A` → `E_RESERVED`. `~=` → `E_CHARSET`. `YW~x` → `E_CHARSET`, weil ein `~`
-mitten in einem Base64-Block steht.
+`~=AAAAAAA`, `~AAAAAA~A` → `E_CHARSET`. `~` → `E_TRAILING_TILDE`. `~AAAA` →
+`E_TRUNCATED`.
 
 ### TV9–TV10 — Padding
 
@@ -809,26 +854,26 @@ vier Bytes, davon zwei `=`; in Profil U ist es `E_PROFILE`.
 |-------|------|
 | `abcde` | `E_ALIGN` |
 | `~` | `E_TRAILING_TILDE` |
-| `~Aabc` | `E_RESERVED` |
+| `~AAAA` | `E_TRUNCATED` |
 | `~~a b` | `E_PROFILE` (Profil U) |
 | `YWxp==` | `E_PADDING` |
 | `YWxpY2V` | `E_NONZERO_TAIL` |
 | `YW~x` | `E_CHARSET` |
-| `PDw_Pz8+Pg` | `E_MIXED_ALPHABET` |
+| `~AAAAAAABa` | `E_MASK` |
 
-### TV12 — der Tail
+Der letzte beansprucht Byte 47 in einem Tail, der ein Byte hat.
 
-Ein letzter Block folgt §9.1: roh ab vier Bytes, Base64 darunter,
-Gleichstand an die rohe Form. Nach einem vollen Raw-Block:
+### TV12 — die Maske im Tail
 
-| Tail | Strom des Tails |
-|---|---|
-| — | — |
-| `a` | `YQ` |
-| `abc` | `YWJj` |
-| `abcd` | `~~abcd` |
-| `a b` | `YSBi` |
-| `a bcd` | `YSBiY2Q` |
+30 Bytes, 27 legale, drei Leerzeichen: Maske `9 + 27 + 4 = 40`, Base64 40,
+Gleichstand → Maske.
+
+```
+~____4AAA aaaaaaaaaaaaaaaaaaaaaaaaaaa ICAg
+```
+
+Derselbe Strom mit `B` statt `A` als achtem Maskenzeichen beansprucht Byte 47
+und ist `E_MASK`.
 
 ## 16. Konformitätsnachweise
 
@@ -861,25 +906,20 @@ Ergänzende Arbeiten, nicht normativ:
    zusätzlich `decode_url_strict` und `encode_base64url`, und sonst nichts.
    Rust liegt bei; `python/` ist ein PyO3-Binding darüber. Ein Binding ist
    ausdrücklich **keine** zweite Implementierung im Sinne von Nachweis 3.
-7. Vektorsatz: `docs/vectors.json` führt 173 Vektoren. Sie decken die
-   Blockgrenze bei 48, die Tails von 1 bis 6 Bytes, an denen die rohe Form
-   einsetzt, und Blöcke ab, denen ein einziges Byte zur rohen Form fehlt.
+7. Vektorsatz: `docs/vectors.json` führt 183 Vektoren. Sie decken die
+   Blockgrenze bei 48, den Gleichstand bei 27 legalen Bytes von beiden Enden
+   des Blocks, und die Tails von 4, 5 und 6 Bytes ab.
 
 ## 17. Erweiterungskandidaten (nicht Teil von v0.4)
 
-1. **Eine dritte Blockform**, die einen gemischten Block teilweise im
-   Klartext trägt. `~` gefolgt von einem Alphabetzeichen ist dafür reserviert
-   (§6), und `docs/history/` beschreibt die Fassung, die es einen Tag lang
-   gab: eine Maske mit einem Bit je Byte. Sie hat gemischten Text lesbar
-   gemacht und das Dreifache der Base64-Zeit gekostet. Wer sie wieder
-   einführt, muss zeigen, dass sie ohne diesen Preis geht — eine
-   vektorisierte Compress-Operation wäre der Weg —, und braucht eine neue
-   Versionsnummer.
-2. **Wahlfreier Zugriff.** Blockgrenzen liegen an festen Eingabe-Offsets,
+1. **Wahlfreier Zugriff.** Blockgrenzen liegen an festen Eingabe-Offsets,
    aber an variablen Ausgabe-Offsets. Ein Index der Blockanfänge, außerhalb
-   des Stroms, gibt O(1)-Zugriff.
-3. **Profil-Aushandlung.** Aus dem Strom prinzipiell nicht ableitbar (§7.2).
-4. **Eine andere Blockgröße.** 48 ist begründet (§4), nicht bewiesen. Eine
-   größere Blockgröße drückt die rohe Form gegen 75 % und lässt gleichzeitig
-   häufiger einen ganzen Block nach Base64 kippen; wo das Optimum liegt, ist
-   eine Messfrage. Wer die Zahl ändert, ändert die Versionsnummer.
+   des Stroms, gibt O(1)-Zugriff; ein Format, das ihn im Strom trägt, wäre
+   eine eigene Frage.
+2. **Profil-Aushandlung.** Aus dem Strom prinzipiell nicht ableitbar (§7.2).
+3. **Eine vektorisierte Maskenverarbeitung.** Kein Formatthema, aber die
+   Stelle, an der die Implementierung steht: der Maskenblock kostet das
+   Dreifache von Base64, weil das Trennen und Zusammenfügen der Bytes ohne
+   SIMD acht Lade-Speicher-Paare je Gruppe braucht (§13.3).
+4. **Eine andere Blockgröße.** 48 ist begründet (§4), nicht bewiesen. Wer
+   eine Zahl ändern will, ändert die Versionsnummer.

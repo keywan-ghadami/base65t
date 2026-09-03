@@ -83,8 +83,7 @@ def test_the_strict_entry_point_is_separate():
         (b"YWxp==", "E_PADDING"),
         (b"YWxpY2V", "E_NONZERO_TAIL"),
         (b"~~a b", "E_PROFILE"),
-        (b"~AAA", "E_TRUNCATED"),
-        (b"~AAAAAAABa", "E_MASK"),
+        (b"~Aabc", "E_RESERVED"),
         (b"PDw_Pz8+Pg", "E_MIXED_ALPHABET"),
     ],
 )
@@ -97,7 +96,6 @@ def test_the_error_carries_the_code_the_vectors_use(stream, code):
 
 def test_the_constants_come_from_the_crate():
     assert base65t.BLOCK_BYTES == 48
-    assert base65t.MASK_CHARS == 8
     assert base65t.PROFILES == ["U", "T"]
     assert base65t.SPEC_VERSION == "0.4"
 
@@ -116,5 +114,6 @@ def test_nothing_the_old_api_had_is_still_exported():
         "FRAME_BYTES",
         "MAX_LITERAL",
         "WINDOW_BYTES",
+        "MASK_CHARS",
     ):
         assert not hasattr(base65t, gone), gone

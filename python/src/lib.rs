@@ -26,7 +26,7 @@ create_exception!(
     Base65tDecodeError,
     PyValueError,
     "Raised by decode() on malformed input.\n\n\
-     `code` is one of the ten conditions of specification section 10.4, as\n\
+     `code` is one of the nine conditions of specification section 10.4, as\n\
      the string the shared test vectors use."
 );
 
@@ -209,7 +209,6 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The constants the specification fixes, so that tooling has one source
     // for them rather than a transcribed copy.
     m.add("BLOCK_BYTES", base65t::BLOCK_BYTES)?;
-    m.add("MASK_CHARS", base65t::MASK_CHARS)?;
     m.add("PROFILES", vec!["U", "T"])?;
 
     m.add(
@@ -223,7 +222,6 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "Base65tDecodeError",
             "PROFILES",
             "BLOCK_BYTES",
-            "MASK_CHARS",
             "SPEC_VERSION",
             "__version__",
         ],
