@@ -14,13 +14,13 @@
 //! cost exactly base64's time, byte for byte, on input where it would gain
 //! nothing.
 //!
-//! There was a third form for a day -- a mask block that kept the admitted
-//! bytes of a mixed block in the clear -- and it is in `docs/history/`. It
-//! cost three times base64's time on the blocks it applied to, for
-//! readability of text the format is not really for, and the format's whole
-//! case is that it costs nothing to choose. `~` followed by an alphabet
-//! character is reserved so a later version can bring it back without an
-//! old decoder reading it wrongly.
+//! A third form was considered and dropped: a mask block keeping the admitted
+//! bytes of a mixed block in the clear, described in full in
+//! `docs/history/spec-v0.4-maske.de.md`. It costs three times base64's time on
+//! the blocks it applies to, for readability of text the format is not really
+//! for, and the format's whole case is that it costs nothing to choose. `~`
+//! followed by an alphabet character is reserved so a later version can bring
+//! it back without an old decoder reading it wrongly.
 
 use crate::alphabet::{Profile, ALPHABET, TILDE};
 

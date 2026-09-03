@@ -14,9 +14,31 @@ Verzeichnis dessen, was zwischen den Fassungen gestrichen wurde und warum.
 wird in Blöcke von 48 Bytes geschnitten; ein Block, dessen Bytes das Profil
 alle zulässt, steht roh da, jeder andere ist Base64.
 
-> Normative Aussagen sind als solche gekennzeichnet und verwenden MUSS / DARF NICHT /
-> SOLLTE nach RFC 2119. Zahlen, die nicht als *exakt* markiert sind, sind Messungen
-> auf dem in §16.5 genannten Korpus.
+> **Anforderungssprache.** Die Schlüsselwörter „MUSS", „DARF NICHT", „DARF",
+> „SOLLTE", „SOLLTE NICHT", „ERFORDERLICH", „EMPFOHLEN" und „OPTIONAL" sind in
+> diesem Dokument so zu interpretieren, wie in BCP 14 (RFC 2119, RFC 8174)
+> beschrieben — **und nur dann, wenn sie, wie hier, vollständig in
+> Großbuchstaben stehen**. Dieselben Wörter in gewöhnlicher Schreibung tragen
+> ihre gewöhnliche deutsche Bedeutung und begründen keine Anforderung.
+>
+> Da BCP 14 in englischer Sprache abgefasst ist, gilt für dieses Dokument die
+> folgende Zuordnung; sie ist verbindlich für jede Übersetzung:
+>
+> | dieses Dokument | BCP 14 |
+> |---|---|
+> | MUSS | MUST, SHALL, REQUIRED |
+> | DARF NICHT | MUST NOT, SHALL NOT |
+> | SOLLTE | SHOULD, RECOMMENDED |
+> | SOLLTE NICHT | SHOULD NOT, NOT RECOMMENDED |
+> | DARF | MAY, OPTIONAL |
+>
+> „MUSS NICHT" kommt in diesem Dokument nicht vor und ist auch in einer
+> Überarbeitung unzulässig: im Deutschen verneint es die Pflicht („braucht
+> nicht"), im Englischen verbietet MUST NOT die Handlung. Ein Verbot heißt hier
+> ausnahmslos DARF NICHT.
+>
+> Zahlen, die nicht als *exakt* markiert sind, sind Messungen auf dem in §16.5
+> genannten Korpus.
 
 > **Wie die Prozentzahlen zu lesen sind.** Dieses Dokument nennt zwei
 > Verhältnisse, und sie zeigen in **entgegengesetzte Richtungen**. Deshalb
@@ -84,10 +106,11 @@ und Bytes liefert. Es gibt keine Presets, keine Modi, keine Schwellwerte. Der
 Encoder ist in einem Satz erklärt: **48 Bytes Text bleiben Text, alles andere
 ist Base64.**
 
-Eine dritte Blockform hat es einen Tag lang gegeben: eine Maske, die je Byte
-sagte, welche Bytes eines gemischten Blocks im Klartext stehen. Sie war
-gemessen dreimal so teuer wie Base64 auf jedem Block, für den sie galt.
-`docs/history/` beschreibt sie; §17 hält die Tür für sie offen.
+Eine dritte Blockform ist erwogen und verworfen worden: eine Maske mit einem
+Bit je Byte, die von einem gemischten Block die zulässigen Bytes im Klartext
+trägt. Sie kostet auf jedem Block, für den sie gilt, gemessen das Dreifache
+der Base64-Zeit. `docs/history/spec-v0.4-maske.de.md` beschreibt sie
+vollständig; §17 hält den Kodierraum für sie offen.
 
 Zwei Parameter bleiben, und keiner davon ist eine Wahl über die Kodierung:
 
@@ -190,7 +213,7 @@ als *erwartete Abweichung*.
 * Kernalphabet nach Base64URL (RFC 4648 §5): 0–25 `A`–`Z`, 26–51 `a`–`z`,
   52–61 `0`–`9`, 62 `-`, 63 `_`.
 * Das 65. Zeichen ist `~` (U+007E), nicht Teil des Alphabets, ohne Wert.
-* Bitreihenfolge MSB-first. MUSS / DARF NICHT / SOLLTE nach RFC 2119.
+* Bitreihenfolge MSB-first.
 
 **Alphabetzeichen.** Ein Oktett heißt *Alphabetzeichen*, wenn der Dekoder es als
 Wert 0–63 interpretiert: die Zeichen von Base64-Läufen — **nicht** die rohen
@@ -252,8 +275,8 @@ Base64URL. Sei `n` die Zeichenzahl ohne Padding:
 
 ### 5.1 Encoder-Alphabet
 
-Ein Encoder MUSS genau ein Alphabet je Aufruf verwenden und DARF innerhalb eines
-Stroms nicht wechseln.
+Ein Encoder MUSS genau ein Alphabet je Aufruf verwenden und DARF NICHT
+innerhalb eines Stroms wechseln.
 
 | Alphabet | 62 / 63 | Zweck |
 |----------|---------|-------|
@@ -317,11 +340,11 @@ Zusätzlich MUSS `decode_url_strict` angeboten werden (weist `classic` mit
 
 Kein Encoder dieser Fassung schreibt `~` gefolgt von einem Alphabetzeichen,
 und ein Dekoder MUSS es abweisen. Die zwei Zeichen kosten heute nichts und
-halten die Tür offen: v0.4 hatte für einen Tag eine dritte Blockform, die
-hier ansetzte — `~`, acht Maskenzeichen mit einem Bit je Byte, die zulässigen
-Bytes im Klartext, dann Base64 des Rests. Sie hat einen gemischten Block zu
-zwei Dritteln lesbar gemacht und dafür das Dreifache der Base64-Zeit gekostet
-(`docs/history/`).
+halten den Kodierraum offen. Die verworfene dritte Blockform (§17) setzt hier
+an: `~`, acht Maskenzeichen mit einem Bit je Byte, die zulässigen Bytes im
+Klartext, dann Base64 des Rests. Sie macht einen gemischten Block zu zwei
+Dritteln lesbar und kostet dafür das Dreifache der Base64-Zeit
+(`docs/history/spec-v0.4-maske.de.md`).
 
 Der Grund, sie zu streichen, ist §0.1: das Format lebt davon, dass die
 Entscheidung dafür nichts kostet. „Dreimal langsamer auf meinen JSON-Blobs"
@@ -417,8 +440,9 @@ wächst mit der Blockgröße und läuft gegen `(m+2)/(4m/3)`, also gegen 75 %; b
 
 **Alles oder nichts.** Ein einziges profilwidriges Byte kostet seinen ganzen
 Block. Das ist grob, und es ist der Tausch, den diese Fassung macht: eine
-feinere Kodierung — eine Maske je Byte — gab es einen Tag lang und kostete
-das Dreifache der Base64-Zeit (§6, `docs/history/`). Was die Grobheit auf
+feinere Kodierung — eine Maske mit einem Bit je Byte — ist wegen des
+Dreifachen der Base64-Zeit verworfen worden (§6, §17,
+`docs/history/spec-v0.4-maske.de.md`). Was die Grobheit auf
 echten Daten bedeutet, steht in §13.4: kurze Werte, die ganz aus Text
 bestehen, holen 78 %; große Dokumente holen in Profil U **nichts** und in
 Profil T fünf bis zehn Prozent.
@@ -474,8 +498,8 @@ also wird kein Block roh, und sie ist für dieses Format so binär wie ein JPEG.
 **Es ist dieselbe Prüfung, einmal vorab.** Keine Magic Numbers, keine
 Entropie, kein Logarithmus, über den zwei Implementierungen sich einig werden
 müssten — die Stichprobe misst die Entscheidung selbst und nicht etwas, das
-mit ihr korreliert. Frühere Fassungen taten das andere; `docs/history/`
-beschreibt sie.
+mit ihr korreliert. Frühere Fassungen entschieden nach der Entropie;
+`docs/history/spec-v0.4-segmente.de.md` beschreibt sie.
 
 **Die Ausgabe bleibt eine Funktion der Eingabe.** Die Stichprobe ist ein
 fester Präfix, die Zahl der Blöcke ist eine Konstante, und die Prüfung ist
@@ -483,6 +507,16 @@ die aus §9.0. §9.0 gilt unverändert.
 
 **Eine falsche Entscheidung kostet Größe, nie Korrektheit.** Ein übersprungener
 Strom ist exakt Base64URL, also greift §9.4 in jedem Fall.
+
+**Kürzer als die Stichprobe heißt: keine Stichprobe.** Ist die Eingabe
+höchstens 3072 Bytes lang, DARF ein Encoder die Regel überspringen und direkt
+nach §9.0 kodieren. Das ist keine Ausnahme, sondern eine Beobachtung: Die
+Stichprobe sieht dann jeden Block, den §9.0 ohnehin sieht. Sagt sie „ja",
+gilt §9.0 unverändert; sagt sie „nein", ist jeder Block Base64 und §9.0
+schreibt von sich aus Base64URL. Die Ausgabe ist in beiden Fällen dieselbe,
+und die Referenzimplementierung prüft das über 2000 zufällige Eingaben beider
+Profile. Wer die Regel wörtlich umsetzt, ist ebenso konform — die
+Python-Referenz tut genau das, und beide Implementierungen stimmen überein.
 
 **Warum 64 Blöcke.** Zwei Gründe, die beide zählen. Gemessen ist es das Knie:
 bei 32 Blöcken wird `xml` unter Profil T falsch eingeschätzt und gibt 9,8
@@ -515,7 +549,7 @@ while pos < len:
     if stream[pos] != '~':
         # Base64-Lauf: jeder Block, der mit einem Alphabetzeichen beginnt,
         # ist 64 Zeichen lang; der letzte, was übrig ist. Blöcke kacheln,
-        # also DARF der Lauf als Ganzes dekodiert werden.
+        # also kann der Lauf als Ganzes dekodiert werden (§4).
         end := pos
         while end < len and stream[end] != '~': end := min(end + 64, len)
         emit base64_decode(stream[pos..end], padding_erlaubt = (end == len))
@@ -701,8 +735,8 @@ Zeichen.
 ### 13.2 Das Durchsatz-Kriterium
 
 > **Durchsatz ist ein Ziel, Größe ist eine Zusicherung.** Eine Änderung DARF
-> die Zusicherung aus §9.4 und die Bytegleichheit aus §11 nicht antasten.
-> Innerhalb dieser Schranke SOLL sie den Durchsatz verbessern.
+> NICHT die Zusicherung aus §9.4 oder die Bytegleichheit aus §11 antasten.
+> Innerhalb dieser Schranke SOLLTE sie den Durchsatz verbessern.
 
 Ein Encoder oder Dekoder ist nicht deshalb unkonform, weil er langsamer ist als
 Base64. Er ist es, wenn er die falschen Bytes schreibt.
@@ -954,9 +988,9 @@ Ergänzende Arbeiten, nicht normativ:
 
 1. **Eine dritte Blockform**, die einen gemischten Block teilweise im
    Klartext trägt. `~` gefolgt von einem Alphabetzeichen ist dafür reserviert
-   (§6), und `docs/history/` beschreibt die Fassung, die es einen Tag lang
-   gab: eine Maske mit einem Bit je Byte. Sie hat gemischten Text lesbar
-   gemacht und das Dreifache der Base64-Zeit gekostet. Wer sie wieder
+   (§6), und `docs/history/spec-v0.4-maske.de.md` beschreibt den verworfenen
+   Entwurf: eine Maske mit einem Bit je Byte. Sie macht gemischten Text lesbar
+   und kostet das Dreifache der Base64-Zeit. Wer sie wieder
    einführt, muss zeigen, dass sie ohne diesen Preis geht — eine
    vektorisierte Compress-Operation wäre der Weg —, und braucht eine neue
    Versionsnummer.
