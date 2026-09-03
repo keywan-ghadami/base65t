@@ -163,8 +163,9 @@ Base65t is the **opener**, not the peak. Base85N carries the same
 passthrough idea further and is denser; Base91z compresses. Both ask the
 caller to learn a scheme they do not know yet. Base65t does not: the core *is*
 base64url, the output is a fixed 66-character alphabet that every common
-container already accepts, and it is never larger and never appreciably slower.
-There is nothing left to answer before using it.
+container already accepts, and it is never larger. On time it is usually
+faster and, on one shape, slower — §13.3 names it, and it is the only thing
+left to weigh.
 
 The gain is correspondingly small — 21 % on short values — and so is the cost.
 That is the intent: whoever takes the first step should be able to take it
@@ -183,7 +184,9 @@ density, goes one door further.
    not configured (§0.3).
 7. Reproducible byte for byte (§11).
 8. **Stateless.** No block depends on another (§4).
-9. **Not appreciably slower than base64**, in both directions (§13).
+9. **Not appreciably slower than base64**, in both directions (§13). This is
+   the one goal not met in every case: §13.3 names the shape that costs and
+   §17.5 the rule that would fix it.
 
 ### 1.1 The compatibility is asymmetric
 
@@ -427,9 +430,12 @@ empirical question; Python's `http.cookies` does (§16.5).
 
 ### 7.2 Unused
 
+It held the argument for why the profile was a parameter. There is no
+parameter.
+
 ## 8. Unused
 
-Random access is §17.2.
+It held the framed mode. Random access is §17.2.
 
 ## 9. Encoder
 
@@ -558,9 +564,10 @@ either way, and the reference implementation checks this over 2000 random
 inputs. Implementing the rule literally is equally conforming
 — the Python reference does exactly that, and the two implementations agree.
 
-**Why 64 blocks.** Two reasons, both of which count. Measured, it is the knee:
-from 32 blocks on the sample costs nothing measurable at all, and 64 is the
-first power of two past that with room to spare. And 64 blocks are **3072
+**Why 64 blocks.** Two reasons, both of which count. Measured, there is no
+knee to find: from 32 blocks on the sample costs nothing at all, so any size
+from there up is free and 64 is the first power of two past it with room to
+spare. And 64 blocks are **3072
 bytes** — longer than every value §0.1 names. For a URL query, a cookie value,
 a header or a cache key the sample is therefore not a sample at all but the
 whole input, and it can give up nothing there. Both reasons point the same
@@ -805,13 +812,16 @@ a stream whose head is unlike its body. Decoding never has this problem — the
 form is in the first character — and stays at 99 to 101 % throughout.
 
 A rule that turned the check off again after enough consecutive base64 blocks
-would fix it, and would need a constant that §0.1 does not want. §17.6 leaves
+would fix it, and would need a constant that §0.1 does not want. §17.5 leaves
 it open.
 
 ### 13.4 Short values
 
-The 55 short samples, size against `ceil(4n/3)`, time against the bench's
-base64 (`--example short`):
+The 55 short samples, size against `ceil(4n/3)`, and — the one exception to
+the preamble above — time against **the bench's** base64 rather than this
+crate's, because that is the denominator every other codec in that report uses
+(`--example short`). The bench's base64 pads and validates UTF-8, so these
+figures flatter base65t by a little; §13.3's do not.
 
 | Sample | Bytes | Form | Size | Encode, time | Decode, time |
 |---|--:|---|--:|--:|--:|
@@ -838,12 +848,12 @@ allocation and not the codec.
 ### 13.5 What stays readable
 
 Share of bytes that stand in the stream as they do in the input
-(`--example clear`, 103 samples):
+(`--example clear`, 102 samples):
 
 | | Files |
 |---|--:|
 | 100 % readable | 32 |
-| nothing readable | 68 |
+| nothing readable | 67 |
 | in between | 3 (1 %, 1 % and 5 %) |
 
 **Readability is not a gradient, it is a property of the value.** A block goes
@@ -1022,8 +1032,8 @@ author.
 
 Corpus density and throughput over binary2textbench (§12, §13) — **done**, the
 numbers are there. Every measured number in this document comes from that
-corpus: 69 corpus samples and 55 short values for density and time, 101
-samples for the sample of §9.6.
+corpus: 69 corpus samples and 55 short values for density and time, 101 for
+the sample of §9.6, and 102 for the readability of §13.5.
 
 ### 16.5 Container test with real parsers
 
@@ -1045,10 +1055,16 @@ positional argument should pass `--` first, as with any base64.
 
 ### 16.6 API shape
 
-Per target language: `encode` / `decode` analogous to that language's
-`base64`; additionally `decode_url_strict` and `encode_base64url`, and nothing
-else. Rust is included; `python/` is a PyO3 binding over it. A binding is
-explicitly **not** a second implementation in the sense of §16.3.
+Per target language, the five entry points of §9.3 and nothing else: `encode`,
+`encode_base64url`, `decode`, `decode_url_strict`, `decode_detailed`. §9.3
+requires that their argument and return types be the host language's base64
+shapes, so a call site changes its import and nothing else.
+
+**Done for Rust**, and checked rather than claimed: `rust/tests/dropin.rs` is
+written in the `base64` crate's own call shapes — free functions and the
+`Engine` method form — and stops compiling if a signature drifts. `python/` is
+a PyO3 binding over the same crate; a binding is explicitly **not** a second
+implementation in the sense of §16.3.
 
 ### 16.7 Vector set
 
@@ -1122,6 +1138,6 @@ surcharge — today, without `unsafe` and without a code change.
 What is missing is the same **without a build flag**, that is, runtime
 detection with several variants of the same function. There are two ways to do
 that, and both are closed today: `#[target_feature]` requires `unsafe`, which
-§14 rules out, and `std::simd` is not stable (checked on rustc 1.94.1,
+§14 rules out, and `std::simd` is not stable (checked on rustc 1.98.1,
 tracking issue rust-lang/rust#86656). Once `std::simd` is stable it is a few
 lines that move not one byte of the output.

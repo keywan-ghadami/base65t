@@ -58,6 +58,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The reference checker compares this revision of the specification
+          # against the previous one, so it needs more than a shallow clone.
+          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
@@ -65,8 +69,11 @@ jobs:
       - name: It agrees with the published vectors
         run: python3 conformance/test_vectors.py
 
-      - name: Real parsers take what profile U writes
+      - name: Real parsers and real shells take what it writes
         run: python3 conformance/test_containers.py
+
+      - name: Every section reference resolves, and none was silently retargeted
+        run: python3 conformance/check_references.py HEAD~1
 
       - uses: dtolnay/rust-toolchain@stable
 
