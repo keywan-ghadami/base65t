@@ -9,8 +9,9 @@ number alongside any stream you keep.
 ## What it is
 
 Base64url extended by a 65th character, `~`. The input is cut into blocks of 48
-bytes; a block whose bytes the profile admits in full stands raw after `~~`,
-every other block is base64.
+bytes; a block whose bytes are all in the output alphabet below stands raw
+after `~~`, every other block is base64. There is no state, no search and no
+threshold — that is the entire encoder.
 
 ```
 ~~alice.jones                    11 bytes of text, 13 characters
@@ -18,31 +19,36 @@ every other block is base64.
 YWxpY2U=                         ordinary base64, and it decodes to "alice"
 ```
 
-### The alphabet, and what carries it unchanged
+### The output alphabet is fixed
 
-The output is exactly the 64 base64url characters plus `~`, plus — inside raw
-blocks — the bytes the profile admits. Both profiles are printable ASCII
-throughout, and profile U is chosen so that the whole output stays inside the
-character sets the common containers accept:
+Whatever goes in, `encode` writes only these 66 characters:
 
-| Container | Profile U | Profile T |
-|---|---|---|
-| URL query, path segment | **unchanged** — RFC 3986 *unreserved*, no percent-encoding | needs percent-encoding |
-| Cookie value | **unchanged** — every character is a `cookie-octet`, proved from the ABNF (§7.1) | contains the space |
-| HTTP header value | **unchanged** — no separators, no whitespace | contains the space |
-| JSON string | **unchanged** | **unchanged** — `"` and `\` are excluded (§7) |
-| Filename | **unchanged** | contains characters some filesystems reject |
-| Log line, whitespace-separated | **unchanged** | has to be quoted |
-| A single `key=value` field | **unchanged** | **unchanged** — no whitespace problem, unlike the log line above |
-| A `key=value` **list** (`;` or `&` separated) | **unchanged** | contains `=`, `;` and `&`; not structure-safe (§7) |
+```
+A–Z   a–z   0–9   -   .   _   ~
+```
 
-Profile U is therefore the default and needs no thought; profile T buys
-readability on text with punctuation and gives up the URL. Checked against
-Python's own parsers in `conformance/test_containers.py` (§16.5).
+That is exactly RFC 3986's *unreserved* set — every one of those characters is
+reachable and nothing else ever appears, including `=`, because the encoder
+never produces padding (§5.1). It is one alphabet, not a choice, and it is the
+whole reason the format is easy to place:
 
-`encode_base64url` (§9.3) is the way out of the format for a caller who wants
-none of it: its output is ordinary base64url, and every row above holds for it
-as well.
+* **URL query, path segment** — *unreserved* is what "needs no percent-encoding"
+  means, by definition of RFC 3986.
+* **Cookie value** — all 66 characters are `cookie-octet`, proved from RFC
+  6265's ABNF (§7.1).
+* **HTTP header value** — no separator, no whitespace.
+* **JSON string** — nothing to escape.
+* **Filename, log field, `key=value`** — no space and no delimiter.
+
+Checked against Python's own parsers in `conformance/test_containers.py`
+(§16.5), and against the encoder in `the_output_alphabet_is_exactly_unreserved`.
+
+`encode_base64url` (§9.3) — the way out of the format for a caller who wants
+none of it — writes a subset of the same 66 characters.
+
+There is a second profile, T, which admits 93 raw characters instead of 66 and
+buys readability on text with punctuation at the price of the URL. It is not
+the default and nothing above depends on it; §7 has it.
 
 ## What it guarantees, so that the decision is easy
 

@@ -3,11 +3,18 @@
 Base64URL, plus one character.
 
 `~` is not in the base64 alphabet, so it can mean something else. The input is
-cut into blocks of 48 bytes. A block whose every byte the profile admits is
-written after `~~`, as it stands; every other block is base64. Text that a URL
-would carry unescaped anyway is carried unescaped — `alice.jones` encodes as
-`~~alice.jones`, thirteen characters where base64 needs fifteen — and there is
-no escaping anywhere.
+cut into blocks of 48 bytes. A block made entirely of characters the output
+alphabet already contains is written after `~~`, as it stands; every other
+block is base64. Text that a URL would carry unescaped anyway is carried
+unescaped — `alice.jones` encodes as `~~alice.jones`, thirteen characters where
+base64 needs fifteen — and there is no escaping anywhere.
+
+**The output alphabet is fixed at 66 characters** — `A–Z a–z 0–9 - . _ ~`,
+exactly RFC 3986's *unreserved* set. Nothing else is ever written, not even
+`=`, because the encoder produces no padding. That is one alphabet and not a
+choice, and it is why the output drops into a URL, a cookie, a header, a JSON
+string, a filename or a log field without escaping any of them. The test
+`the_output_alphabet_is_exactly_unreserved` checks it in both directions.
 
 ```
 ~~alice.jones                   11 bytes of text, 13 characters
@@ -53,9 +60,9 @@ channel that must accept bytes — and every word such a caller has to learn
 first is a reason to write base64 instead. The encoder is one sentence: **48
 bytes of text stay text, everything else is base64.**
 
-It never searches and never remembers. Each block asks one question — does the
-profile admit every one of these bytes — and the answer is a mask the profile
-computes 64 bytes at a time without a branch. Blocks are independent, so a
+It never searches and never remembers. Each block asks one question — is every
+one of these bytes in the alphabet — and the check answers it in groups of 32
+bytes, stopping at the first byte that settles it. Blocks are independent, so a
 stream can be cut at any block boundary and put back together, and two
 implementations cannot disagree about a byte.
 
