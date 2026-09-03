@@ -17,6 +17,7 @@ erzwungen haben.
 | `spec-v0.1.de.md` | Die erste Fassung. Fünf Presets, Framed Mode, drei Profile, ein Greedy-Encoder als zulässige Alternative. Vollständig überholt, aber jede spätere Abschnittsnummer stammt von hier |
 | `errata-v0.1.de.md` | Zehn Entscheidungen (E1–E10), die beim Implementieren von v0.1 fällig wurden. E1 ist der Fund, dass §11.1 zwei einander widersprechende Definitionen der kanonischen Form enthielt |
 | `spec-v0.2.de.md` | v0.1 + Errata, plus die lineare Regel und `dense-fast`. Der Zwischenstand, gegen den die Performance-Arbeit gemessen wurde |
+| `spec-v0.4-segmente.de.md` | Das Segmentformat mit **einem** Encoder statt fünf, am Kopf entschieden, exakt programmiert, gefenstert. Trug die Nummer v0.4 einen Tag lang; §13.3 darin ist die Messung, die es gekippt hat |
 | `FINDINGS.md` | Was das Implementieren gefunden hat: Widersprüche, zu enge Suchräume, Zahlen, die nicht stimmten. Chronologisch, nicht redigiert |
 | `PREREGISTRATION.md` | Die Sweetspot-Messung, festgelegt **bevor** sie lief. Damit der Schwellwert `L_min = 11` nicht das Ergebnis einer nachträglich passend gewählten Auswertung ist |
 
@@ -57,8 +58,24 @@ nichts zu finden ist — und den exakten DP zu behalten, wo etwas zu finden ist.
 Der Faktor, um den der DP langsamer ist, wurde dabei zweimal falsch berichtet
 (erst „12×", dann gemessen 21–63×); die Korrektur steht in `FINDINGS.md`.
 
-**Geblieben:** die Fensterung (der exakte DP über 64-KiB-Fenster statt über die
-ganze Eingabe, O(1) Speicher), die vektorisierte Base64-Schleife hinter dem
-Feature `simd`, die SWAR-Suche nach `~` und die Erkenntnis, dass Regel A eine
-*Suche* ist und keine Dekodierung — was die einzige Stelle war, an der ein
-fremdes Base64-SIMD-Kernel überhaupt eingesetzt werden konnte.
+## Und dann das Segmentformat selbst
+
+Mit einem Encoder statt fünf war das Segmentformat konsequent, und es war
+gemessen: auf durchgehend legalen kurzen Werten schneller als Base64, auf
+komprimierten Daten byteweise Base64. Dazwischen, auf gemischtem Text, kostete
+das exakte Programm das Sechs- bis Elffache der Base64-Zeit für null bis
+anderthalb Prozent Größe — und jeder Versuch, das zu beheben, war ein weiterer
+Mechanismus: eine Kopfentscheidung, eine Fensterung, eine geschlossene Form,
+eine Stichprobe. Fünf Mechanismen, um eine Idee bezahlbar zu machen.
+
+Die Frage, die das beendet hat, war nicht "wie machen wir das Programm
+schneller", sondern "warum müssen wir überhaupt nachschauen". Ein Block fester
+Länge, drei Formen, ein Bit je Byte für die Maske, das häufigste Muster mit
+einem eigenen kurzen Code. Kein Suchen, kein Zustand, keine Längen im Strom.
+Das ist `docs/spec-v0.4.de.md`, und die Segmentfassung liegt daneben als das,
+was ein Tag Messen kostet und lehrt.
+
+**Geblieben aus der Segmentzeit:** die Maske über 64 Bytes (sie ist jetzt das
+ganze Encoder-Innere), die Regel-A-Erkenntnis, dass Alphabet-Konsistenz eine
+Suche und keine Dekodierung ist, und die Base64-Schleife, die ein Segment in
+ein Slice bekannter Länge schreibt.

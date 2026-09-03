@@ -1,4 +1,13 @@
-# Base65t — Spezifikation v0.4 (final)
+# Base65t — Spezifikation v0.4, Segmentfassung (zurückgezogen)
+
+> **Historie.** Diese Fassung trug die Nummer v0.4 für einen Tag. Sie ist das
+> Segmentformat von v0.1 bis v0.3 mit einem Encoder statt fünf, und sie wurde
+> am selben Tag durch das Blockformat ersetzt, das jetzt unter
+> `docs/spec-v0.4.de.md` steht. Sie liegt hier, weil sie die vollständigste
+> Beschreibung des Segmentformats ist und weil §13.3 die Messung enthält, an
+> der es gescheitert ist. `docs/history/README.md` sagt, was zwischen den
+> beiden lag.
+
 
 **Status:** final. Ersetzt v0.2 und v0.1; beide liegen mit ihrer Errata und den
 Messprotokollen in `docs/history/`, zusammen mit einem Verzeichnis dessen, was
