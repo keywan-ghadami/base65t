@@ -6,7 +6,8 @@
 
 This is the second implementation §16.3 asks for, and it is deliberately not a
 translation of the Rust one: it was written from the specification, it tests
-each byte of a block one at a time rather than through a packed mask, and it
+each byte of a block against a written-out character set rather than through
+arithmetic over thirty-two bytes at a time, and it
 shares no code, no tables and no structure with it. Where the two disagree, one of them has
 misread the document -- which is the entire point of asking for two.
 

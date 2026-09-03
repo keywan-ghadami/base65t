@@ -221,18 +221,21 @@ passages without a quotation mark.
 * **`docs/spec-v0.4.de.md`** — the specification, v0.4, in German. The
   normative document; everything else is downstream of it. The wire format
   is marked not stable.
-* **`rust/`** — the reference implementation. No dependencies and no unsafe in
-  the default build, and written to be read against the specification rather
-  than to be fast: the section numbers are in the comments. `--features simd`
-  is the one exception and is off by default.
+* **`rust/`** — the reference implementation. No dependencies, no features to
+  turn on, and `#![forbid(unsafe_code)]`, written to be read against the
+  specification rather than to be fast: the section numbers are in the
+  comments. That it is also fast comes from the profile check being arithmetic
+  rather than a table lookup, which is what lets the compiler vectorise it
+  without being asked.
 * **`python/`** — the Python distribution: a PyO3 extension over the same
   crate, packaged with maturin, so what Python runs is byte for byte what a
   Rust caller gets. There is no Python implementation of the format in it, and
   its tests are about what a binding can get wrong on its own.
 * **`conformance/reference.py`** — the second implementation §16.3 asks for,
   which is a different thing from a binding: written from the specification
-  rather than from the Rust, testing each byte one at a time rather than
-  through a packed mask, no shared code and no shared tables. It agrees with
+  rather than from the Rust, testing each byte against a written-out character
+  set rather than through arithmetic over thirty-two bytes at a time, no
+  shared code and no shared tables. It agrees with
   the Rust on all 308 vector/profile pairs and on a quarter-megabyte stream.
   The gap that stays open is that both have the same author.
 * **`docs/vectors.json`** — 173 vectors over both entry points and both
