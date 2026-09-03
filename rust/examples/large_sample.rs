@@ -10,7 +10,7 @@
 //! `docs/vectors.json` cannot reach here: every vector in it is under a
 //! kilobyte, and a hex dump of a quarter-megabyte input would be half a
 //! megabyte of repository. But a long stream is where a segmentation mistake
-//! hides -- one did, when the encoder still cut blocks whose seams could
+//! hides -- one did, in an earlier version whose segments could
 //! end on a partial quantum.
 //!
 //! The input is mixed on purpose. Homogeneous input shows nothing: noise makes

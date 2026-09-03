@@ -2,27 +2,17 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The alphabet, the 65th character, and the three profiles (§3, §5.2, §7).
+//! The alphabet, the 65th character, and the two profiles (§3, §5.2, §7).
 
 /// Base64URL, RFC 4648 §5. The encoder writes this and only this (§5.1).
 pub const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-/// The 65th character. Not in the alphabet, no value (§3).
+/// The 65th character. Not in the alphabet, no value (§3). Doubled it opens a
+/// raw block, alone it opens a mask block (§4).
 pub const TILDE: u8 = b'~';
 
-/// Longest literal a single segment can carry (§6.1): `63 + 4095`.
-pub const MAX_LITERAL: usize = 4158;
-
-/// Shortest literal that can never lose against base64 (§9.1).
-///
-/// Not a tuning parameter: §9.1 derives it. A literal of `L` bytes saves
-/// `(L − 10)/3` characters against base64 once the worst rounding on both
-/// sides is charged to it, so eleven is the first length that cannot lose --
-/// which is the whole of why §9.4 holds for a rule that never looks ahead.
-pub const MIN_LITERAL: usize = 11;
-
 /// Which alphabet variant a character belongs to, as bits, so that Rule A
-/// (§5.4) costs one `or` per character and one test per segment instead of two
+/// (§5.4) costs one `or` per character and one test per run instead of two
 /// branches per character.
 pub const CLASSIC_BIT: u8 = 1;
 pub const URL_BIT: u8 = 2;
@@ -41,12 +31,12 @@ pub const URL_BIT: u8 = 2;
 /// five branches per character against one indexed load is most of the
 /// difference between decoding at base64's speed and at several times it.
 /// `~` and `=` are marked invalid like everything else outside the alphabet,
-/// which is what makes the checks marked (1) in §10.1 possible at all.
+/// which is what makes the check marked (1) in §10.1 possible at all.
 ///
 /// Bits 0–5 hold the value, [`WORD_CLASS`] the alphabet class, and
 /// [`WORD_BAD`] marks everything that is not an alphabet character. The bits
-/// are laid out so that a segment's characters can be `or`-ed together and
-/// both questions answered once for the whole segment: no legal character
+/// are laid out so that a run's characters can be `or`-ed together and
+/// both questions answered once for the whole run: no legal character
 /// carries `WORD_BAD`, so the accumulated word carries it exactly when some
 /// character was illegal.
 pub const WORD_CLASS: u16 = 0x0300;
@@ -115,13 +105,10 @@ static MEMBERSHIP: [u8; 256] = {
 impl Profile {
     /// Which of these 64 bytes the profile admits, one bit each, bit 0 first.
     ///
-    /// The encoder's inner loop over its input, and the reason it is a mask
-    /// rather than a loop with a condition in it: the question "where does
-    /// this run end" is a branch the predictor cannot guess on mixed data, and
-    /// it pays for one per run. Sixty-four lookups with no branch at all cost
-    /// less than ten lookups and two mispredictions -- measured on English
-    /// prose, 473 MiB/s scanning byte at a time against 1352 here, and the
-    /// 1352 does not depend on the data.
+    /// The encoder's inner loop over its input, and since v0.4 the *whole* of
+    /// what it asks about a block: which bytes may stand as they are. Sixty-
+    /// four lookups with no branch at all, measured at 1352 MiB/s, and the
+    /// number does not depend on the data.
     ///
     /// Packed a byte at a time and then assembled, which is worth a word: the
     /// obvious `m |= bit << k` over all sixty-four is one dependency chain
@@ -139,9 +126,9 @@ impl Profile {
 
     /// The same for fewer than 64 bytes: whole groups packed, then the rest.
     ///
-    /// A short value is the case §0.1 names, so the last block must not cost
-    /// what a full one costs. Padding it out to sixty-four reads sixty-four
-    /// bytes to answer for four.
+    /// A block is forty-eight bytes and the last one is shorter, so this is
+    /// the form the encoder actually calls. Padding a four-byte tail out to
+    /// sixty-four would read sixty-four bytes to answer for four.
     #[inline]
     pub fn mask_short(self, data: &[u8]) -> u64 {
         debug_assert!(data.len() <= 64);

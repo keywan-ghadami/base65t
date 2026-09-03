@@ -6,9 +6,9 @@
 //!
 //! A table of error codes nothing produces is a table of error codes nobody
 //! has checked. The last test is the other half of the same concern: the
-//! decoder parses attacker-controlled lengths (§14), so it is run over
-//! arbitrary bytes with the only requirement that it return rather than
-//! panic, allocate wildly or read past the end.
+//! decoder reads attacker-controlled input (§14), so it is run over arbitrary
+//! bytes with the only requirement that it return rather than panic, allocate
+//! wildly or read past the end.
 
 use base65t::*;
 
@@ -18,22 +18,20 @@ fn all_ten_codes() {
         (
             Error::TrailingTilde,
             "E_TRAILING_TILDE",
-            decode(b"abc~", Profile::U),
+            decode(
+                &[encode_base64url(&[9u8; 48]), b"~".to_vec()].concat(),
+                Profile::U,
+            ),
         ),
-        (
-            Error::ReservedLen,
-            "E_RESERVED_LEN",
-            decode(b"~A", Profile::U),
-        ),
-        (Error::Truncated, "E_TRUNCATED", decode(b"~_A", Profile::U)),
-        (Error::Profile, "E_PROFILE", decode(b"~Ca b", Profile::U)),
+        (Error::Truncated, "E_TRUNCATED", decode(b"~AAA", Profile::U)),
+        (Error::Profile, "E_PROFILE", decode(b"~~a b", Profile::U)),
         (Error::Align, "E_ALIGN", decode(b"abcde", Profile::U)),
         (
             Error::NonzeroTail,
             "E_NONZERO_TAIL",
             decode(b"YWxpY2V", Profile::U),
         ),
-        (Error::Charset, "E_CHARSET", decode(b"~~ab", Profile::U)),
+        (Error::Charset, "E_CHARSET", decode(b"YW*j", Profile::U)),
         (Error::Padding, "E_PADDING", decode(b"YWxp==", Profile::U)),
         (
             Error::MixedAlphabet,
@@ -45,6 +43,7 @@ fn all_ten_codes() {
             "E_NON_URL_ALPHABET",
             decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
         ),
+        (Error::Mask, "E_MASK", decode(b"~AAAAAAABa", Profile::U)),
     ];
     for (expected, code, got) in cases {
         assert_eq!(got, Err(expected), "{code}");
@@ -53,31 +52,34 @@ fn all_ten_codes() {
     }
 }
 
-/// The header form decides which of two truncation errors comes out, and the
-/// two-character form has its own: a `~` with nothing behind it is a trailing
-/// tilde, a length that overruns the stream is a truncation.
+/// Where a mask block can be cut off, and what each cut is called.
 #[test]
-fn truncation_at_each_header_form() {
+fn truncation_inside_a_mask_block() {
     assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~L", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~Labc", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~_", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~_A", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~_AA", Profile::U), Err(Error::Truncated));
-    // 63 + 0 = 63 payload bytes are promised and 63 are there.
-    let ok = [b"~_AA".as_slice(), &[b'a'; 63]].concat();
-    assert_eq!(decode(&ok, Profile::U).unwrap().bytes.len(), 63);
+    for n in 1..8 {
+        let s = [b"~".as_slice(), &b"AAAAAAAA"[..n]].concat();
+        assert_eq!(
+            decode(&s, Profile::U),
+            Err(Error::Truncated),
+            "{n} mask chars"
+        );
+    }
+    // A full mask, three clear bytes promised, two present.
+    assert_eq!(decode(b"~4AAAAAAAab", Profile::U), Err(Error::Truncated));
+    // Three present: a valid tail of three admitted bytes and nothing else.
+    assert_eq!(decode(b"~4AAAAAAAabc", Profile::U).unwrap().bytes, b"abc");
 }
 
-/// A header promises up to 4158 bytes. Promising them is not the same as
-/// having them, and a decoder that allocates on the promise is the bug §10.4
-/// warns about.
+/// A mask promises at most forty-eight bytes and can address nothing beyond
+/// its block. There is no length in this format a sender chooses, which is
+/// the property §14 wanted and the earlier format did not have.
 #[test]
-fn a_literal_length_is_a_promise_not_an_allocation() {
-    // `~__` is the largest header there is: 63 + 4095 = 4158 bytes claimed,
-    // and none of them present.
-    assert_eq!(decode(b"~___", Profile::U), Err(Error::Truncated));
-    assert_eq!(decode(b"~_aa", Profile::U), Err(Error::Truncated));
+fn a_mask_cannot_promise_more_than_a_block() {
+    // All 48 bits set, no clear bytes: truncated, not a large allocation.
+    assert_eq!(decode(b"~________", Profile::U), Err(Error::Truncated));
+    // All 48 bits set and 48 bytes: a valid (if wasteful) block.
+    let s = [b"~________".as_slice(), &[b'a'; 48]].concat();
+    assert_eq!(decode(&s, Profile::U).unwrap().bytes, vec![b'a'; 48]);
 }
 
 /// Arbitrary bytes in, an answer out. No panic, no overrun, no runaway.
@@ -90,11 +92,9 @@ fn arbitrary_input_decodes_or_errors() {
         s ^= s << 5;
         s
     };
-    // A mix that hits the grammar often enough to be interesting: mostly
-    // alphabet characters, with tildes, padding and high bytes thrown in.
     let pool: Vec<u8> = b"ABCabc012-_+/=~\x00\xff \t\"\\.".to_vec();
     for _ in 0..20_000 {
-        let n = (next() % 40) as usize;
+        let n = (next() % 140) as usize;
         let data: Vec<u8> = (0..n).map(|_| pool[next() as usize % pool.len()]).collect();
         for profile in [Profile::U, Profile::T] {
             for f in [
@@ -103,8 +103,8 @@ fn arbitrary_input_decodes_or_errors() {
             ] {
                 if let Ok(d) = f(&data, profile) {
                     // Whatever came out has to be no larger than the stream
-                    // could describe: a literal is one byte per byte and base64
-                    // is three per four.
+                    // could describe: a raw byte is one per character and
+                    // base64 is three per four.
                     assert!(d.bytes.len() <= data.len(), "{data:?}");
                 }
             }

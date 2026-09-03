@@ -32,9 +32,8 @@ fn main() {
         let ours = encode(&data);
         let base64 = encode_base64url(&data);
         println!(
-            "{path}  {} bytes, {:?} mode, {:.1} % of base64",
+            "{path}  {} bytes, {:.1} % of base64",
             data.len(),
-            classify(&data),
             100.0 * ours.len() as f64 / base64.len() as f64
         );
         bench("encode", data.len(), || encode(&data));

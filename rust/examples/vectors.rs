@@ -58,29 +58,41 @@ impl Rng {
 }
 
 /// Inputs chosen so that a disagreement is likely to show: the profile
-/// boundary, the tilde, `~A`, the header bands at 62 and 63, the padding
-/// characters, and lengths on both sides of every threshold.
+/// boundary, the tilde, the block boundary at 48, the tie at 27 admitted
+/// bytes, the tails where raw and base64 tie, the padding characters, and
+/// lengths on both sides of every one of those.
 fn inputs() -> Vec<(String, Vec<u8>)> {
     let mut v: Vec<(String, Vec<u8>)> = Vec::new();
-    let named: [(&str, &[u8]); 8] = [
+    let named: [(&str, &[u8]); 9] = [
         ("empty", b""),
         ("tv1", b"alice.jones"),
         ("tv2", b"\xde\xad\xbe\xefsession-eu-central"),
         ("tv3", b"sub~alice~jones"),
-        ("tv5", b"hello~Alice"),
+        ("tv3b", b"hello~Alice"),
+        ("tv5", b"the quick brown fox jumps over the lazy dog. again"),
         ("tv6", b"<<???>>"),
-        ("tilde-a", b"~A~A~A"),
+        ("tildes", b"~~~~~~"),
         ("equals", b"a=b="),
     ];
     for (name, data) in named {
         v.push((name.to_string(), data.to_vec()));
     }
-    for n in [1usize, 7, 10, 11, 62, 63, 64, 124, 125] {
+    for n in [1usize, 3, 4, 6, 7, 47, 48, 49, 95, 96, 97] {
         v.push((format!("text-{n}"), vec![b'a'; n]));
         v.push((
             format!("count-{n}"),
             (0..n).map(|i| (i % 251) as u8).collect(),
         ));
+    }
+    // The tie at 27 admitted bytes of 48, and one either side of it, at the
+    // start of the block and at its end.
+    for admitted in [26usize, 27, 28] {
+        let mut front = vec![b'a'; admitted];
+        front.extend(vec![b' '; 48 - admitted]);
+        v.push((format!("tie-front-{admitted}"), front));
+        let mut back = vec![b' '; 48 - admitted];
+        back.extend(vec![b'a'; admitted]);
+        v.push((format!("tie-back-{admitted}"), back));
     }
     let mut r = Rng(0x5eed_0000_0000_1234);
     let pools: [(&str, &[u8]); 4] = [
@@ -90,8 +102,8 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
         ("binary", b"\x00\x01\x7f\x80\xfe\xff"),
     ];
     for (label, pool) in pools {
-        for k in 0..8 {
-            let n = 1 + (r.next() % 90) as usize;
+        for k in 0..10 {
+            let n = 1 + (r.next() % 150) as usize;
             let data: Vec<u8> = (0..n)
                 .map(|_| pool[r.next() as usize % pool.len()])
                 .collect();

@@ -68,9 +68,9 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
             .collect();
         v.push((format!("{percent}% untransportable"), data));
     }
-    // Tildes, and tilde-A in particular: `~` is the one character a literal
-    // may carry that also opens a segment, so it is where a decoder that
-    // guesses instead of counting comes apart.
+    // Tildes, and doubled tildes in particular: `~` is the one character a
+    // raw block may carry that also opens a block, so it is where a decoder
+    // that guesses instead of counting comes apart.
     v.push(("tilde A repeated".into(), b"~A".repeat(200)));
     v.push(("tildes".into(), b"~".repeat(200)));
     v.push((
@@ -78,9 +78,15 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         b"abcdefghijkl~Amnopqrstuvwx".repeat(30),
     ));
     v.push((
-        "window boundary".into(),
-        (0..3 * WINDOW_BYTES + 17)
+        "many blocks".into(),
+        (0..30 * BLOCK_BYTES + 17)
             .map(|i| (i % 251) as u8)
+            .collect(),
+    ));
+    v.push((
+        "many raw blocks".into(),
+        (0..30 * BLOCK_BYTES + 17)
+            .map(|i| b"abcdefghij.-_~"[i % 14])
             .collect(),
     ));
     v
