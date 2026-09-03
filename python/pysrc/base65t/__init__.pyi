@@ -12,15 +12,11 @@ class Base65tDecodeError(ValueError):
 
 def encode(data: _Bytes, /, profile: str = ...) -> bytes: ...
 def encode_base64url(data: _Bytes, /, profile: str = ...) -> bytes: ...
-def classify(data: _Bytes, /) -> str: ...
 def decode(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
 def decode_url_strict(stream: _Bytes, /, profile: str = ...) -> Decoded: ...
 
 PROFILES: Final[list[str]]
-MAX_LITERAL: Final[int]
-MIN_LITERAL: Final[int]
-WINDOW_BYTES: Final[int]
-SAMPLE_BYTES: Final[int]
-ENTROPY_LIMIT_MILLIBITS: Final[int]
+BLOCK_BYTES: Final[int]
+MASK_CHARS: Final[int]
 SPEC_VERSION: Final[str]
 __version__: Final[str]

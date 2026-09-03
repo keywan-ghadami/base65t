@@ -113,9 +113,9 @@ fn wrap(py: Python<'_>, d: base65t::Decoded) -> Decoded {
 /// sequence has an encoding, including the empty one.
 ///
 /// There is no mode to pick and no preset to name, which is the design and not
-/// an omission (§0.1): a caller who has to choose between a dense encoder and
-/// a fast one has to know what those words mean before encoding a byte, and a
-/// caller who is unsure writes base64. The encoder decides for itself (§9.6).
+/// an omission (§0.1): a caller who has to choose has to know what the choices
+/// mean before encoding a byte, and a caller who is unsure writes base64. The
+/// encoder is a fixed mapping over blocks of forty-eight bytes (§4).
 ///
 /// `profile` is not such a choice: it is a statement about the container the
 /// stream has to survive, and it cannot be derived from the stream (§7.2).
@@ -160,22 +160,6 @@ fn encode_base64url<'py>(
     Ok(PyBytes::new(py, &out))
 }
 
-/// Which branch of §9.6 this input takes: `"base64"` or `"exact"`.
-///
-/// Exposed because it is the one decision the encoder makes that a caller
-/// might want to see, and because conformance point 4 of §16 asks two
-/// implementations to agree about it.
-#[pyfunction]
-#[pyo3(signature = (data, /))]
-#[pyo3(text_signature = "(data, /)")]
-fn classify(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<&'static str> {
-    let data = byte_argument(data, "classify() expects bytes, bytearray or str")?;
-    Ok(match py.detach(|| base65t::classify(&data)) {
-        base65t::Mode::Base64 => "base64",
-        base65t::Mode::Exact => "exact",
-    })
-}
-
 macro_rules! decoder {
     ($name:ident, $inner:path, $doc:expr) => {
         #[doc = $doc]
@@ -214,7 +198,6 @@ decoder!(
 fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode, m)?)?;
     m.add_function(wrap_pyfunction!(encode_base64url, m)?)?;
-    m.add_function(wrap_pyfunction!(classify, m)?)?;
     m.add_function(wrap_pyfunction!(decode, m)?)?;
     m.add_function(wrap_pyfunction!(decode_url_strict, m)?)?;
     m.add_class::<Decoded>()?;
@@ -225,11 +208,8 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // The constants the specification fixes, so that tooling has one source
     // for them rather than a transcribed copy.
-    m.add("MAX_LITERAL", base65t::MAX_LITERAL)?;
-    m.add("MIN_LITERAL", base65t::MIN_LITERAL)?;
-    m.add("WINDOW_BYTES", base65t::WINDOW_BYTES)?;
-    m.add("SAMPLE_BYTES", base65t::SAMPLE_BYTES)?;
-    m.add("ENTROPY_LIMIT_MILLIBITS", base65t::ENTROPY_LIMIT_MILLIBITS)?;
+    m.add("BLOCK_BYTES", base65t::BLOCK_BYTES)?;
+    m.add("MASK_CHARS", base65t::MASK_CHARS)?;
     m.add("PROFILES", vec!["U", "T"])?;
 
     m.add(
@@ -237,17 +217,13 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
         vec![
             "encode",
             "encode_base64url",
-            "classify",
             "decode",
             "decode_url_strict",
             "Decoded",
             "Base65tDecodeError",
             "PROFILES",
-            "MAX_LITERAL",
-            "MIN_LITERAL",
-            "WINDOW_BYTES",
-            "SAMPLE_BYTES",
-            "ENTROPY_LIMIT_MILLIBITS",
+            "BLOCK_BYTES",
+            "MASK_CHARS",
             "SPEC_VERSION",
             "__version__",
         ],

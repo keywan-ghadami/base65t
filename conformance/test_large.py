@@ -13,15 +13,12 @@ needs is above that: many boundaries, and no vector watching them. One
 implementation encodes the input, this one encodes it again and decodes what
 the other wrote, and the three have to agree.
 
-The seam is the thing to watch. §9.2.1 runs the programme per 64 KiB window,
-so a stream past that length has boundaries in it, and a window whose last
-base64 run leaves a partial quantum is continued by the next window's run --
-two adjacent base64 segments are one segment to a decoder (§4). Both
-implementations join them; if only one did, this is where it would show, and
-nowhere else. Keep the input above 64 KiB or the test proves nothing.
+Blocks are independent, so there is no seam to watch any more; what a long
+stream tests is the tail rule and the mask on every mix of bytes a generated
+input produces -- some five thousand blocks of it.
 
-The Python encoder is quadratic, so a quarter of a megabyte is about the
-practical limit here. That is enough: it is four window boundaries.
+The Python encoder is plain and slow, and a quarter of a megabyte is a few
+seconds. That is enough.
 """
 
 import hashlib
@@ -50,8 +47,6 @@ def main(argv) -> int:
     if got.padding_seen:
         print("FAIL an encoder wrote padding, which §5.3 forbids")
         return 1
-    if len(data) <= base65t.WINDOW_BYTES:
-        print(f"WARN {len(data)} bytes is inside one window; no seam is tested")
     if len(stream) > -(-4 * len(data) // 3):
         print(f"FAIL {len(stream)} chars is longer than base64 would be")
         return 1
