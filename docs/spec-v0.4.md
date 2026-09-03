@@ -20,16 +20,21 @@ YWxpY2U=                         ordinary base64, and it decodes to "alice"
 
 ### The output alphabet is fixed
 
-Whatever goes in, `encode` writes only these 66 characters:
+The output alphabet never depends on the data. It depends only on which
+function was called, and there are two:
 
-```
-A–Z   a–z   0–9   -   .   _   ~
-```
+| Call | Writes | Characters |
+|---|---|--:|
+| `encode(x)` — the default | `A–Z a–z 0–9 - . _ ~`, exactly RFC 3986 *unreserved* | 66 |
+| `encode(x, Profile::T)` | printable ASCII except `"` and `\` | 93 |
 
-That is exactly RFC 3986's *unreserved* set — every one of those characters is
-reachable and nothing else ever appears, including `=`, because the encoder
-never produces padding (§5.1). It is one alphabet, not a choice, and it is the
-whole reason the format is easy to place:
+`=` appears in neither, because the encoder produces no padding (§5.1). Both
+sets are fixed and complete: every character listed is reachable and nothing
+outside it is ever written, whatever the input.
+
+The rest of this section is about the default, which is what a caller who
+never reads §7 gets. Its 66 characters are the whole reason the format is easy
+to place:
 
 * **URL query, path segment** — *unreserved* is what "needs no percent-encoding"
   means, by definition of RFC 3986.
@@ -45,9 +50,11 @@ Checked against Python's own parsers in `conformance/test_containers.py`
 `encode_base64url` (§9.3) — the way out of the format for a caller who wants
 none of it — writes a subset of the same 66 characters.
 
-There is a second profile, T, which admits 93 raw characters instead of 66 and
-buys readability on text with punctuation at the price of the URL. It is not
-the default and nothing above depends on it; §7 has it.
+**Profile T trades that list, and says so.** Its 93 characters include the
+space, so a T value has to be quoted in a whitespace-separated log line and
+percent-encoded in a URL; §7 has the full consequence. It is an explicit
+opt-in and the default never reaches it. What it buys is §13.5: text with
+punctuation stays readable, which under the default it never does.
 
 ## What it guarantees, so that the decision is easy
 
@@ -378,6 +385,28 @@ it.
 URL-safe. **And it contains the space** (0x20): a whitespace-separated log
 line has to quote a T value, a `key=value` format does not. Found by the
 container test of §16.5.
+
+**The space is the whole of profile T.** It is the one character that costs T
+a container the rest of its alphabet would pass, so whether it belongs is a
+fair question, and it is answered by measurement rather than by argument
+(`binary2textbench`, `--example tspace`, 118 samples). Removing it does not
+narrow profile T; it empties it. Over the corpus:
+
+| | size | cleartext share of all input bytes |
+|---|--:|--:|
+| profile T | 97.50 % | 11.5 % |
+| profile T without the space | 99.96 % | 0.2 % |
+
+Twenty-four files are affected and **every one of them goes to exactly
+100.0 % size**, without exception: `xml` from 90.2 %, `dickens` from 94.8 %, a
+log line from 78.2 %, a SQL statement from 78.5 %. Text with punctuation is
+text with spaces, and 48 consecutive printable non-space characters
+effectively do not occur in it. A profile T without the space would be
+profile U with a longer specification.
+
+So the space stays, and what it costs is stated wherever T is offered rather
+than hidden: T is an opt-in, and quoting a log field is what the opt-in buys
+readability with.
 
 ### 7.1 Cookie conformance of profile U (proved, not measured)
 

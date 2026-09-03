@@ -15,7 +15,7 @@ fn unreserved() -> BTreeSet<u8> {
     (b'A'..=b'Z')
         .chain(b'a'..=b'z')
         .chain(b'0'..=b'9')
-        .chain([b'-', b'.', b'_', b'~'])
+        .chain(*b"-._~")
         .collect()
 }
 
@@ -80,17 +80,52 @@ fn no_output_ever_carries_padding() {
     }
 }
 
-/// Profile T is the second alphabet, and the head of the document says
-/// nothing above depends on it. This pins what it actually widens to, so that
-/// §7's 93 characters are a measured number too.
+/// Profile T is the second alphabet, and the head of the document names it as
+/// fixed and complete just like the first. So it gets the same test: exactly
+/// 93 characters, printable ASCII without `"` and `\\`, both directions.
 #[test]
-fn profile_t_widens_the_alphabet_to_printable_ascii() {
+fn profile_t_writes_exactly_ninety_three_characters() {
     let mut seen = BTreeSet::new();
-    for n in 0..600usize {
-        let text: Vec<u8> = (0..n).map(|i| 0x20 + (i % 95) as u8).collect();
+    let mut r: u64 = 0xD1B5_4A32_D192_ED03;
+    let mut next = move || {
+        r ^= r << 13;
+        r ^= r >> 7;
+        r ^= r << 17;
+        (r >> 24) as u8
+    };
+    for n in 0..3000usize {
+        // Binary, so the base64 writer's own alphabet is covered.
+        let data: Vec<u8> = (0..n).map(|_| next()).collect();
+        seen.extend(encode_with(&data, Profile::T));
+        // Every admitted character in turn, so all 93 raw bytes appear.
+        let text: Vec<u8> = (0..n)
+            .map(|i| {
+                let c = 0x20 + (i % 95) as u8;
+                if c == b'"' || c == b'\\' {
+                    b' '
+                } else {
+                    c
+                }
+            })
+            .collect();
         seen.extend(encode_with(&text, Profile::T));
     }
-    assert!(seen.iter().all(|&c| (0x20..=0x7e).contains(&c)));
-    assert!(!seen.contains(&b'"'), "T must never write a quote raw");
-    assert!(!seen.contains(&b'\\'), "T must never write a backslash raw");
+    let want: BTreeSet<u8> = (0x20u8..=0x7e)
+        .filter(|&c| c != b'"' && c != b'\\')
+        .collect();
+    assert_eq!(want.len(), 93);
+    assert_eq!(
+        seen.difference(&want).copied().collect::<Vec<_>>(),
+        Vec::<u8>::new(),
+        "profile T wrote a character outside printable ASCII minus quote and backslash"
+    );
+    assert_eq!(
+        want.difference(&seen).copied().collect::<Vec<_>>(),
+        Vec::<u8>::new(),
+        "the document names a character profile T never writes"
+    );
+    assert!(
+        seen.contains(&b' '),
+        "the space is what profile T is for (§7)"
+    );
 }
