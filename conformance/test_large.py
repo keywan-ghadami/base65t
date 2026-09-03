@@ -41,10 +41,10 @@ def main(argv) -> int:
     except base65t.Base65tError as e:
         print(f"FAIL the other implementation's stream does not decode: {e.code}")
         return 1
-    if got.bytes != data:
-        print(f"FAIL decoded {len(got.bytes)} bytes, expected {len(data)}")
+    if got != data:
+        print(f"FAIL decoded {len(got)} bytes, expected {len(data)}")
         return 1
-    if got.padding_seen:
+    if base65t.decode_detailed(stream).padding_seen:
         print("FAIL an encoder wrote padding, which §5.3 forbids")
         return 1
     if len(stream) > -(-4 * len(data) // 3):

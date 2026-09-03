@@ -160,13 +160,28 @@ def _run(stream, strict_url=False) -> Decoded:
     return Decoded(bytes(d.out), d.alphabet, d.padding)
 
 
-def decode(stream: bytes) -> Decoded:
-    """§10.2. A stream and nothing else (§0.3)."""
+def decode_detailed(stream: bytes) -> Decoded:
+    """§5.5: the bytes together with what the stream chose."""
     return _run(stream)
 
 
-def decode_url_strict(stream: bytes) -> Decoded:
+def decode_url_strict_detailed(stream: bytes) -> Decoded:
     return _run(stream, strict_url=True)
+
+
+def decode(stream: bytes) -> bytes:
+    """§10.2. A stream and nothing else (§0.3), returning the bytes.
+
+    The shape a caller replacing ``base64.b64decode`` already has. What the
+    stream chose is in :func:`decode_detailed`; §5.5 requires it be reachable,
+    not that it ride on this return.
+    """
+    return _run(stream).bytes
+
+
+def decode_url_strict(stream: bytes) -> bytes:
+    """:func:`decode`, but ``+`` and ``/`` are ``E_NON_URL_ALPHABET`` (§5.5)."""
+    return _run(stream, strict_url=True).bytes
 
 
 # --- encoder, §9 ----------------------------------------------------------

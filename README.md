@@ -13,8 +13,15 @@ base64 needs fifteen — and there is no escaping anywhere.
 exactly RFC 3986's *unreserved* set. Nothing else is ever written, not even
 `=`, because the encoder produces no padding. That is one alphabet and not a
 choice, and it is why the output drops into a URL, a cookie, a header, a JSON
-string, a filename or a log field without escaping any of them. The test
-`the_output_alphabet_is_exactly_unreserved` checks it in both directions.
+string, a filename or a log field without escaping any of them — **and
+survives being pasted unquoted into a shell**, which the conformance test
+checks in bash, dash and sh over every stream shape. The test
+`the_output_alphabet_is_exactly_unreserved` pins the set in both directions.
+
+Two numbers live here and they are different: the **radix** is 64 + `~` = 65,
+which is what the name says, and the **byte values a stream can contain** is
+66, because a raw block passes text through and `.` is text. `.` and `~` never
+appear in a base64 block.
 
 ```
 ~~alice.jones                   11 bytes of text, 13 characters
@@ -43,15 +50,36 @@ never meaningfully slower than base64, and any base64 stream reads back.
 > pure base64 stream: the same loop shape, allocator and compiler, so the
 > ratio is the format rather than a handicap.
 
-## One encoder, no options, no state
+## A drop-in for `base64`
 
 ```rust
 use base65t::{decode, encode};
 
-let stream = encode(b"alice.jones");
-assert_eq!(stream, b"~~alice.jones");
-assert_eq!(decode(&stream)?.bytes, b"alice.jones");
+let stream: String = encode(b"alice.jones");
+assert_eq!(stream, "~~alice.jones");
+assert_eq!(decode(&stream)?, b"alice.jones");
 ```
+
+The signatures are the `base64` crate's, so a call site changes its import and
+nothing else — the method form works too:
+
+```rust
+use base65t::prelude::*;
+
+assert_eq!(URL_SAFE.encode("alice.jones"), "~~alice.jones");
+assert_eq!(URL_SAFE.decode("YWxpY2U=")?, b"alice");   // and it reads base64
+```
+
+`tests/dropin.rs` is that claim as a test rather than a sentence: it is written
+in the other crate's call shapes and stops compiling if a signature drifts.
+
+**The two sides are not equally safe to swap.** A base65t decoder reads every
+canonical base64 and base64url stream, so replacing a *decoder* changes nothing
+anyone can observe. Replacing an *encoder* starts emitting `~`, which a base64
+decoder rejects. Decoders first, encoders once every reader is one — said once,
+here, and then the call sites are the ones you already have.
+
+## One encoder, no options, no state
 
 `encode` takes bytes and returns bytes. There is no mode to pick, no threshold
 to tune and no preset to understand: this format exists for the caller who is

@@ -93,10 +93,13 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 }
 
 /// The two entry points a caller has, so every claim below is checked of both.
-type Enc = fn(&[u8]) -> Vec<u8>;
+type Enc = fn(&[u8]) -> String;
 
 fn kinds() -> [(&'static str, Enc); 2] {
-    [("encode", encode as Enc), ("base64url", encode_base64url)]
+    [
+        ("encode", (|d: &[u8]| encode(d)) as Enc),
+        ("base64url", |d: &[u8]| encode_base64url(d)),
+    ]
 }
 
 #[test]
@@ -104,7 +107,8 @@ fn decode_of_encode_is_the_identity() {
     for (name, data) in corpus() {
         for (kind, enc) in kinds() {
             let out = enc(&data);
-            let d = decode(&out).unwrap_or_else(|e| panic!("{name}, {kind}: {e}"));
+            let d =
+                decode_detailed(out.as_bytes()).unwrap_or_else(|e| panic!("{name}, {kind}: {e}"));
             assert_eq!(d.bytes, data, "{name}, {kind}");
 
             // An encoder never writes padding and never writes the classic
@@ -113,11 +117,7 @@ fn decode_of_encode_is_the_identity() {
             assert_ne!(d.alphabet_seen, AlphabetSeen::Classic, "{name}, {kind}");
 
             // And the strict entry point agrees with the permissive one.
-            assert_eq!(
-                decode_url_strict(&out).map(|d| d.bytes),
-                Ok(data.clone()),
-                "{name}, {kind}"
-            );
+            assert_eq!(decode_url_strict(&out), Ok(data.clone()), "{name}, {kind}");
         }
     }
 }
@@ -128,7 +128,7 @@ fn decode_of_encode_is_the_identity() {
 fn the_base64url_entry_point_leaks_nothing() {
     for (name, data) in corpus() {
         let out = encode_base64url(&data);
-        assert!(!out.contains(&b'~'), "{name}");
+        assert!(!out.contains('~'), "{name}");
         assert_eq!(out.len(), (4 * data.len()).div_ceil(3), "{name}");
     }
 }
@@ -139,6 +139,10 @@ fn the_base64url_entry_point_leaks_nothing() {
 fn a_stream_reads_back_with_no_parameter_at_all() {
     for (name, data) in corpus() {
         let out = encode(&data);
-        assert_eq!(decode(&out).unwrap().bytes, data, "{name}");
+        assert_eq!(
+            decode_detailed(out.as_bytes()).unwrap().bytes,
+            data,
+            "{name}"
+        );
     }
 }

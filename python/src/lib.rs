@@ -120,7 +120,7 @@ fn encode<'py>(py: Python<'py>, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py,
     // The encoder touches no Python object, so other threads may run while it
     // works. That matters: this is the call a caller makes on a whole file.
     let out = py.detach(|| base65t::encode(&data));
-    Ok(PyBytes::new(py, &out))
+    Ok(PyBytes::new(py, out.as_bytes()))
 }
 
 /// Base64URL and nothing else, whatever the input looks like (§9.3, §14).
@@ -137,10 +137,30 @@ fn encode_base64url<'py>(
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode_base64url() expects bytes, bytearray or str")?;
     let out = py.detach(|| base65t::encode_base64url(&data));
-    Ok(PyBytes::new(py, &out))
+    Ok(PyBytes::new(py, out.as_bytes()))
 }
 
+/// The plain form: bytes in, bytes out, as `base64.b64decode` has it.
 macro_rules! decoder {
+    ($name:ident, $inner:path, $doc:expr) => {
+        #[doc = $doc]
+        #[pyfunction]
+        #[pyo3(text_signature = "(stream, /)")]
+        fn $name<'py>(
+            py: Python<'py>,
+            stream: &Bound<'py, PyAny>,
+        ) -> PyResult<Bound<'py, PyBytes>> {
+            let stream = byte_argument(stream, concat!(stringify!($name), "() expects bytes, bytearray or str"))?;
+            match py.detach(|| $inner(&stream)) {
+                Ok(b) => Ok(PyBytes::new(py, &b)),
+                Err(e) => Err(decode_error(py, e)),
+            }
+        }
+    };
+}
+
+/// The §5.5 form: the bytes plus what the stream chose.
+macro_rules! detailed_decoder {
     ($name:ident, $inner:path, $doc:expr) => {
         #[doc = $doc]
         #[pyfunction]
@@ -158,18 +178,32 @@ macro_rules! decoder {
 decoder!(
     decode,
     base65t::decode,
-    "Decode a stream.\n\n\
-     It takes the stream and nothing else: the alphabet variant and the \
-     padding come out of the stream and are reported back on the result \
-     (§0.3). An \
-     attacker who controls the stream controls both (§14), so where the \
-     alphabet is fixed, use `decode_url_strict`."
+    "Decode a stream, returning the bytes.\n\n\
+     The shape `base64.b64decode` has, so a call site replacing it does not \
+     change. It takes the stream and nothing else (§0.3). What the stream \
+     *chose* -- the alphabet variant and whether it carried padding -- is on \
+     the result of `decode_detailed`; an attacker who controls the stream \
+     controls both (§14), so where the alphabet is fixed, use \
+     `decode_url_strict`."
 );
 decoder!(
     decode_url_strict,
     base65t::decode_url_strict,
     "Like `decode`, but a `+` or `/` at an alphabet position ends it with \
      `E_NON_URL_ALPHABET` (§5.5)."
+);
+detailed_decoder!(
+    decode_detailed,
+    base65t::decode_detailed,
+    "Decode a stream, returning the bytes together with what the stream \
+     chose (§5.5): `alphabet_seen` and `padding_seen`. The entry point for a \
+     caller that has to validate what it accepted rather than only accept \
+     it (§14)."
+);
+detailed_decoder!(
+    decode_url_strict_detailed,
+    base65t::decode_url_strict_detailed,
+    "`decode_detailed`, with the alphabet fixed to base64url (§5.5)."
 );
 
 #[pymodule]
@@ -179,6 +213,8 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode_base64url, m)?)?;
     m.add_function(wrap_pyfunction!(decode, m)?)?;
     m.add_function(wrap_pyfunction!(decode_url_strict, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_detailed, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_url_strict_detailed, m)?)?;
     m.add_class::<Decoded>()?;
     m.add("Base65tDecodeError", m.py().get_type::<Base65tDecodeError>())?;
 
@@ -202,6 +238,8 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "encode_base64url",
             "decode",
             "decode_url_strict",
+            "decode_detailed",
+            "decode_url_strict_detailed",
             "Decoded",
             "Base65tDecodeError",
             "ALPHABET",

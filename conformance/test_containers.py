@@ -24,6 +24,8 @@ import base64
 import http.cookies
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
 import urllib.parse
 
@@ -94,8 +96,11 @@ def main() -> int:
     check("no `=`, so a key=value field has one", "=" not in s)
     check("classic base64 has `=`", "=" in control)
 
+    print("\nPasted unquoted into a shell")
+    shell_checks(s, control)
+
     print("\nAnd the stream still decodes to the input")
-    check("decodes", base65t.decode(s.encode()).bytes == SAMPLE)
+    check("decodes", base65t.decode(s.encode()) == SAMPLE)
 
     print()
     if failures:
@@ -103,6 +108,53 @@ def main() -> int:
         return 1
     print("all container checks passed (Python's parsers, not every parser)")
     return 0
+
+
+def shell_checks(s: str, control: str) -> None:
+    """A value that has to be quoted is a value that gets pasted wrong.
+
+    `~` is a shell metacharacter, and every raw block starts with two of them,
+    so this is not a formality. It holds because a *double* tilde is never a
+    valid tilde-prefix and the encoder never writes a single one (§6): the
+    expansion that would fire needs `~` followed by a login name.
+
+    Tested in every shell on the machine, in the four places a value lands.
+    """
+    shells = [p for p in ("/bin/bash", "/bin/dash", "/bin/sh", "/bin/zsh") if shutil.which(p)]
+    if not shells:
+        print("  skip no shell to test against")
+        return
+    places = [
+        ("bare word", "printf '%s' {v}", "{v}"),
+        ("in a URL", "printf '%s' https://h/p?q={v}", "https://h/p?q={v}"),
+        ("after = in an assignment", 'x={v}; printf "%s" "$x"', "{v}"),
+        ("in a Cookie header", "printf '%s' sid={v}", "sid={v}"),
+    ]
+    for sh in shells:
+        bad = []
+        for label, script, want in places:
+            got = subprocess.run(
+                [sh, "-c", script.format(v=s)], capture_output=True, text=True
+            ).stdout
+            if got != want.format(v=s):
+                bad.append(f"{label}: {got!r}")
+        check(f"{sh}: survives unquoted in all four places", not bad, "; ".join(bad))
+    # The control: classic base64 does not, because of `+` and `=`.
+    got = subprocess.run(
+        ["/bin/bash", "-c", f"printf '%s' https://h/p?q={control}"],
+        capture_output=True, text=True,
+    ).stdout
+    check(
+        "classic base64 in a URL is not the same string",
+        got != f"https://h/p?q={control}" or "+" in control,
+        got,
+    )
+    # And the one hazard that remains, named rather than hidden: a stream may
+    # begin with `-`, which a *program* may read as an option. Base64url has
+    # the same property, so it is not a regression, but it is real.
+    starts = {base65t.encode(bytes([i] * 40))[:1] for i in range(256)}
+    check("a stream can begin with `-`, which is an argv hazard, not a shell one",
+          b"-" in starts, sorted(x.decode() for x in starts)[:6])
 
 
 if __name__ == "__main__":

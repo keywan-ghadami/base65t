@@ -56,7 +56,7 @@ fn main() {
         });
         let d1 = bench(n, || {
             buf.clear();
-            decode_into(&stream, &mut buf).unwrap();
+            decode_into(stream.as_bytes(), &mut buf).unwrap();
         });
         println!(
             "| {n} | {e0:.0} | {e1:.0} | **{:.2}x** | {d0:.0} | {d1:.0} | **{:.2}x** |",

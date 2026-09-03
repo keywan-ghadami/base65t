@@ -22,10 +22,13 @@ fn base64_len(n: usize) -> usize {
 #[test]
 fn tv1_a_raw_block() {
     let out = encode(b"alice.jones");
-    assert_eq!(out, b"~~alice.jones");
+    assert_eq!(out, "~~alice.jones");
     assert_eq!(out.len(), 13);
     assert_eq!(base64_len(11), 15);
-    assert_eq!(decode(&out).unwrap().bytes, b"alice.jones");
+    assert_eq!(
+        decode_detailed(out.as_bytes()).unwrap().bytes,
+        b"alice.jones"
+    );
 }
 
 /// A base64 block: four bytes of the twenty-two are not text, so the block is
@@ -36,20 +39,23 @@ fn tv1_a_raw_block() {
 fn tv2_a_base64_block() {
     let input = [b"\xde\xad\xbe\xef".as_slice(), b"session-eu-central"].concat();
     let out = encode(&input);
-    assert_eq!(out, b"3q2-73Nlc3Npb24tZXUtY2VudHJhbA");
+    assert_eq!(out, "3q2-73Nlc3Npb24tZXUtY2VudHJhbA");
     assert_eq!(out.len(), 30);
     assert_eq!(out, encode_base64url(&input));
-    assert_eq!(decode(&out).unwrap().bytes, input);
+    assert_eq!(decode_detailed(out.as_bytes()).unwrap().bytes, input);
 }
 
 /// `~` in a raw payload needs nothing: the block's length is fixed.
 #[test]
 fn tv3_tilde_needs_no_escaping() {
     let out = encode(b"sub~alice~jones");
-    assert_eq!(out, b"~~sub~alice~jones");
-    assert_eq!(decode(&out).unwrap().bytes, b"sub~alice~jones");
+    assert_eq!(out, "~~sub~alice~jones");
+    assert_eq!(
+        decode_detailed(out.as_bytes()).unwrap().bytes,
+        b"sub~alice~jones"
+    );
     // And the input that v0.1 built a whole conflict rule around.
-    assert_eq!(encode(b"hello~Alice"), b"~~hello~Alice");
+    assert_eq!(encode(b"hello~Alice"), "~~hello~Alice");
 }
 
 /// Blocks are cut at absolute offsets of 48, and the last one is shorter.
@@ -58,12 +64,12 @@ fn tv4_block_boundaries() {
     let input = vec![b'a'; 100];
     let out = encode(&input);
     let block = [b"~~".as_slice(), &[b'a'; 48]].concat();
-    assert_eq!(out[..50], block[..]);
-    assert_eq!(out[50..100], block[..]);
-    assert_eq!(&out[100..], b"~~aaaa");
+    assert_eq!(out.as_bytes()[..50], block[..]);
+    assert_eq!(out.as_bytes()[50..100], block[..]);
+    assert_eq!(&out[100..], "~~aaaa");
     assert_eq!(out.len(), 106);
     assert_eq!(base64_len(100), 134);
-    assert_eq!(decode(&out).unwrap().bytes, input);
+    assert_eq!(decode_detailed(out.as_bytes()).unwrap().bytes, input);
 }
 
 // --- TV5: one byte decides the block -------------------------------------
@@ -77,16 +83,16 @@ fn tv5_one_byte_decides_the_block() {
     let block = b"the-quick-brown-fox-jumps-over-the-lazy-dog.abcd".to_vec();
     assert_eq!(block.len(), 48);
     let out = encode(&block);
-    assert_eq!(out, [b"~~".as_slice(), &block].concat());
+    assert_eq!(out.as_bytes(), [b"~~".as_slice(), &block].concat());
     assert_eq!(out.len(), 50);
-    assert_eq!(decode(&out).unwrap().bytes, block);
+    assert_eq!(decode_detailed(out.as_bytes()).unwrap().bytes, block);
 
     // Fifty bytes of English with spaces: no block of it can be raw, so the
     // stream is byte for byte base64url.
     let prose = b"the quick brown fox jumps over the lazy dog. again";
     assert_eq!(encode(prose), encode_base64url(prose));
     assert_eq!(encode(prose).len(), 67);
-    assert_eq!(decode(&encode(prose)).unwrap().bytes, prose);
+    assert_eq!(decode(encode(prose)).unwrap(), prose);
 
     // And it is the byte, not its position: every single position rejects.
     for i in 0..block.len() {
@@ -127,7 +133,7 @@ fn tv6_reads_base64_and_base64url() {
         (b"YWxpY2U=", b"alice", AlphabetSeen::None, true),
     ];
     for (stream, expect, alphabet, padding) in cases {
-        let d = decode(stream).expect("valid");
+        let d = decode_detailed(stream).expect("valid");
         assert_eq!(d.bytes, expect, "{:?}", String::from_utf8_lossy(stream));
         assert_eq!(d.alphabet_seen, alphabet);
         assert_eq!(d.padding_seen, padding);
@@ -135,7 +141,12 @@ fn tv6_reads_base64_and_base64url() {
     // A long base64 stream is read in blocks of 64 characters, which is
     // invisible: base64 blocks tile.
     let data: Vec<u8> = (0..1000u32).map(|i| (i * 7 % 251) as u8).collect();
-    assert_eq!(decode(&encode_base64url(&data)).unwrap().bytes, data);
+    assert_eq!(
+        decode_detailed(encode_base64url(&data).as_bytes())
+            .unwrap()
+            .bytes,
+        data
+    );
 }
 
 #[test]
@@ -146,7 +157,7 @@ fn tv7_rule_a_holds_at_alphabet_positions() {
     assert!(decode_url_strict(b"PDw_Pz8-Pg").is_ok());
     // Across blocks: a raw block between two base64 blocks in different
     // alphabets is still one stream.
-    let url = encode_base64url(&[0xfbu8; 48]); // `-` and `_` in here
+    let url = encode_base64url([0xfbu8; 48]).into_bytes(); // `-` and `_` in here
     let classic: Vec<u8> = url
         .iter()
         .map(|&c| match c {
@@ -170,12 +181,12 @@ fn tv7_raw_bytes_do_not_count() {
     // admitted raw, so this is exactly the stream a whole-stream scanner
     // misreads: as data they say nothing about the alphabet.
     let stream = b"~~a-b_c-d_e";
-    let d = decode(stream).expect("a raw block of admitted bytes");
+    let d = decode_detailed(stream).expect("a raw block of admitted bytes");
     assert_eq!(d.alphabet_seen, AlphabetSeen::None);
     assert_eq!(d.bytes, b"a-b_c-d_e");
     // The same characters as base64 output do set it.
     assert_eq!(
-        decode(b"PDw_Pz8-Pg").unwrap().alphabet_seen,
+        decode_detailed(b"PDw_Pz8-Pg").unwrap().alphabet_seen,
         AlphabetSeen::Url
     );
 }
@@ -183,7 +194,7 @@ fn tv7_raw_bytes_do_not_count() {
 #[test]
 fn tv8_what_may_follow_a_tilde() {
     assert_eq!(decode(b"~"), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~~").unwrap().bytes, b"");
+    assert_eq!(decode_detailed(b"~~").unwrap().bytes, b"");
     assert_eq!(decode(b"~A"), Err(Error::Reserved));
     assert_eq!(decode(b"~="), Err(Error::Charset));
     // A `~` where a base64 block should continue.
@@ -194,13 +205,13 @@ fn tv8_what_may_follow_a_tilde() {
 
 #[test]
 fn tv9_padding() {
-    assert_eq!(decode(b"YWxpY2U=").unwrap().bytes, b"alice");
-    assert!(decode(b"YWxpY2U=").unwrap().padding_seen);
-    assert_eq!(decode(b"YWxpY2Uu").unwrap().bytes, b"alice.");
+    assert_eq!(decode_detailed(b"YWxpY2U=").unwrap().bytes, b"alice");
+    assert!(decode_detailed(b"YWxpY2U=").unwrap().padding_seen);
+    assert_eq!(decode_detailed(b"YWxpY2Uu").unwrap().bytes, b"alice.");
     assert_eq!(decode(b"YWxp=="), Err(Error::Padding));
     assert_eq!(decode(b"YWxpY2U=="), Err(Error::Padding));
     // Padding inside a base64 block that is not the last: never.
-    let mut s = encode_base64url(&[7u8; 96]);
+    let mut s = encode_base64url([7u8; 96]).into_bytes();
     s[63] = b'=';
     assert_eq!(decode(&s), Err(Error::Charset));
 }
@@ -212,10 +223,10 @@ fn tv9_padding() {
 /// an acceptance are not the same answer.
 #[test]
 fn tv10_padding_may_not_be_stripped_in_advance() {
-    assert_eq!(decode(b"~~abcd="), Err(Error::Profile));
-    assert_eq!(decode(b"~~abcd").unwrap().bytes, b"abcd");
+    assert_eq!(decode_detailed(b"~~abcd="), Err(Error::Profile));
+    assert_eq!(decode_detailed(b"~~abcd").unwrap().bytes, b"abcd");
     // Where Rule P does look: a base64 tail at the end of the stream.
-    let d = decode(b"YWxpY2U=").expect("Rule P");
+    let d = decode_detailed(b"YWxpY2U=").expect("Rule P");
     assert_eq!(d.bytes, b"alice");
     assert!(d.padding_seen);
 }
@@ -254,8 +265,12 @@ fn tv12_the_tail() {
     ] {
         let data = [&full[..], tail].concat();
         let out = encode(&data);
-        assert_eq!(&out[..50], [b"~~".as_slice(), &full].concat(), "{tail:?}");
-        assert_eq!(&out[50..], want, "{tail:?}");
-        assert_eq!(decode(&out).unwrap().bytes, data);
+        assert_eq!(
+            &out.as_bytes()[..50],
+            [b"~~".as_slice(), &full].concat(),
+            "{tail:?}"
+        );
+        assert_eq!(&out.as_bytes()[50..], want, "{tail:?}");
+        assert_eq!(decode_detailed(out.as_bytes()).unwrap().bytes, data);
     }
 }

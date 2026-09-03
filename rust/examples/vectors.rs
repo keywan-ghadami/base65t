@@ -116,10 +116,10 @@ fn inputs() -> Vec<(String, Vec<u8>)> {
 fn main() {
     // Two entry points, no profiles and no presets: the encoding, and the
     // base64url way out §14 is about.
-    type Enc = fn(&[u8]) -> Vec<u8>;
+    type Enc = fn(&[u8]) -> String;
     let kinds: [(&str, Enc); 2] = [
-        ("encode", encode as Enc),
-        ("base64url", encode_base64url as Enc),
+        ("encode", (|d: &[u8]| encode(d)) as Enc),
+        ("base64url", |d: &[u8]| encode_base64url(d)),
     ];
 
     println!("{{");
@@ -137,7 +137,7 @@ fn main() {
         for (sname, enc) in kinds {
             let stream = enc(&data);
             let back = decode(&stream).expect("its own output");
-            assert_eq!(back.bytes, data);
+            assert_eq!(back, data);
             if !first {
                 println!(",");
             }
@@ -147,9 +147,9 @@ fn main() {
                 "    {{\"name\": {}, \"kind\": \"{sname}\", \"input\": \"{}\", \"stream\": \"{}\"",
                 json_string(&format!("{name}/{sname}")),
                 hex(&data),
-                hex(&stream)
+                hex(stream.as_bytes())
             );
-            if let Some(a) = ascii(&stream) {
+            if let Some(a) = ascii(stream.as_bytes()) {
                 print!(", \"stream_ascii\": {}", json_string(&a));
             }
             print!("}}");

@@ -37,6 +37,6 @@ def test_every_vector_encodes_and_decodes():
         data = bytes.fromhex(v["input"])
         want = bytes.fromhex(v["stream"])
         assert KINDS[v["kind"]](data) == want, v["name"]
-        assert base65t.decode(want).bytes == data, v["name"]
+        assert base65t.decode(want) == data, v["name"]
         checked += 1
     assert checked >= 100, f"only {checked} vectors"

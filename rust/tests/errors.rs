@@ -14,11 +14,12 @@ use base65t::*;
 
 #[test]
 fn all_nine_codes() {
-    let cases: [(Error, &str, Result<Decoded, Error>); 9] = [
+    type Case = (Error, &'static str, Result<Vec<u8>, Error>);
+    let cases: [Case; 9] = [
         (
             Error::TrailingTilde,
             "E_TRAILING_TILDE",
-            decode(&[encode_base64url(&[9u8; 48]), b"~".to_vec()].concat()),
+            decode([encode_base64url([9u8; 48]).into_bytes(), b"~".to_vec()].concat()),
         ),
         (Error::Reserved, "E_RESERVED", decode(b"~Aabc")),
         (Error::Profile, "E_PROFILE", decode(b"~~a b")),
@@ -54,7 +55,7 @@ fn nothing_can_be_truncated() {
     for cut in 0..=out.len() {
         let r = decode(&out[..cut]);
         match r {
-            Ok(d) => assert!(data.starts_with(&d.bytes), "cut {cut}"),
+            Ok(d) => assert!(data.starts_with(&d), "cut {cut}"),
             Err(e) => assert!(
                 matches!(e, Error::TrailingTilde | Error::Align | Error::NonzeroTail),
                 "cut {cut}: {e}"
@@ -79,14 +80,14 @@ fn arbitrary_input_decodes_or_errors() {
         let data: Vec<u8> = (0..n).map(|_| pool[next() as usize % pool.len()]).collect();
         {
             for f in [
-                decode as fn(&[u8]) -> Result<Decoded, Error>,
-                decode_url_strict,
+                (|s: &[u8]| decode(s)) as fn(&[u8]) -> Result<Vec<u8>, Error>,
+                |s: &[u8]| decode_url_strict(s),
             ] {
                 if let Ok(d) = f(&data) {
                     // Whatever came out has to be no larger than the stream
                     // could describe: a raw byte is one per character and
                     // base64 is three per four.
-                    assert!(d.bytes.len() <= data.len(), "{data:?}");
+                    assert!(d.len() <= data.len(), "{data:?}");
                 }
             }
         }

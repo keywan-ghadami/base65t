@@ -39,7 +39,7 @@ def main() -> int:
             print(f"     got  {got!r}")
             failed += 1
             continue
-        back = base65t.decode(want).bytes
+        back = base65t.decode(want)
         if back != data:
             print(f"FAIL {v['name']} decode: {back!r} != {data!r}")
             failed += 1
@@ -93,7 +93,7 @@ def errors() -> int:
         (b"~~a-b_c-d_e", b"a-b_c-d_e"),   # TV7: raw bytes do not count
         (b"~~", b""),
     ]:
-        got = base65t.decode(stream).bytes
+        got = base65t.decode(stream)
         if got != expect:
             print(f"FAIL {stream!r}: {got!r} != {expect!r}")
             bad += 1

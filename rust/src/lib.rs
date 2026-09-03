@@ -16,9 +16,31 @@
 //! use base65t::{decode, encode};
 //!
 //! let out = encode(b"alice.jones");
-//! assert_eq!(out, b"~~alice.jones");
-//! assert_eq!(decode(&out).unwrap().bytes, b"alice.jones");
+//! assert_eq!(out, "~~alice.jones");
+//! assert_eq!(decode(&out).unwrap(), b"alice.jones");
 //! ```
+//!
+//! # A drop-in for `base64`
+//!
+//! The signatures are that crate's: `encode` takes anything `AsRef<[u8]>` and
+//! returns a `String`, `decode` returns `Result<Vec<u8>, _>`, and the
+//! method-style call site compiles too.
+//!
+//! ```
+//! use base65t::prelude::*;
+//!
+//! assert_eq!(URL_SAFE.encode("alice.jones"), "~~alice.jones");
+//! assert_eq!(URL_SAFE.decode("YWxpY2U=").unwrap(), b"alice");
+//! ```
+//!
+//! **The two sides are not equally safe to swap, and that is a fact about
+//! the format rather than a restriction of this API.** A base65t decoder
+//! reads every canonical base64 and base64url stream (§1.1, §5.2, §5.3), so
+//! replacing a decoder changes nothing anyone can observe. Replacing an
+//! *encoder* starts emitting `~`, which a base64 decoder rejects. So:
+//! decoders first, encoders once every reader is one. Nothing here makes
+//! that awkward; it is said once, here, and then the call sites are the
+//! ones you already have.
 //!
 //! # One alphabet
 //!
@@ -64,7 +86,7 @@ mod decode;
 mod encode;
 
 pub use alphabet::{admits_all, allows, AlphabetSeen};
-pub use decode::{decode, decode_url_strict};
+pub use decode::{decode_detailed, decode_url_strict_detailed};
 pub use encode::{
     any_block_can_be_raw, choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES, SAMPLE_BLOCKS,
 };
@@ -142,20 +164,39 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 /// The encoding — the parameterless call §9.3 requires, and the only one.
-pub fn encode(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode::encode_into(data, &mut out);
+///
+/// `String` rather than `Vec<u8>`, and generic over `AsRef<[u8]>`, so that
+/// this is the same call as `base64`'s: swapping the import compiles. The
+/// return type is not a claim the output is text in general — §3 calls it an
+/// octet stream — it is that **this** output is always printable ASCII (§7)
+/// and therefore always valid UTF-8. `into_bytes()` is free where the octets
+/// are wanted.
+pub fn encode<T: AsRef<[u8]>>(data: T) -> String {
+    let mut out = String::new();
+    encode_string(data, &mut out);
     out
 }
 
 /// The encoding, appending to a buffer the caller owns.
 ///
-/// The same bytes [`encode`] returns; what changes is who owns the memory. A
-/// caller encoding many small values in a loop wants to say where the output
-/// goes, and on those values the allocation this saves is a real share of the
-/// work.
-pub fn encode_into(data: &[u8], out: &mut Vec<u8>) {
-    encode::encode_into(data, out);
+/// The same characters [`encode`] returns; what changes is who owns the
+/// memory. A caller encoding many small values in a loop wants to say where
+/// the output goes, and on those values the allocation this saves is a real
+/// share of the work. Named as `base64`'s `encode_string` is.
+pub fn encode_string<T: AsRef<[u8]>>(data: T, out: &mut String) {
+    // Safe by construction rather than by assertion: §7 admits only printable
+    // ASCII and the base64 alphabet is a subset of it, so every byte the
+    // encoder appends is ASCII. `alphabet.rs` pins that in both directions,
+    // and this crate forbids `unsafe`, so the check below is a real check.
+    let mut bytes = std::mem::take(out).into_bytes();
+    encode::encode_into(data.as_ref(), &mut bytes);
+    *out = String::from_utf8(bytes).expect("§7: the encoder writes printable ASCII");
+}
+
+/// The octet form of [`encode`], for a caller who wants the bytes and no
+/// UTF-8 check at all.
+pub fn encode_into<T: AsRef<[u8]>>(data: T, out: &mut Vec<u8>) {
+    encode::encode_into(data.as_ref(), out);
 }
 
 /// Base64URL and nothing else, whatever the input looks like.
@@ -165,10 +206,36 @@ pub fn encode_into(data: &[u8], out: &mut Vec<u8>) {
 /// something that only speaks base64url and wants this library to be the one
 /// dependency. It is not a mode of the format -- the output is ordinary
 /// unpadded base64url, and any base64 decoder reads it. So does this one.
-pub fn encode_base64url(data: &[u8]) -> Vec<u8> {
+pub fn encode_base64url<T: AsRef<[u8]>>(data: T) -> String {
+    let data = data.as_ref();
     let mut out = Vec::with_capacity(encode::base64_len(data.len()));
     encode::emit_base64(data, &mut out);
-    out
+    String::from_utf8(out).expect("base64url is ASCII")
+}
+
+/// Decode a stream — the drop-in counterpart of [`encode`].
+///
+/// Takes the stream and nothing else (§0.3), and returns the bytes, which is
+/// the same shape as `base64`'s `decode`. What the stream *chose* — the
+/// alphabet variant and whether it carried padding — is reported by
+/// [`decode_detailed`]; §5.5 requires that it be available, and §14 is why a
+/// caller validating untrusted input should ask.
+///
+/// **This is the safe half of a migration.** A base65t decoder reads every
+/// canonical base64 and base64url stream, padded or not (§5.2, §5.3), so it
+/// can replace a base64 decoder before anything writes the new format. The
+/// encoder cannot be swapped as freely, and [`encode`] says why.
+pub fn decode<T: AsRef<[u8]>>(stream: T) -> Result<Vec<u8>, Error> {
+    decode::decode_detailed(stream.as_ref()).map(|d| d.bytes)
+}
+
+/// [`decode`], but a `+` or `/` at an alphabet position is `E_NON_URL_ALPHABET`
+/// (§5.5).
+///
+/// The entry point for a caller who has decided which alphabet it speaks,
+/// rather than letting the stream decide (§14).
+pub fn decode_url_strict<T: AsRef<[u8]>>(stream: T) -> Result<Vec<u8>, Error> {
+    decode::decode_url_strict_detailed(stream.as_ref()).map(|d| d.bytes)
 }
 
 /// Decode into a buffer the caller owns, appending to what is there.
@@ -184,4 +251,70 @@ pub fn decode_into(stream: &[u8], out: &mut Vec<u8>) -> Result<Meta, Error> {
             Err(e)
         }
     }
+}
+
+/// The method-style call shape of the `base64` crate, so that a call site
+/// written against it compiles when only the import changes.
+///
+/// ```
+/// use base65t::{engine::general_purpose::URL_SAFE, Engine as _};
+///
+/// assert_eq!(URL_SAFE.encode(b"alice.jones"), "~~alice.jones");
+/// assert_eq!(URL_SAFE.decode("~~alice.jones").unwrap(), b"alice.jones");
+/// ```
+///
+/// There is one engine because there is one encoding (§0.1). The names below
+/// exist so that `STANDARD` and `URL_SAFE` call sites both keep compiling;
+/// they are the same engine, and neither selects an alphabet — §7 fixes it.
+pub trait Engine {
+    /// The encoding (§9.3).
+    fn encode<T: AsRef<[u8]>>(&self, input: T) -> String {
+        encode(input)
+    }
+    /// The encoding, appending to a buffer the caller owns.
+    fn encode_string<T: AsRef<[u8]>>(&self, input: T, out: &mut String) {
+        encode_string(input, out)
+    }
+    /// The decoding (§10.2).
+    fn decode<T: AsRef<[u8]>>(&self, input: T) -> Result<Vec<u8>, Error> {
+        decode(input)
+    }
+    /// The decoding, appending to a buffer the caller owns.
+    fn decode_vec<T: AsRef<[u8]>>(&self, input: T, out: &mut Vec<u8>) -> Result<(), Error> {
+        decode_into(input.as_ref(), out).map(|_| ())
+    }
+}
+
+/// The one engine. It carries no configuration, because there is none to
+/// carry: §7 fixes the alphabet and §9.3 forbids a parameter that moves it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Base65t;
+
+impl Engine for Base65t {}
+
+/// Named as the `base64` crate names them, so both call sites compile.
+pub mod engine {
+    /// Named as the `base64` crate names it.
+    pub mod general_purpose {
+        use super::super::Base65t;
+        /// The encoding. Not a standard-alphabet variant — there is one
+        /// alphabet (§7) — but the name a call site may already use.
+        pub static STANDARD: Base65t = Base65t;
+        /// The same engine under the other name a call site may use. Base65t
+        /// is URL-safe by construction (§7.1), so this is not a second thing.
+        pub static URL_SAFE: Base65t = Base65t;
+        /// The same engine. The encoder never writes padding (§5.1) and the
+        /// decoder always accepts it (§5.3), so "no pad" is not a choice here.
+        pub static STANDARD_NO_PAD: Base65t = Base65t;
+        /// The same engine, for the same reason as `STANDARD_NO_PAD`.
+        pub static URL_SAFE_NO_PAD: Base65t = Base65t;
+    }
+}
+
+/// A minimal `use base65t::prelude::*;`, as the `base64` crate offers.
+pub mod prelude {
+    pub use super::engine::general_purpose::{
+        STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD,
+    };
+    pub use super::Engine as _;
 }

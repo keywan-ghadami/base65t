@@ -79,7 +79,7 @@ fn reads_what_base64_1_writes() {
     }
     for data in cases() {
         let padded = pipe("base64", &["-w0"], &data);
-        let d = decode(&padded)
+        let d = decode_detailed(&padded)
             .unwrap_or_else(|e| panic!("{e} on {:?}", String::from_utf8_lossy(&padded)));
         assert_eq!(d.bytes, data);
         assert_eq!(d.padding_seen, data.len() % 3 != 0);
@@ -88,7 +88,7 @@ fn reads_what_base64_1_writes() {
         // is the migration path in §1.1, where a producer stops padding and
         // nothing downstream has to be told.
         let stripped: Vec<u8> = padded.iter().copied().filter(|&c| c != b'=').collect();
-        assert_eq!(decode(&stripped).unwrap().bytes, data);
+        assert_eq!(decode_detailed(&stripped).unwrap().bytes, data);
     }
 }
 
@@ -109,7 +109,7 @@ fn reads_what_python_writes() {
                     strip = if strip { "True" } else { "False" }
                 );
                 let stream = pipe("python3", &["-c", &one], &data);
-                let d = decode(&stream)
+                let d = decode_detailed(&stream)
                     .unwrap_or_else(|e| panic!("{e} on {variant}, stripped={strip}"));
                 assert_eq!(d.bytes, data, "{variant}, stripped={strip}");
                 assert_eq!(d.padding_seen, !strip && data.len() % 3 != 0);
@@ -156,7 +156,7 @@ fn nonzero_tail_bits_are_the_documented_disagreement() {
         Err(Error::NonzeroTail),
         "and this decoder does not"
     );
-    assert_eq!(decode(b"YWxpY2U").unwrap().bytes, b"alice");
+    assert_eq!(decode(b"YWxpY2U").unwrap(), b"alice");
 }
 
 /// The other direction of §16.2: what `encode_base64url` writes is
@@ -178,6 +178,6 @@ fn base64url_is_base64_1_without_the_padding() {
                 c => c,
             })
             .collect();
-        assert_eq!(encode_base64url(&data), theirs_url);
+        assert_eq!(encode_base64url(&data).as_bytes(), theirs_url);
     }
 }

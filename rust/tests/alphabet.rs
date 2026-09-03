@@ -37,12 +37,12 @@ fn the_output_alphabet_is_exactly_unreserved() {
         // Binary input, so every block is base64 and the base64 writer's own
         // alphabet is covered, tails included.
         let data: Vec<u8> = (0..n).map(|_| next()).collect();
-        seen.extend(encode(&data));
-        seen.extend(encode_base64url(&data));
+        seen.extend(encode(&data).into_bytes());
+        seen.extend(encode_base64url(&data).into_bytes());
         // Input the profile admits throughout, so raw blocks appear and the
         // marker and the admitted bytes are covered.
         let text: Vec<u8> = (0..n).map(|i| b"aZ0-._~"[i % 7]).collect();
-        seen.extend(encode(&text));
+        seen.extend(encode(&text).into_bytes());
     }
     let want = unreserved();
     assert_eq!(
@@ -75,7 +75,7 @@ fn no_output_ever_carries_padding() {
                 (r >> 24) as u8
             })
             .collect();
-        assert!(!encode(&data).contains(&b'='), "{n} bytes");
-        assert!(!encode_base64url(&data).contains(&b'='));
+        assert!(!encode(&data).contains('='), "{n} bytes");
+        assert!(!encode_base64url(&data).contains('='));
     }
 }

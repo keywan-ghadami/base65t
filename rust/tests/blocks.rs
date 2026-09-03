@@ -77,7 +77,11 @@ fn the_encoding_is_never_longer_than_base64() {
                     out.len(),
                     base64_len(data.len())
                 );
-                assert_eq!(decode(&out).unwrap().bytes, data, "{name}, {kind}");
+                assert_eq!(
+                    decode_detailed(out.as_bytes()).unwrap().bytes,
+                    data,
+                    "{name}, {kind}"
+                );
             }
         }
     }
@@ -134,9 +138,9 @@ fn whole_blocks_encode_independently() {
         })
         .collect();
     let whole: Vec<u8> = blocks.concat();
-    let joined: Vec<u8> = blocks.iter().flat_map(|b| encode(b)).collect();
-    assert_eq!(encode(&whole), joined);
-    assert_eq!(decode(&joined).unwrap().bytes, whole);
+    let joined: Vec<u8> = blocks.iter().flat_map(|b| encode(b).into_bytes()).collect();
+    assert_eq!(encode(&whole).into_bytes(), joined);
+    assert_eq!(decode_detailed(&joined).unwrap().bytes, whole);
 }
 
 /// Both forms occur on ordinary input, and each decodes.
@@ -162,14 +166,11 @@ fn a_short_last_block_is_the_last_block() {
         // A tail under four bytes is shorter as base64 (§9.1).
         let tail = if n < 4 { base64_len(n) } else { n + 2 };
         assert_eq!(out.len(), 50 + tail, "n = {n}");
-        assert_eq!(decode(&out).unwrap().bytes, data);
+        assert_eq!(decode_detailed(out.as_bytes()).unwrap().bytes, data);
         // And a second stream appended is not silently read as a tail.
         let two = [out.clone(), out.clone()].concat();
         if n < 48 {
-            assert_ne!(
-                decode(&two).map(|d| d.bytes),
-                Ok([data.clone(), data.clone()].concat())
-            );
+            assert_ne!(decode(&two), Ok([data.clone(), data.clone()].concat()));
         }
     }
 }

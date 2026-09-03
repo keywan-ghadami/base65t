@@ -46,10 +46,10 @@ fn the_published_vectors_are_what_this_encoder_writes() {
             continue;
         }
         let name = field(line, "name").expect("name");
-        type Enc = fn(&[u8]) -> Vec<u8>;
+        type Enc = fn(&[u8]) -> String;
         let encode_fn: Enc = match field(line, "kind").expect("kind") {
-            "encode" => encode,
-            "base64url" => encode_base64url,
+            "encode" => |d: &[u8]| encode(d),
+            "base64url" => |d: &[u8]| encode_base64url(d),
             other => panic!("{name}: unknown kind {other}"),
         };
         let input = unhex(field(line, "input").expect("input"));
@@ -63,12 +63,14 @@ fn the_published_vectors_are_what_this_encoder_writes() {
         }
 
         assert_eq!(
-            encode_fn(&input),
+            encode_fn(&input).as_bytes(),
             stream,
             "{name}: encoder and published vector disagree"
         );
         assert_eq!(
-            decode(&stream).expect("published vectors decode").bytes,
+            decode_detailed(&stream)
+                .expect("published vectors decode")
+                .bytes,
             input,
             "{name}: the vector does not decode to its own input"
         );

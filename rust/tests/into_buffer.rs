@@ -33,7 +33,7 @@ fn samples() -> Vec<Vec<u8>> {
 fn encode_into_appends_exactly_what_encode_returns() {
     for data in samples() {
         {
-            let want = encode(&data);
+            let want = encode(&data).into_bytes();
             // Into an empty buffer, and into one that already holds
             // something: appending is the contract, not overwriting.
             let mut fresh = Vec::new();
@@ -52,8 +52,11 @@ fn encode_into_appends_exactly_what_encode_returns() {
 fn decode_into_appends_exactly_what_decode_returns() {
     for data in samples() {
         {
-            for stream in [encode(&data), encode_base64url(&data)] {
-                let want = decode(&stream).unwrap();
+            for stream in [
+                encode(&data).into_bytes(),
+                encode_base64url(&data).into_bytes(),
+            ] {
+                let want = decode_detailed(&stream).unwrap();
 
                 let mut used = b"already here".to_vec();
                 let meta = decode_into(&stream, &mut used).unwrap();

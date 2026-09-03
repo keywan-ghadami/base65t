@@ -24,7 +24,7 @@ def test_encode_takes_the_data_and_nothing_else():
 
 @pytest.mark.parametrize("arg", [b"abc", bytearray(b"abc"), "abc"])
 def test_bytes_bytearray_and_str_are_all_accepted(arg):
-    assert base65t.decode(base65t.encode(arg)).bytes == b"abc"
+    assert base65t.decode(base65t.encode(arg)) == b"abc"
 
 
 @pytest.mark.parametrize("arg", [123, ["a"], None, 3.5])
@@ -50,27 +50,27 @@ def test_the_base64url_entry_point_is_not_a_mode():
     out = base65t.encode_base64url(data)
     assert out == b"YWxpY2Uuam9uZXM"
     assert b"~" not in out
-    assert base65t.decode(out).bytes == data
+    assert base65t.decode(out) == data
     # And it is not what `encode` writes, which is the point of having both.
     assert base65t.encode(data) != out
 
 
 def test_the_result_carries_what_the_stream_chose():
-    d = base65t.decode(b"YWxpY2U=")
+    d = base65t.decode_detailed(b"YWxpY2U=")
     assert d.bytes == b"alice"
     assert d.padding_seen is True
     assert d.alphabet_seen == "none"
 
-    d = base65t.decode(b"PDw_Pz8-Pg")
+    d = base65t.decode_detailed(b"PDw_Pz8-Pg")
     assert d.alphabet_seen == "url"
-    assert base65t.decode(b"PDw/Pz8+Pg").alphabet_seen == "classic"
+    assert base65t.decode_detailed(b"PDw/Pz8+Pg").alphabet_seen == "classic"
 
 
 def test_the_strict_entry_point_is_separate():
     with pytest.raises(base65t.Base65tDecodeError) as e:
         base65t.decode_url_strict(b"PDw/Pz8+Pg")
     assert e.value.code == "E_NON_URL_ALPHABET"
-    assert base65t.decode_url_strict(b"PDw_Pz8-Pg").bytes == b"<<???>>"
+    assert base65t.decode_url_strict(b"PDw_Pz8-Pg") == b"<<???>>"
 
 
 @pytest.mark.parametrize(

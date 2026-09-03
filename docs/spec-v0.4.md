@@ -39,6 +39,11 @@ reason the format is easy to place:
 * **HTTP header value** — no separator, no whitespace.
 * **JSON string** — nothing to escape.
 * **Filename, log field, `key=value`** — no space and no delimiter.
+* **Pasted unquoted into a shell** — no metacharacter, no glob, and no
+  expansion. `~` is the one to check, since every raw block opens with two of
+  them: a *double* tilde is never a valid tilde-prefix, and the encoder never
+  writes a single one (§6), so nothing expands. Measured in bash, dash and sh,
+  over every stream shape, in four placements (§16.5).
 
 Checked against Python's own parsers, and against classic base64 as a control,
 in `conformance/test_containers.py` (§16.5); and against the encoder itself in
@@ -328,12 +333,21 @@ streams (TV7).
 
 ### 5.5 Reporting and the strict variant (normative)
 
-A `decode()` result MUST contain:
+An implementation MUST make both of these reachable for any stream it
+decodes:
 
 ```
 alphabet_seen : { none, url, classic }
 padding_seen  : bool
 ```
+
+**On a named entry point, not necessarily on `decode`'s return.** The reason
+for the requirement is that permissiveness which cannot be inspected cannot be
+validated (§14) — that is satisfied by an entry point a caller can reach, and
+it is not satisfied by discarding the information. The reference
+implementation returns the bytes from `decode` and the pair from
+`decode_detailed`, so that `decode` has the shape a caller replacing a base64
+decoder already has (§9.3).
 
 In addition, `decode_url_strict` MUST be offered (it rejects `classic` with
 `E_NON_URL_ALPHABET`).
@@ -365,6 +379,15 @@ a reserved stream but a broken one: `E_CHARSET`.
 
 > **Rule.** A byte may stand raw if and only if it is in RFC 3986's
 > *unreserved* set: `A–Z`, `a–z`, `0–9`, `-`, `.`, `_`, `~`. 66 characters.
+
+**Two numbers, and they are not the same number.** The format's *radix* — the
+symbols that carry encoded data — is base64url's 64 plus `~`, which is where
+the name comes from and why §0.2 calls `~` the 65th character. The set above
+is the *byte values a stream can contain*, which is 66, because a raw block
+passes text through and `.` is text. `.` and `~` never appear in a base64
+block; every other character of the 66 does, in both roles. Container safety
+is a statement about the 66 (a parser sees bytes, not roles), and the name is
+a statement about the 65.
 
 There is no second set and no parameter that selects one. That is the format's
 central property, not a simplification of it: the base64 alphabet is a subset
@@ -463,11 +486,28 @@ text reach 78 % size; large documents with punctuation gain **nothing**.
 |---|---|
 | `encode(x)` | the encoding |
 | `encode_base64url(x)` | base64url and nothing else (§14) |
+| `decode(s)` | the decoding, returning the bytes (§10.2) |
+| `decode_url_strict(s)` | the same, with the alphabet fixed (§5.5) |
+| `decode_detailed(s)` | the decoding plus what the stream chose (§5.5) |
 
 `encode` MUST take the data and nothing else. A library MUST NOT offer a
 parameter that changes the alphabet, the block size or the block rule: those
 are the format, and a caller who can change them has to understand them
 first (§0.1).
+
+**These SHOULD have the shape of the host language's base64 library**, down
+to argument and return types, so that a call site changes its import and
+nothing else. In Rust that means `encode` returns a `String` and `decode` a
+`Vec<u8>`; in Python, `bytes` from both. This is not decoration: §1.1 makes
+the decoder side of a migration free, and a caller who has to rewrite call
+sites to take it will not.
+
+**The two sides are not equally safe to swap, and an implementation SHOULD say
+so where a caller will read it.** A base65t decoder reads every canonical
+base64 and base64url stream (§5.2, §5.3), so replacing a *decoder* changes
+nothing observable. Replacing an *encoder* starts emitting `~`, which a base64
+decoder rejects. Decoders first, encoders once every reader is one. Saying it
+once is the requirement; making the call awkward is not.
 
 ### 9.4 Never-worse guarantee (normative)
 
@@ -599,8 +639,9 @@ or fails Rule P, not a length field.
 ### 10.2 Entry point
 
 ```
-decode(stream)
-decode_url_strict(stream)   # rejects '+' and '/' with E_NON_URL_ALPHABET
+decode(stream)                    -> bytes
+decode_url_strict(stream)         -> bytes, '+' and '/' are E_NON_URL_ALPHABET
+decode_detailed(stream)           -> bytes + alphabet_seen + padding_seen (§5.5)
 ```
 
 ### 10.3 Unused
@@ -986,12 +1027,21 @@ samples for the sample of §9.6.
 
 ### 16.5 Container test with real parsers
 
-**Done for Python's parsers**, `conformance/test_containers.py`. The output
-passes through URL query, cookie, JSON string, filename, log line and
-`key=value` unchanged. **Classic base64 is the control** and fails four of
-those checks on the same data, which is what shows the alphabet doing the work
-rather than the output merely being ASCII. This is the weaker, empirical
-counterpart to §7.1, which proves the cookie case from the ABNF.
+**Done for Python's parsers and the shells on the machine**,
+`conformance/test_containers.py`. The output passes through URL query, cookie,
+JSON string, filename, log line and `key=value` unchanged, and survives being
+pasted unquoted into bash, dash and sh in four placements — as a bare word, in
+a URL, after `=` in an assignment, and in a `Cookie` header. **Classic base64
+is the control** and fails four of those checks on the same data, which is
+what shows the alphabet doing the work rather than the output merely being
+ASCII. This is the weaker, empirical counterpart to §7.1, which proves the
+cookie case from the ABNF.
+
+**One hazard is left, and it is named rather than fixed.** A stream may begin
+with `-`, which a *program* may read as an option — `cmd -abc…`. That is argv
+parsing and not shell expansion, and base64url has exactly the same property,
+so it is not something this format introduced. A caller passing a value as a
+positional argument should pass `--` first, as with any base64.
 
 ### 16.6 API shape
 

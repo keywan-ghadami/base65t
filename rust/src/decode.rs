@@ -20,14 +20,18 @@ use crate::alphabet::{
 use crate::encode::{BASE64_BLOCK_CHARS, BLOCK_BYTES};
 use crate::{Decoded, Error, Meta};
 
-/// §10.2. A stream and nothing else (§0.3).
-pub fn decode(stream: &[u8]) -> Result<Decoded, Error> {
+/// §10.2, and the §5.5 form: the bytes together with what the stream chose.
+///
+/// [`crate::decode`] is the drop-in shape and returns the bytes alone; this
+/// is the one a caller reaches for when it has to *validate* what it
+/// accepted rather than only accept it (§14).
+pub fn decode_detailed(stream: &[u8]) -> Result<Decoded, Error> {
     run(stream, false)
 }
 
 /// §5.5: like [`decode`], but `+` and `/` at an alphabet position are an
 /// error rather than the classic alphabet.
-pub fn decode_url_strict(stream: &[u8]) -> Result<Decoded, Error> {
+pub fn decode_url_strict_detailed(stream: &[u8]) -> Result<Decoded, Error> {
     run(stream, true)
 }
 
