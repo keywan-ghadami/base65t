@@ -164,18 +164,24 @@ story:
 
 | file | bytes | size | encode | decode |
 |---|--:|--:|--:|--:|
-| generated, all admitted | 4 000 000 | **78.1 %** | **47 %** | **40 %** |
-| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 101 % |
-| `xml` | 5 345 280 | 100.0 % | 100 % | 100 % |
-| `countries.json` | 1 408 911 | 100.0 % | 103 % | 98 % |
-| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 101 % |
-| random bytes | 262 144 | 100.0 % | 102 % | 99 % |
+| generated, all admitted | 4 000 000 | **78.1 %** | **49 %** | **43 %** |
+| `manifest.json` | 21 397 | 99.0 % | **122 %** | 101 % |
+| `osdb` | 10 085 684 | 99.9 % | **127 %** | 99 % |
+| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 99 % |
+| `xml` | 5 345 280 | 100.0 % | 102 % | 99 % |
+| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 100 % |
+| random bytes | 262 144 | 100.0 % | 100 % | 100 % |
 
-Where the output is not smaller than base64, it *is* base64 — 98 to 103 % of
-its time over two runs, both directions, which is the runner's spread rather
-than the format's. Where it is smaller it is faster too, since a `memcpy` is
-less work than a base64 loop. **No row trades size against time**, because the
-sample turns the asking off on exactly the inputs that would pay for it.
+Three shapes. **Every block raw**: 78 % of the size in half the time, since a
+`memcpy` is less work than a base64 loop. **No block raw**: the sample turns
+the check off, the output *is* base64url byte for byte, and the time is
+base64's. **A few blocks raw** — and this is where base64 wins: the sample sees
+one, so every block is checked, and most of them turn out to be base64 and paid
+for nothing. `manifest.json` spends 22 % more encoding time for 1 % of size.
+
+So encoding is 47 % to 127 % depending on shape, and the shape that costs is a
+stream whose head is unlike its body. Decoding never has the problem — the form
+is in the first character — and stays at 99 to 101 %.
 
 The check itself, when it does run, costs 7 % of base64's time on a block that
 rejects early and 36 % on one whose only rejecting byte is the last:

@@ -55,16 +55,23 @@ and §7 says why it is gone: a guarantee that holds "except when" is not one.
 
 This format is for the caller who is unsure. They know base64, base64 is never
 wrong, and anything they would have to weigh first is a reason not to bother.
-The aim is therefore that there is nothing to weigh: in each of the three
-dimensions a caller could worry about, base65t is better than base64 or the
-same, never worse.
+The aim is that there is as little to weigh as possible. Two of the three
+dimensions a caller could worry about are guaranteed never worse than base64.
+The third, time, is not — and the case where base64 wins is named below rather
+than left to be discovered.
 
 | Dimension | Against base64 | Standing |
 |---|---|---|
 | **Size** | never larger, `len(encode(x)) ≤ ceil(4·len(x)/3)` | **guaranteed**, per input, no exception. The proof is one sentence: a raw block costs 50 characters where base64 costs 64, and every other block *is* base64 (§9.4) |
 | **Readability** | a raw block stands in the clear; every other block *is* base64 | **guaranteed** by construction — the format never makes readable input less readable (§13.5) |
-| **Time** | at base64's time where the size is the same, usually faster where it is smaller | **measured**, not guaranteed: 99–101 % in both directions over the whole corpus, with no exception (§13.3) |
+| **Time** | faster where the output is smaller; at base64's time on input with no raw blocks at all; **slower on one shape**, named in §13.3 | **not guaranteed, and not always equal or better.** Measured 47 % to 127 % encoding. This is the one dimension where base64 can win (§13.3) |
 | **Alphabet** | the output is always the same 66 characters | **guaranteed**, and it is what the other three are stated against (§7) |
+
+**Why time is not guaranteed.** Size and readability follow from the block
+rule alone, which is why they can be proved. Time depends on how many blocks
+the check rejects after being turned on, and that is a property of the input
+the format cannot see in advance. §9.6 removes the check where it would never
+pay; it cannot remove it where it pays a little.
 
 Two further properties follow from the encoder being a mapping rather than a
 search:
@@ -727,22 +734,38 @@ It is non-conforming if it writes the wrong bytes.
 
 | File | Bytes | Size | Encode, time | Decode, time |
 |---|--:|--:|--:|--:|
-| generated, wholly admitted | 4 000 000 | **78.1 %** | **47 %** | **40 %** |
-| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 101 % |
-| `xml` | 5 345 280 | 100.0 % | 100 % | 100 % |
-| `countries.json` | 1 408 911 | 100.0 % | 103 % | 98 % |
-| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 101 % |
-| random bytes | 262 144 | 100.0 % | 102 % | 99 % |
+| generated, wholly admitted | 4 000 000 | **78.1 %** | **49 %** | **43 %** |
+| `manifest.json` | 21 397 | 99.0 % | **122 %** | 101 % |
+| `osdb` | 10 085 684 | 99.9 % | **127 %** | 99 % |
+| `dickens` (prose) | 10 192 446 | 100.0 % | 102 % | 99 % |
+| `xml` | 5 345 280 | 100.0 % | 102 % | 99 % |
+| `mozilla` (binary) | 51 220 480 | 100.0 % | 100 % | 100 % |
+| random bytes | 262 144 | 100.0 % | 100 % | 100 % |
 
-**The table is sorted by size, and that is the whole statement.** Where the
-output is not shorter than base64 it *is* base64 — the same bytes (§9.4) — and
-it costs base64's time: 98 to 103 % over two runs of the table, in both
-directions, which is the spread of the runner rather than of the format. Where
-the output is shorter, it is faster too, because a `memcpy` is less work than
-a base64 loop.
+Three shapes, and the middle one is the one to know about.
 
-There is no row that trades size against time. That is the §9.6 sample doing
-its job: an input with no raw blocks never pays for the question.
+**Every block raw** — the output is 78 % of base64's size and takes half its
+time, because a `memcpy` is less work than a base64 loop.
+
+**No block raw** — the sample of §9.6 turns the check off, the output *is*
+base64url byte for byte (§9.4), and the time is base64's: 100 to 102 %, which
+is the runner's spread rather than the format's. Prose, XML and binary are all
+here.
+
+**A few blocks raw** — and this is where base64 wins. The sample sees a raw
+block, so the check runs on every block; most of them turn out to be base64
+and paid for the check for nothing. `manifest.json` spends **22 % more
+encoding time for 1 % of size**, `osdb` **27 % for 0.1 %**. Constructed, the
+worst case is one raw block at the head of a long prose file: 122 % of the
+time for 100.0 % of the size, nothing gained at all.
+
+**So the honest range is 47 % to 127 % encoding**, and the shape that costs is
+a stream whose head is unlike its body. Decoding never has this problem — the
+form is in the first character — and stays at 99 to 101 % throughout.
+
+A rule that turned the check off again after enough consecutive base64 blocks
+would fix it, and would need a constant that §0.1 does not want. §17.6 leaves
+it open.
 
 ### 13.4 Short values
 
@@ -1025,7 +1048,21 @@ tried, and why it was withdrawn.
 towards 75 % size while also tipping a whole block to base64 more often; where
 the optimum lies is a question for measurement.
 
-### 17.5 Choosing the vector width at runtime
+### 17.5 Turning the check off again
+
+§13.3 names the one shape where base64 wins: a stream whose head holds a raw
+block and whose body does not, so §9.6 turns the check on and almost every
+block then pays it for nothing. Measured, that is 122 to 127 % of base64's
+encoding time for one percent of size or less.
+
+A rule that stopped asking again — after some number of consecutive base64
+blocks, say — would remove it. It needs a constant, and §0.1 is the reason
+none has been added: a number in the specification is a number two
+implementations must agree on and a caller may ask about. Whether one can be
+justified the way 48 and 64 are (§4, §9.6) is open. Any such rule MUST keep
+§9.4, which it does automatically: skipping the check only ever writes base64.
+
+### 17.6 Choosing the vector width at runtime
 
 Not a format question and not a gap in the code: the check of §13.1 already
 vectorises, on the baseline target `x86-64` at 16 bytes per operation.
