@@ -19,6 +19,12 @@ So there are two checks, and the second is the one that matters:
    meaning, report every reference to it -- because each of those was written
    about the old section and now points at the new one.
 
+3. **Named references.** The non-normative chapter carries names instead of
+   numbers, because "§0.1" tells a reader nothing. A reference by name breaks
+   the same way a number does -- rename the heading and every mention of it
+   silently points at nothing -- so an italic phrase that named a heading in
+   the last commit and names none now is reported.
+
 The second check needs no heuristic and has no false positives that are not
 worth a look: if §17.6 used to be "Turning the check off again" and is now
 "Choosing the vector width at runtime", every `§17.6` in the document is a
@@ -43,6 +49,26 @@ def sections(text: str) -> dict[str, str]:
     return {
         m.group(2): m.group(3).strip()
         for m in re.finditer(r"^(#{2,3}) (\d+(?:\.\d+)?)\.? *(.*)$", text, re.M)
+    }
+
+
+def named(text: str) -> list[tuple[int, str]]:
+    """(line, phrase) for every italic span, which is how a named reference
+    is written in this document."""
+    # A named reference is wrapped for line width like any other prose, so
+    # the span may cross a newline; whitespace is normalised before matching.
+    return [
+        (text[: m.start()].count("\n") + 1, " ".join(m.group(1).split()))
+        for m in re.finditer(r"(?<![*\w])\*([^*]{4,80})\*(?!\*)", text)
+        if "\n\n" not in m.group(1)
+    ]
+
+
+def headings(text: str) -> set[str]:
+    """Every heading title, numbered or not."""
+    return {
+        " ".join(m.group(2).split())
+        for m in re.finditer(r"^(#{2,4}) (?:\d+(?:\.\d+)?\.? *)?(.*)$", text, re.M)
     }
 
 
@@ -83,6 +109,15 @@ def main(argv: list[str]) -> int:
     if before_text is None:
         print(f"(no {ref}:{SPEC} to compare against; retargeting not checked)")
         return 1 if bad else 0
+
+    # Named references: one that resolved before and does not now is a
+    # heading that was renamed out from under it.
+    before_heads = headings(before_text)
+    now_heads = headings(text)
+    for line, phrase in named(text):
+        if phrase in before_heads and phrase not in now_heads:
+            print(f"  FAIL line {line}: *{phrase}* named a heading and no longer does")
+            bad += 1
 
     before = sections(before_text)
     moved = {

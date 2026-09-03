@@ -53,8 +53,10 @@ emits and compares it both ways.
 `encode_base64url` (§9.3) — the way out of the format for a caller who wants
 none of it — writes a subset of the same 66 characters.
 
-**There is no wider alphabet to opt into.** An earlier revision offered one,
-and §7 says why it is gone: a guarantee that holds "except when" is not one.
+**There is no wider alphabet to opt into.** An earlier revision offered one
+and it is gone, because a guarantee that holds "except when" is not a
+guarantee — the whole list above would have needed a second column. §7 has the
+measurements.
 
 ## What it guarantees, so that the decision is easy
 
@@ -112,9 +114,12 @@ different opinions about (§11).
 > same allocator, the same compiler. Comparing against a foreign base64 would
 > measure that library's hand-tuning and not this format.
 
-## 0. Positioning (non-normative)
+## Positioning (non-normative)
 
-### 0.1 One format, one encoder
+Nothing in this chapter is normative, which is why it carries no section
+number. It is referred to below by the names of its parts.
+
+### One format, one encoder
 
 The caller this format is for is the one who is unsure, and the head of this
 document says why that leaves nothing to weigh. What follows from it is the
@@ -137,18 +142,18 @@ one who is only allowed to speak base64url.
 | Cache or dedup key | byte equality (§11) |
 | Token containing a secret | `encode_base64url`, no cleartext leaks (§14) |
 
-### 0.2 What base65t *is*, in one sentence
+### What base65t *is*, in one sentence
 
 > Base64url in blocks of 48 bytes, where a block MAY carry its bytes raw and a
 > 65th character says which blocks those are.
 
-### 0.3 What "one decoder for everything" means exactly
+### What "one decoder for everything" means exactly
 
 > A conforming `decode()` takes an octet stream and needs **no parameter at
 > all**. Alphabet variant (§5.2) and padding (§5.3) are
 > determined from the stream itself and reported in the result.
 
-### 0.4 Why not "Base85N with a URL alphabet"
+### Why not "Base85N with a URL alphabet"
 
 RFC 3986's *unreserved* set has 66 characters. A radix-85 encoding fits inside
 it, but a passthrough of the Base85N kind additionally needs donor characters
@@ -157,7 +162,7 @@ binary core. Base65t goes the opposite way: a core that **is exactly
 base64url**, plus a discriminator. Only from that does the superset property
 of §5.2 follow.
 
-### 0.5 Where base65t sits in the family (non-normative)
+### Where base65t sits in the family
 
 Base65t is the **opener**, not the peak. Base85N carries the same
 passthrough idea further and is denser; Base91z compresses. Both ask the
@@ -181,7 +186,7 @@ density, goes one door further.
 5. **Read backwards-compatibly** — every canonical base64 or base64url stream,
    padded or not, decodes to the same bytes (§5.2, §5.3). Normative.
 6. **Self-describing within the stream** — alphabet and padding are detected,
-   not configured (§0.3).
+   not configured (*What "one decoder for everything" means exactly*).
 7. Reproducible byte for byte (§11).
 8. **Stateless.** No block depends on another (§4).
 9. **Not appreciably slower than base64**, in both directions (§13). This is
@@ -367,9 +372,9 @@ the code space for a third block form, which §17.1 describes: `~`, eight mask
 characters carrying one bit per byte, the admitted bytes in the clear, then
 base64 of the rest.
 
-That form is **not** part of v0.4, and the reason is §0.1. It makes a mixed
-block two-thirds readable and costs three times base64's time for it, and this
-format lives on the decision to use it costing nothing. "Three times slower on
+That form is **not** part of v0.4. It makes a mixed block two-thirds readable
+and costs three times base64's time for it, and this format lives on the
+decision to use it costing nothing. "Three times slower on
 my JSON blobs" is a sentence that tips exactly that decision, and readable
 mixed text is not what the format advertises. The reservation exists so that a
 revision which finds a cheaper way can add it without a decoder of today
@@ -385,7 +390,7 @@ a reserved stream but a broken one: `E_CHARSET`.
 
 **Two numbers, and they are not the same number.** The format's *radix* — the
 symbols that carry encoded data — is base64url's 64 plus `~`, which is where
-the name comes from and why §0.2 calls `~` the 65th character. The set above
+the name comes from, and why `~` is called the 65th character. The set above
 is the *byte values a stream can contain*, which is 66, because a raw block
 passes text through and `.` is text. `.` and `~` never appear in a base64
 block; every other character of the 66 does, in both roles. Container safety
@@ -396,7 +401,8 @@ There is no second set and no parameter that selects one. That is the format's
 central property, not a simplification of it: the base64 alphabet is a subset
 of these 66 (§3), so **every character of every stream is one of them** — the
 base64 blocks, the `~~` markers and the raw bytes alike. One sentence covers
-the whole output, which is what §0.3 and the head of this document rest on.
+the whole output, which is what every container statement in this document
+rests on.
 
 A byte outside the set costs its whole block: the block becomes base64. That
 is the coarseness this format traded for its speed, and §13.4 quantifies it.
@@ -499,7 +505,7 @@ text reach 78 % size; large documents with punctuation gain **nothing**.
 `encode` MUST take the data and nothing else. A library MUST NOT offer a
 parameter that changes the alphabet, the block size or the block rule: those
 are the format, and a caller who can change them has to understand them
-first (§0.1).
+first.
 
 **These SHOULD have the shape of the host language's base64 library**, down
 to argument and return types, so that a call site changes its import and
@@ -568,7 +574,8 @@ inputs. Implementing the rule literally is equally conforming
 knee to find: from 32 blocks on the sample costs nothing at all, so any size
 from there up is free and 64 is the first power of two past it with room to
 spare. And 64 blocks are **3072
-bytes** — longer than every value §0.1 names. For a URL query, a cookie value,
+bytes** — longer than every value this format is aimed at. For a URL query, a
+cookie value,
 a header or a cache key the sample is therefore not a sample at all but the
 whole input, and it can give up nothing there. Both reasons point the same
 way, which is why the number is not a threshold anyone has to tune.
@@ -720,7 +727,8 @@ size against unpadded base64:
 **The sum line is honest and misleading at once**, because it is weighted by
 bytes and the corpus is dominated by megabyte files, which gain nothing. The
 distribution is not a gradient but two populations, and the interesting one is
-the small one — the values §0.1 is about:
+the small one — identifiers, keys and digests, the values this format is
+aimed at:
 
 | Sample | Bytes | Size |
 |---|--:|--:|
@@ -812,8 +820,9 @@ a stream whose head is unlike its body. Decoding never has this problem — the
 form is in the first character — and stays at 99 to 101 % throughout.
 
 A rule that turned the check off again after enough consecutive base64 blocks
-would fix it, and would need a constant that §0.1 does not want. §17.5 leaves
-it open.
+would fix it. It would also put a number in the format that a caller could ask
+about and two implementations would have to agree on, which is the thing this
+format is trying not to have. §17.5 has the argument.
 
 ### 13.4 Short values
 
@@ -864,9 +873,12 @@ The three in between are large files with a stretch of identifier-shaped data
 somewhere in them.
 
 **That is the price of one alphabet, and it is named rather than softened.** A
-wider alphabet would make text with punctuation readable; §7 says why there
-isn't one, and `docs/history/README.md` has what a wider one scored. Whoever
-needs readable mixed text needs a different format, and §0.5 says which.
+wider alphabet would make text with punctuation readable, and there is not one
+because the list of containers at the head of this document would then need a
+second column — a guarantee with an "except when" is not one. §7 has that
+argument and `docs/history/README.md` has what a wider alphabet scored. Whoever
+needs readable mixed text needs a different format; *Where base65t sits in the
+family* says which.
 
 ## 14. Security
 
@@ -1122,22 +1134,22 @@ block then pays it for nothing. Measured, that is 122 to 127 % of base64's
 encoding time for one percent of size or less.
 
 A rule that stopped asking again — after some number of consecutive base64
-blocks, say — would remove it. It needs a constant, and §0.1 is the reason
-none has been added: a number in the specification is a number two
-implementations must agree on and a caller may ask about. Whether one can be
+blocks, say — would remove it. It needs a constant, and the reason none has
+been added is the one this whole format is built on: every number in it is a
+number two implementations must agree on and a caller may stop to ask about,
+and a caller who stops to ask reaches for base64 instead. Whether one can be
 justified the way 48 and 64 are (§4, §9.6) is open. Any such rule MUST keep
 §9.4, which it does automatically: skipping the check only ever writes base64.
 
-### 17.6 Choosing the vector width at runtime
+### 17.6 A faster check
 
-Not a format question and not a gap in the code: the check of §13.1 already
-vectorises, on the baseline target `x86-64` at 16 bytes per operation.
-Building with `-C target-cpu=native` gives 32 or 64 and halves the encoding
-surcharge — today, without `unsafe` and without a code change.
+The one cost this format has over base64 is the question per block (§13.1),
+and it is answered one byte at a time. A machine that can answer it for many
+bytes at once answers it several times faster, and nothing about the format
+prevents that: the question is a set membership over 48 independent bytes,
+which is the shape such an instruction exists for.
 
-What is missing is the same **without a build flag**, that is, runtime
-detection with several variants of the same function. There are two ways to do
-that, and both are closed today: `#[target_feature]` requires `unsafe`, which
-§14 rules out, and `std::simd` is not stable (checked on rustc 1.98.1,
-tracking issue rust-lang/rust#86656). Once `std::simd` is stable it is a few
-lines that move not one byte of the output.
+This is an implementation matter and not a format one — it moves no byte of
+any stream — so what any particular language or compiler makes possible today
+belongs in that implementation's own documentation, and for the one in `rust/`
+it is in the README.

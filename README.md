@@ -247,6 +247,25 @@ alphabet.** A wider one would make prose readable and would take the container
 guarantee at the top of this file with it; `docs/history/` has what a wider
 one scored before it was withdrawn.
 
+## The check, and how fast it could be
+
+Encoding costs base64's time plus one question per block: does the alphabet
+admit all 48 bytes? The check is arithmetic rather than a table lookup — a
+gather does not vectorise and six comparisons do — so **the compiler already
+vectorises it**, at 16 bytes per operation on the baseline `x86-64` target,
+which assumes only SSE2. Anyone doubting that can look:
+`cargo rustc --release -- --emit=asm`.
+
+Building with `RUSTFLAGS="-C target-cpu=native"` gives 32 or 64 bytes per
+operation and roughly halves what the check costs, with no code change and not
+a byte of output different.
+
+What is missing is the same width **without a build flag**, which needs
+runtime detection with several variants of one function. Both routes are shut
+today: `#[target_feature]` requires `unsafe`, which this crate forbids, and
+`std::simd` is not stable — checked on this toolchain, rustc 1.98.1, tracking
+issue rust-lang/rust#86656. When it stabilises it is a few lines.
+
 ## What is here
 
 * **`docs/spec-v0.4.md`** — the specification, v0.4. The normative document;
