@@ -61,8 +61,8 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
 
 /// §9.4, the sentence the whole case for switching rests on: never longer
 /// than base64, per input rather than on average, in both profiles and at
-/// both entry points. It holds block by block, because each block takes the
-/// shortest of three forms and base64 is one of them.
+/// both entry points. It holds block by block, because a raw block is 50
+/// characters against base64's 64 and every other block is base64.
 #[test]
 fn the_encoding_is_never_longer_than_base64() {
     for (name, data) in corpus() {
@@ -139,10 +139,10 @@ fn whole_blocks_encode_independently() {
     assert_eq!(decode(&joined, Profile::U).unwrap().bytes, whole);
 }
 
-/// The three forms all occur on ordinary input, and each decodes.
+/// Both forms occur on ordinary input, and each decodes.
 #[test]
 fn every_form_occurs_and_round_trips() {
-    let mut seen = [false; 3];
+    let mut seen = [false; 2];
     for (_, data) in corpus() {
         for block in data.chunks(BLOCK_BYTES) {
             let mask = (0..block.len())
@@ -152,7 +152,7 @@ fn every_form_occurs_and_round_trips() {
             seen[form as usize] = true;
         }
     }
-    assert_eq!(seen, [true; 3], "base64, raw, mask");
+    assert_eq!(seen, [true; 2], "base64, raw");
 }
 
 /// A raw or base64 tail runs to the end of the stream, and a decoder must

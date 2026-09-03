@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! §16.8 — every one of the ten error codes in §10.4, raised on purpose.
+//! §16.8 — every one of the nine error codes in §10.4, raised on purpose.
 //!
 //! A table of error codes nothing produces is a table of error codes nobody
 //! has checked. The last test is the other half of the same concern: the
@@ -13,8 +13,8 @@
 use base65t::*;
 
 #[test]
-fn all_ten_codes() {
-    let cases: [(Error, &str, Result<Decoded, Error>); 10] = [
+fn all_nine_codes() {
+    let cases: [(Error, &str, Result<Decoded, Error>); 9] = [
         (
             Error::TrailingTilde,
             "E_TRAILING_TILDE",
@@ -23,7 +23,7 @@ fn all_ten_codes() {
                 Profile::U,
             ),
         ),
-        (Error::Truncated, "E_TRUNCATED", decode(b"~AAA", Profile::U)),
+        (Error::Reserved, "E_RESERVED", decode(b"~Aabc", Profile::U)),
         (Error::Profile, "E_PROFILE", decode(b"~~a b", Profile::U)),
         (Error::Align, "E_ALIGN", decode(b"abcde", Profile::U)),
         (
@@ -43,7 +43,6 @@ fn all_ten_codes() {
             "E_NON_URL_ALPHABET",
             decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
         ),
-        (Error::Mask, "E_MASK", decode(b"~AAAAAAABa", Profile::U)),
     ];
     for (expected, code, got) in cases {
         assert_eq!(got, Err(expected), "{code}");
@@ -52,34 +51,23 @@ fn all_ten_codes() {
     }
 }
 
-/// Where a mask block can be cut off, and what each cut is called.
+/// There is no length in this format a sender chooses, and so there is no
+/// truncation error: a raw tail and a base64 tail both run to the end of the
+/// stream, whatever that is.
 #[test]
-fn truncation_inside_a_mask_block() {
-    assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    for n in 1..8 {
-        let s = [b"~".as_slice(), &b"AAAAAAAA"[..n]].concat();
-        assert_eq!(
-            decode(&s, Profile::U),
-            Err(Error::Truncated),
-            "{n} mask chars"
-        );
+fn nothing_can_be_truncated() {
+    let data: Vec<u8> = (0..100).map(|i| b"abcdefghij"[i % 10]).collect();
+    let out = encode(&data);
+    for cut in 0..=out.len() {
+        let r = decode(&out[..cut], Profile::U);
+        match r {
+            Ok(d) => assert!(data.starts_with(&d.bytes), "cut {cut}"),
+            Err(e) => assert!(
+                matches!(e, Error::TrailingTilde | Error::Align | Error::NonzeroTail),
+                "cut {cut}: {e}"
+            ),
+        }
     }
-    // A full mask, three clear bytes promised, two present.
-    assert_eq!(decode(b"~4AAAAAAAab", Profile::U), Err(Error::Truncated));
-    // Three present: a valid tail of three admitted bytes and nothing else.
-    assert_eq!(decode(b"~4AAAAAAAabc", Profile::U).unwrap().bytes, b"abc");
-}
-
-/// A mask promises at most forty-eight bytes and can address nothing beyond
-/// its block. There is no length in this format a sender chooses, which is
-/// the property §14 wanted and the earlier format did not have.
-#[test]
-fn a_mask_cannot_promise_more_than_a_block() {
-    // All 48 bits set, no clear bytes: truncated, not a large allocation.
-    assert_eq!(decode(b"~________", Profile::U), Err(Error::Truncated));
-    // All 48 bits set and 48 bytes: a valid (if wasteful) block.
-    let s = [b"~________".as_slice(), &[b'a'; 48]].concat();
-    assert_eq!(decode(&s, Profile::U).unwrap().bytes, vec![b'a'; 48]);
 }
 
 /// Arbitrary bytes in, an answer out. No panic, no overrun, no runaway.

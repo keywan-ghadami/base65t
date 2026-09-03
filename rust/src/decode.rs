@@ -5,24 +5,19 @@
 //! The decoder (§10): one block at a time, and it never searches.
 //!
 //! Every block announces its form in its first character or two, and every
-//! form has a length the decoder can compute before it reads a byte of
-//! payload: sixty-four characters of base64, `~~` and forty-eight bytes, or
-//! `~`, eight mask characters, as many bytes as the mask has bits set, and
-//! base64 of the remainder. The last block is the only one that can be
-//! shorter, and it is shorter by construction, so "fewer characters remain
-//! than a full block needs" is the whole of the tail detection.
+//! form has a length the decoder knows before it reads a byte of payload:
+//! sixty-four characters of base64, or `~~` and forty-eight bytes. The last
+//! block is the only one that can be shorter, and it is shorter by
+//! construction, so "fewer characters remain than a full block needs" is the
+//! whole of the tail detection.
 //!
 //! Nothing in the stream is a length a sender chooses. That was the one place
-//! the previous format stood behind base64 (§14): its decoder parsed
-//! attacker-controlled lengths. This one parses a mask, and a mask cannot
-//! address anything past its own block.
+//! the segment format stood behind base64 (§14).
 
 use crate::alphabet::{
     AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
 };
-use crate::encode::{
-    base64_len, popcount48, BASE64_BLOCK_CHARS, BLOCK_BYTES, MASK_CHARS, REVERSE6,
-};
+use crate::encode::{BASE64_BLOCK_CHARS, BLOCK_BYTES};
 use crate::{Decoded, Error, Meta};
 
 /// §10.2. The profile is the only parameter.
@@ -105,18 +100,6 @@ impl Decoder<'_> {
         Ok(())
     }
 
-    /// One alphabet position: check first (§10.1, trap 1), then Rule A, then
-    /// the value.
-    #[inline]
-    fn read_alphabet(&mut self, c: u8) -> Result<u8, Error> {
-        let w = WORDS[c as usize];
-        if w & WORD_BAD != 0 {
-            return Err(Error::Charset);
-        }
-        self.note_classes(((w & WORD_CLASS) >> 8) as u8)?;
-        Ok((w & 63) as u8)
-    }
-
     /// §7: every byte of a raw payload must be one the profile admits.
     ///
     /// Through the same mask the encoder builds, so it does not branch on
@@ -163,88 +146,16 @@ impl Decoder<'_> {
                 self.check_profile(bytes)?;
                 self.out.extend_from_slice(bytes);
                 pos += n;
+            } else if WORDS[stream[pos + 1] as usize] & WORD_BAD == 0 {
+                // `~` and an alphabet character: the form §17 keeps the door
+                // open for, and an error until a version defines it, so that
+                // this decoder fails loudly rather than reads it wrongly.
+                return Err(Error::Reserved);
             } else {
-                pos = self.mask_block(stream, pos + 1)?;
+                return Err(Error::Charset);
             }
         }
         Ok(())
-    }
-
-    /// The mask form (§6), from the first mask character. Returns where the
-    /// block ends.
-    fn mask_block(&mut self, stream: &[u8], mut pos: usize) -> Result<usize, Error> {
-        let len = stream.len();
-        if pos + MASK_CHARS > len {
-            return Err(Error::Truncated);
-        }
-        let mut mask: u64 = 0;
-        for j in 0..MASK_CHARS {
-            let v = self.read_alphabet(stream[pos + j])? as usize;
-            // Character j carries bytes 6j..6j+5, first byte in the top bit:
-            // the six bits reversed, through the encoder's own table.
-            mask |= (REVERSE6[v] as u64) << (6 * j);
-        }
-        pos += MASK_CHARS;
-        let admitted = popcount48(mask);
-        if pos + admitted > len {
-            return Err(Error::Truncated);
-        }
-        let clear = &stream[pos..pos + admitted];
-        self.check_profile(clear)?;
-        pos += admitted;
-
-        // The base64 part: its full length is known from the mask, and a
-        // shorter remainder means this is the last block.
-        let full = base64_len(BLOCK_BYTES - admitted);
-        let at_end = len - pos <= full;
-        let n = if at_end { len - pos } else { full };
-        // Decoded in place at the end of `out`, then lifted into a buffer on
-        // the stack: an allocation per block was a third of the decoder's
-        // time on prose.
-        let base = self.out.len();
-        self.base64_run(&stream[pos..pos + n], at_end)?;
-        let rest_len = self.out.len() - base;
-        if rest_len > BLOCK_BYTES {
-            self.out.truncate(base);
-            return Err(Error::Mask);
-        }
-        let mut rest = [0u8; BLOCK_BYTES + 8];
-        rest[..rest_len].copy_from_slice(&self.out[base..]);
-        self.out.truncate(base);
-        pos += n;
-
-        // How many bytes this block holds, and whether the mask agrees. A full
-        // block is forty-eight; a tail is what the two parts add up to, and
-        // then the mask may not claim a byte past it.
-        let m = admitted + rest_len;
-        if m > BLOCK_BYTES || (mask >> m) != 0 {
-            return Err(Error::Mask);
-        }
-
-        // Interleave in the order the mask gives, eight bytes at a time
-        // through the group tables: within a group, byte `t` comes from the
-        // clear part at the rank of its bit among the set bits below it, or
-        // from the base64 part at `t` minus that rank. Eight independent
-        // loads per group, a cursor per group, and no branch on the data.
-        use crate::alphabet::groups::{POP, RANK};
-        let mut clear_buf = [0u8; BLOCK_BYTES + 8];
-        clear_buf[..admitted].copy_from_slice(clear);
-        let mut block = [0u8; BLOCK_BYTES];
-        let (mut c, mut r) = (0usize, 0usize);
-        let (out_groups, _) = block.as_chunks_mut::<8>();
-        for (g, slot) in out_groups.iter_mut().enumerate() {
-            let b = (mask >> (8 * g)) as usize & 255;
-            let rank = &RANK[b];
-            for t in 0..8 {
-                let take = 0u8.wrapping_sub((b >> t & 1) as u8);
-                let k = rank[t] as usize;
-                slot[t] = (clear_buf[c + k] & take) | (rest[r + t - k] & !take);
-            }
-            c += POP[b] as usize;
-            r += 8 - POP[b] as usize;
-        }
-        self.out.extend_from_slice(&block[..m]);
-        Ok(pos)
     }
 
     /// One run of base64 characters (§5), with Rule P allowed only where the

@@ -27,8 +27,8 @@
 //! threshold to tune and no preset to understand, and that is the design
 //! rather than an omission: a caller who has to choose has to know what the
 //! choices mean before encoding a byte, and a caller who is unsure reaches
-//! for base64. The encoder is a fixed mapping over blocks of forty-eight
-//! bytes (§4), and it neither searches nor remembers.
+//! for base64. The encoder is one comparison per block of forty-eight bytes
+//! (§4): all text, or base64. It neither searches nor remembers.
 //!
 //! The two parameters that remain are not choices about the encoding. The
 //! profile (§7) is a statement about the container the stream has to survive,
@@ -52,7 +52,7 @@ mod encode;
 
 pub use alphabet::{AlphabetSeen, Profile};
 pub use decode::{decode, decode_url_strict};
-pub use encode::{choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES, MASK_CHARS};
+pub use encode::{choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES};
 
 /// What `decode` found while decoding, which §5.5 makes part of the result
 /// rather than an option: permissiveness that cannot be inspected is
@@ -74,14 +74,14 @@ pub struct Meta {
     pub padding_seen: bool,
 }
 
-/// The ten error codes of §10.4, under their names there.
+/// The nine error codes of §10.4, under their names there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// The stream ends in a lone `~`.
     TrailingTilde,
-    /// A mask block is cut off before its mask or its clear bytes are
-    /// complete.
-    Truncated,
+    /// `~` followed by an alphabet character: a block form this version does
+    /// not define and a later one may (§17).
+    Reserved,
     /// A clear byte the profile does not admit.
     Profile,
     /// A base64 run of length `1 mod 4`, which no number of bytes produces.
@@ -90,8 +90,8 @@ pub enum Error {
     /// base64 libraries accept, and this one deliberately does not (§1.1).
     NonzeroTail,
     /// A character with no value where the grammar requires one: `~` inside a
-    /// base64 run, `=` anywhere but the very end, a mask position that is not
-    /// an alphabet character.
+    /// base64 run, `=` anywhere but the very end, `~` followed by something
+    /// that is neither `~` nor an alphabet character.
     Charset,
     /// Rule P: padding that `n mod 4` does not call for (§5.3).
     Padding,
@@ -99,8 +99,6 @@ pub enum Error {
     MixedAlphabet,
     /// `+` or `/` under [`decode_url_strict`] (§5.5).
     NonUrlAlphabet,
-    /// A mask that claims a byte past the end of its block (§6.2).
-    Mask,
 }
 
 impl Error {
@@ -108,7 +106,7 @@ impl Error {
     pub fn code(self) -> &'static str {
         match self {
             Error::TrailingTilde => "E_TRAILING_TILDE",
-            Error::Truncated => "E_TRUNCATED",
+            Error::Reserved => "E_RESERVED",
             Error::Profile => "E_PROFILE",
             Error::Align => "E_ALIGN",
             Error::NonzeroTail => "E_NONZERO_TAIL",
@@ -116,7 +114,6 @@ impl Error {
             Error::Padding => "E_PADDING",
             Error::MixedAlphabet => "E_MIXED_ALPHABET",
             Error::NonUrlAlphabet => "E_NON_URL_ALPHABET",
-            Error::Mask => "E_MASK",
         }
     }
 }

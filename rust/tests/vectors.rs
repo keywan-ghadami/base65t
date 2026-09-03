@@ -7,7 +7,8 @@
 //! v0.4 is a different wire format from v0.1 to v0.3, so none of the earlier
 //! vectors carries over as bytes; the *inputs* do, because they were chosen
 //! to sit on the format's boundaries, and the boundaries moved with it.
-//! `docs/history/` holds the old streams.
+//! `docs/history/` holds the old streams, and the mask form that lasted a
+//! day.
 
 use base65t::*;
 
@@ -15,7 +16,7 @@ fn base64_len(n: usize) -> usize {
     (4 * n).div_ceil(3)
 }
 
-// --- TV1-TV4: the three forms, profile U ----------------------------------
+// --- TV1-TV4: the two forms, profile U ------------------------------------
 
 /// A raw block: two characters of marker, the bytes as they are.
 #[test]
@@ -27,12 +28,12 @@ fn tv1_a_raw_block() {
     assert_eq!(decode(&out, Profile::U).unwrap().bytes, b"alice.jones");
 }
 
-/// A base64 block, and the reason for it: on a tail of 22 bytes the mask
-/// form costs nine characters of overhead for eighteen clear bytes, which is
-/// 33 against base64's 30. The earlier format wrote this input in 26; the
-/// block format gives that up, and TV5 is what it buys instead.
+/// A base64 block: four bytes of the twenty-two are not text, so the block is
+/// base64 and nothing else. The segment format wrote this input in 26
+/// characters; the block format gives that up for an encoder that is one
+/// comparison.
 #[test]
-fn tv2_a_base64_block_where_the_mask_would_not_pay() {
+fn tv2_a_base64_block() {
     let input = [b"\xde\xad\xbe\xef".as_slice(), b"session-eu-central"].concat();
     let out = encode(&input);
     assert_eq!(out, b"3q2-73Nlc3Npb24tZXUtY2VudHJhbA");
@@ -65,61 +66,40 @@ fn tv4_block_boundaries() {
     assert_eq!(decode(&out, Profile::U).unwrap().bytes, input);
 }
 
-// --- TV5: the mask form ---------------------------------------------------
+// --- TV5: one byte decides the block -------------------------------------
 
-/// Fifty bytes of English in profile U. The first block has nine spaces and
-/// a full stop in it, which the earlier format would have written as ten
-/// short base64 runs and the text in between as base64 too, because no run
-/// reached the length where a literal pays. The mask form keeps 39 of 48
-/// bytes in the clear, and the whole input costs 63 characters against
-/// base64's 67.
-///
-/// The mask's first character is `7`: `the qu` is admitted, space, admitted,
-/// admitted, which is `111011`, which is 59.
+/// Fifty bytes of English. In profile U the space is not admitted, so the
+/// first block is base64 as a whole and only the tail `in` is raw -- no,
+/// even the tail is too short to be raw (§9.1), so the stream is base64url
+/// exactly. In profile T the space is admitted, the first block is raw, and
+/// the two-byte tail is base64.
 #[test]
-fn tv5_a_mask_block() {
+fn tv5_one_byte_decides_the_block() {
     let input = b"the quick brown fox jumps over the lazy dog. again";
-    let out = encode(input);
-    assert_eq!(
-        out,
-        b"~777vvd73thequickbrownfoxjumpsoverthelazydog.agaICAgICAgICAgaW4"
-    );
-    assert_eq!(out.len(), 63);
-    assert_eq!(base64_len(50), 67);
-    assert_eq!(out[0], b'~');
-    assert_eq!(&out[1..9], b"777vvd73");
-    assert_eq!(&out[9..48], b"thequickbrownfoxjumpsoverthelazydog.aga");
-    assert_eq!(&out[48..60], b"ICAgICAgICAg");
-    assert_eq!(&out[60..], b"aW4");
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, input);
+    let u = encode_with(input, Profile::U);
+    assert_eq!(u, encode_base64url(input));
+    assert_eq!(u.len(), 67);
+    assert_eq!(decode(&u, Profile::U).unwrap().bytes, input);
 
-    // The same input in profile T admits the space, so the first block is
-    // raw and the whole thing is 53 characters.
     let t = encode_with(input, Profile::T);
     assert_eq!(&t[..50], [b"~~".as_slice(), &input[..48]].concat());
     assert_eq!(&t[50..], b"aW4");
+    assert_eq!(t.len(), 53);
     assert_eq!(decode(&t, Profile::T).unwrap().bytes, input);
 }
 
-/// The tie at 27 admitted bytes goes to the mask, because a tie costs
-/// nothing and the format prefers text in the clear. At 26 base64 is shorter
-/// and wins outright.
+/// The reserved form: `~` and an alphabet character is the mask block of
+/// `docs/history/`, and until a version defines it again it is an error --
+/// loudly, so that a stream from such a version is not read as something
+/// else.
 #[test]
-fn tv5b_the_tie_goes_to_the_clear_text() {
-    let mut d = vec![b'a'; 27];
-    d.extend(vec![b' '; 21]);
-    let out = encode(&d);
-    assert_eq!(out.len(), 64);
-    assert_eq!(out[0], b'~');
-    assert_eq!(&out[1..9], b"____4AAA");
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, d);
-
-    let mut d = vec![b'a'; 26];
-    d.extend(vec![b' '; 22]);
-    let out = encode(&d);
-    assert_eq!(out.len(), 64);
-    assert_ne!(out[0], b'~');
-    assert_eq!(out, encode_base64url(&d));
+fn tv5b_a_tilde_and_an_alphabet_character_is_reserved() {
+    assert_eq!(decode(b"~AAAAAAAA", Profile::U), Err(Error::Reserved));
+    assert_eq!(decode(b"~7abc", Profile::U), Err(Error::Reserved));
+    assert_eq!(decode(b"~_", Profile::U), Err(Error::Reserved));
+    // Anything else after `~` is not reserved, it is wrong.
+    assert_eq!(decode(b"~=", Profile::U), Err(Error::Charset));
+    assert_eq!(decode(b"~ a", Profile::U), Err(Error::Charset));
 }
 
 // --- TV6-TV8: reading base64, and the two rules that keep it unambiguous --
@@ -162,25 +142,22 @@ fn tv7_rule_a_holds_at_alphabet_positions() {
         Err(Error::NonUrlAlphabet)
     );
     assert!(decode_url_strict(b"PDw_Pz8-Pg", Profile::U).is_ok());
-    // Mask characters are alphabet positions too.
-    let mut d = vec![b'a'; 27];
-    d.extend(vec![b' '; 21]);
-    let mut out = encode(&d);
-    assert_eq!(&out[1..5], b"____");
-    out[1..5].fill(b'/');
-    assert_eq!(
-        decode(&out, Profile::U).unwrap().alphabet_seen,
-        AlphabetSeen::Classic
-    );
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, d);
-    // One of the four back to `_`: both variants in one stream.
-    out[1] = b'_';
-    assert_eq!(decode(&out, Profile::U), Err(Error::MixedAlphabet));
-    out[1] = b'/';
-    assert_eq!(
-        decode_url_strict(&out, Profile::U),
-        Err(Error::NonUrlAlphabet)
-    );
+    // Across blocks: a raw block between two base64 blocks in different
+    // alphabets is still one stream.
+    let url = encode_base64url(&[0xfbu8; 48]); // `-` and `_` in here
+    let classic: Vec<u8> = url
+        .iter()
+        .map(|&c| match c {
+            b'-' => b'+',
+            b'_' => b'/',
+            c => c,
+        })
+        .collect();
+    let mut s = url.clone();
+    s.extend(b"~~");
+    s.extend([b'a'; 48]);
+    s.extend(&classic);
+    assert_eq!(decode(&s, Profile::U), Err(Error::MixedAlphabet));
 }
 
 /// The negative half of Rule A, and the one a whole-stream scanner fails: the
@@ -194,11 +171,13 @@ fn tv7_raw_bytes_do_not_count() {
 }
 
 #[test]
-fn tv8_mask_positions_are_checked_before_they_are_read() {
-    assert_eq!(decode(b"~=AAAAAAA", Profile::U), Err(Error::Charset));
-    assert_eq!(decode(b"~AAAAAA~A", Profile::U), Err(Error::Charset));
+fn tv8_what_may_follow_a_tilde() {
     assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~AAAA", Profile::U), Err(Error::Truncated));
+    assert_eq!(decode(b"~~", Profile::U).unwrap().bytes, b"");
+    assert_eq!(decode(b"~A", Profile::U), Err(Error::Reserved));
+    assert_eq!(decode(b"~=", Profile::U), Err(Error::Charset));
+    // A `~` where a base64 block should continue.
+    assert_eq!(decode(b"YW~x", Profile::U), Err(Error::Charset));
 }
 
 // --- TV9-TV10: padding, and why it may not be stripped in advance --------
@@ -233,35 +212,39 @@ fn tv10_equals_as_a_raw_byte_in_profile_t() {
 fn tv11_error_cases() {
     assert_eq!(decode(b"abcde", Profile::U), Err(Error::Align));
     assert_eq!(decode(b"~", Profile::U), Err(Error::TrailingTilde));
-    assert_eq!(decode(b"~AAAA", Profile::U), Err(Error::Truncated));
+    assert_eq!(decode(b"~Aabc", Profile::U), Err(Error::Reserved));
     assert_eq!(decode(b"~~a b", Profile::U), Err(Error::Profile));
     assert_eq!(decode(b"YWxp==", Profile::U), Err(Error::Padding));
     assert_eq!(decode(b"YWxpY2V", Profile::U), Err(Error::NonzeroTail));
     assert_eq!(decode(b"YW~x", Profile::U), Err(Error::Charset));
-    // A mask that claims byte 47 in a tail of one clear byte.
-    assert_eq!(decode(b"~AAAAAAABa", Profile::U), Err(Error::Mask));
+    assert_eq!(decode(b"PDw_Pz8+Pg", Profile::U), Err(Error::MixedAlphabet));
+    assert_eq!(
+        decode_url_strict(b"PDw/Pz8+Pg", Profile::U),
+        Err(Error::NonUrlAlphabet)
+    );
 }
 
-// --- TV12: the mask in a tail --------------------------------------------
+// --- TV12: the tail ------------------------------------------------------
 
-/// A tail block is shorter than 48 bytes, and the mask then has bits it may
-/// not use. The decoder learns the block's length from what the two parts
-/// add up to, and checks the mask against it.
+/// A last block is shorter than 48 bytes, and its form follows §9.1: raw
+/// from four bytes up, base64 below, ties to raw.
 #[test]
-fn tv12_a_mask_tail() {
-    // 30 bytes: 27 admitted, three not. Mask form 9 + 27 + 4 = 40, base64
-    // 40: a tie, and the mask takes it.
-    let mut d = vec![b'a'; 27];
-    d.extend(b"   ");
-    let out = encode(&d);
-    assert_eq!(out.len(), 40);
-    assert_eq!(&out[..9], b"~____4AAA");
-    assert_eq!(&out[9..36], &[b'a'; 27][..]);
-    assert_eq!(&out[36..], b"ICAg");
-    assert_eq!(decode(&out, Profile::U).unwrap().bytes, d);
-
-    // The same stream with one more bit set in the mask, past the data.
-    let mut bad = out.clone();
-    bad[8] = b'B'; // byte 47 claimed
-    assert_eq!(decode(&bad, Profile::U), Err(Error::Mask));
+fn tv12_the_tail() {
+    let full = [b'a'; 48];
+    for (tail, want) in [
+        (&b""[..], &b""[..]),
+        (b"a", b"YQ"),
+        (b"ab", b"YWI"),
+        (b"abc", b"YWJj"),
+        (b"abcd", b"~~abcd"),
+        (b"abcdef", b"~~abcdef"),
+        (b"a b", b"YSBi"),
+        (b"a bcd", b"YSBiY2Q"),
+    ] {
+        let data = [&full[..], tail].concat();
+        let out = encode(&data);
+        assert_eq!(&out[..50], [b"~~".as_slice(), &full].concat(), "{tail:?}");
+        assert_eq!(&out[50..], want, "{tail:?}");
+        assert_eq!(decode(&out, Profile::U).unwrap().bytes, data);
+    }
 }

@@ -8,7 +8,7 @@
 pub const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// The 65th character. Not in the alphabet, no value (§3). Doubled it opens a
-/// raw block, alone it opens a mask block (§4).
+/// raw block; followed by an alphabet character it is reserved (§17).
 pub const TILDE: u8 = b'~';
 
 /// Which alphabet variant a character belongs to, as bits, so that Rule A
@@ -244,78 +244,4 @@ mod tests {
         assert!(!Profile::T.allows(0x1F));
         assert!(!Profile::T.allows(0x7F));
     }
-}
-
-/// Tables over one byte of mask, for splitting and joining eight bytes at a
-/// time without a branch or a carried cursor (§6, and the implementation
-/// notes in `encode.rs` and `decode.rs`).
-///
-/// All four are functions of the eight bits alone, so they are computed at
-/// compile time and hold for any block size that is a multiple of eight.
-pub mod groups {
-    /// Number of set bits.
-    pub static POP: [u8; 256] = {
-        let mut t = [0u8; 256];
-        let mut b = 0;
-        while b < 256 {
-            t[b] = (b as u8).count_ones() as u8;
-            b += 1;
-        }
-        t
-    };
-
-    /// For each `t`, the number of set bits strictly below position `t`.
-    pub static RANK: [[u8; 8]; 256] = {
-        let mut t = [[0u8; 8]; 256];
-        let mut b = 0;
-        while b < 256 {
-            let mut k = 0;
-            let mut seen = 0u8;
-            while k < 8 {
-                t[b][k] = seen;
-                seen += (b >> k & 1) as u8;
-                k += 1;
-            }
-            b += 1;
-        }
-        t
-    };
-
-    /// Positions of the set bits, in order, padded with 0.
-    pub static SET_IDX: [[u8; 8]; 256] = {
-        let mut t = [[0u8; 8]; 256];
-        let mut b = 0;
-        while b < 256 {
-            let mut k = 0;
-            let mut n = 0;
-            while k < 8 {
-                if b >> k & 1 == 1 {
-                    t[b][n] = k as u8;
-                    n += 1;
-                }
-                k += 1;
-            }
-            b += 1;
-        }
-        t
-    };
-
-    /// Positions of the clear bits, in order, padded with 0.
-    pub static CLEAR_IDX: [[u8; 8]; 256] = {
-        let mut t = [[0u8; 8]; 256];
-        let mut b = 0;
-        while b < 256 {
-            let mut k = 0;
-            let mut n = 0;
-            while k < 8 {
-                if b >> k & 1 == 0 {
-                    t[b][n] = k as u8;
-                    n += 1;
-                }
-                k += 1;
-            }
-            b += 1;
-        }
-        t
-    };
 }

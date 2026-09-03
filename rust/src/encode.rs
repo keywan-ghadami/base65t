@@ -2,54 +2,35 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The encoder (§9): fixed blocks, three forms, no state.
+//! The encoder (§9): fixed blocks, two forms, no state.
 //!
-//! The input is cut into blocks of [`BLOCK_BYTES`]. Each block is written in
-//! whichever of three forms is shortest, and nothing about one block depends
-//! on any other:
+//! The input is cut into blocks of [`BLOCK_BYTES`]. A block whose every byte
+//! the profile admits is written raw, after `~~`; any other block is written
+//! as base64. That is the whole encoder, and it is one comparison per block
+//! over a mask the profile computes sixty-four bytes at a time.
 //!
-//! * **base64** -- exactly `4k/3` alphabet characters. Blocks of this form tile
-//!   seamlessly, which is why a plain base64 stream is also a valid stream.
-//! * **raw** -- `~~` and the `k` bytes as they are. Only when the profile
-//!   admits every byte.
-//! * **mask** -- `~`, then [`MASK_CHARS`] characters holding one bit per byte,
-//!   then the admitted bytes in order, then base64 of the rest in order.
-//!
-//! There is no search in here. Where earlier versions of this format found
-//! runs and priced them against each other, this asks one question of every
-//! block -- how many of its bytes may stand as they are -- and the answer is
-//! a popcount over a mask the profile already computes sixty-four bytes at a
-//! time. That is the whole of the encoder, and it runs at base64's speed
-//! because it does base64's amount of work.
+//! There was a third form for a day -- a mask block that kept the admitted
+//! bytes of a mixed block in the clear -- and it is in `docs/history/`. It
+//! cost three times base64's time on the blocks it applied to, for
+//! readability of text the format is not really for, and the format's whole
+//! case is that it costs nothing to choose. `~` followed by an alphabet
+//! character is reserved so a later version can bring it back without an
+//! old decoder reading it wrongly.
 
 use crate::alphabet::{Profile, ALPHABET, TILDE};
 
 /// Input bytes per block (§4).
 ///
-/// Forty-eight and not some other number, for three reasons that have to
-/// hold at once. It is a multiple of three, so a base64 block is a whole
-/// number of quanta and blocks tile without a seam. It is a multiple of six,
-/// so the mask is a whole number of characters. And it is large enough that
-/// the two characters a raw block spends on its marker are four per cent of
-/// it rather than a third: the same block at six bytes would gain nothing at
-/// all (§9.1).
+/// Forty-eight and not some other number: a multiple of three, so a base64
+/// block is a whole number of quanta and blocks tile without a seam; and
+/// large enough that the two characters a raw block spends on its marker are
+/// four per cent of it rather than a third -- the same block at six bytes
+/// would gain nothing at all (§9.1). A multiple of six as well, which the
+/// reserved mask form of §17 would need.
 pub const BLOCK_BYTES: usize = 48;
-
-/// Characters a mask occupies: one bit per byte, six bits per character.
-pub const MASK_CHARS: usize = BLOCK_BYTES / 6;
 
 /// Characters a full base64 block occupies.
 pub const BASE64_BLOCK_CHARS: usize = BLOCK_BYTES / 3 * 4;
-
-/// Set bits in a 48-bit mask, through the group table: `count_ones` is a
-/// dozen instructions without the hardware feature, and this is six loads.
-#[inline]
-pub(crate) fn popcount48(mask: u64) -> usize {
-    use crate::alphabet::groups::POP;
-    (0..6)
-        .map(|g| POP[(mask >> (8 * g)) as usize & 255] as usize)
-        .sum()
-}
 
 /// Base64 length of `n` bytes, unpadded.
 #[inline]
@@ -57,35 +38,28 @@ pub(crate) fn base64_len(n: usize) -> usize {
     (4 * n).div_ceil(3)
 }
 
-/// The three forms a block can take (§4).
+/// The two forms a block can take (§4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Form {
     Base64,
     Raw,
-    Mask,
 }
 
 /// Which form a block of `m` bytes takes, given which of them the profile
 /// admits, and how many characters it costs (§9.0).
 ///
-/// The shortest wins. On a tie the form with more bytes in the clear wins,
-/// which is the only preference the format has beyond length: a tie costs
-/// nothing, and readability is what the format is for.
-///
-/// Both the length and the tie-break are functions of `m` and the mask
-/// alone, so two encoders agree.
+/// Raw where every byte is admitted and raw is no longer than base64, which
+/// is every length from four up; base64 otherwise. On the tie at four, five
+/// and six bytes raw wins, because a tie costs nothing and text in the clear
+/// is what the format is for.
 pub fn choose(m: usize, mask: u64) -> (Form, usize) {
     debug_assert!(m <= BLOCK_BYTES);
-    let admitted = popcount48(mask);
-    let mut best = (Form::Base64, base64_len(m));
-    let masked = 1 + MASK_CHARS + admitted + base64_len(m - admitted);
-    if masked <= best.1 {
-        best = (Form::Mask, masked);
+    let all = if m == 64 { u64::MAX } else { (1u64 << m) - 1 };
+    if mask == all && m + 2 <= base64_len(m) {
+        (Form::Raw, m + 2)
+    } else {
+        (Form::Base64, base64_len(m))
     }
-    if admitted == m && m + 2 <= best.1 {
-        best = (Form::Raw, m + 2);
-    }
-    best
 }
 
 /// Encode `data` in `profile`, appending to `out`.
@@ -113,85 +87,14 @@ pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
             emit_base64(&data[pending.clone()], out);
             pending = 0..0;
         }
-        match form {
-            Form::Raw => {
-                out.push(TILDE);
-                out.push(TILDE);
-                out.extend_from_slice(block);
-            }
-            Form::Mask => emit_mask_block(block, mask, out),
-            Form::Base64 => unreachable!(),
-        }
+        out.push(TILDE);
+        out.push(TILDE);
+        out.extend_from_slice(block);
     }
     if !pending.is_empty() {
         emit_base64(&data[pending], out);
     }
 }
-
-/// The mask form: marker, mask, admitted bytes, base64 of the rest (§6).
-///
-/// The split into admitted and rejected bytes works on eight bytes at a time
-/// through the tables in [`crate::alphabet::groups`]: the mask byte of a
-/// group names, for each of its eight output slots, which input byte lands
-/// there, so the group is eight independent loads and stores and the only
-/// thing carried from group to group is a cursor. A byte-at-a-time loop was
-/// three times slower, and not for any reason a compiler could see.
-fn emit_mask_block(block: &[u8], mask: u64, out: &mut Vec<u8>) {
-    use crate::alphabet::groups::{CLEAR_IDX, POP, SET_IDX};
-    out.push(TILDE);
-    emit_mask(mask, out);
-    // Zero-padded to a full block so the last group reads in bounds; the
-    // padding has mask bit 0 and sorts after every real rejected byte.
-    let mut full = [0u8; BLOCK_BYTES];
-    full[..block.len()].copy_from_slice(block);
-    let mut clear = [0u8; BLOCK_BYTES + 8];
-    let mut rest = [0u8; BLOCK_BYTES + 8];
-    let (mut c, mut r) = (0usize, 0usize);
-    let (groups, _) = full.as_chunks::<8>();
-    for (g, grp) in groups.iter().enumerate() {
-        let b = (mask >> (8 * g)) as usize & 255;
-        let (set, unset) = (&SET_IDX[b], &CLEAR_IDX[b]);
-        for t in 0..8 {
-            clear[c + t] = grp[set[t] as usize];
-            rest[r + t] = grp[unset[t] as usize];
-        }
-        c += POP[b] as usize;
-        r += 8 - POP[b] as usize;
-    }
-    out.extend_from_slice(&clear[..c]);
-    emit_base64(&rest[..block.len() - c], out);
-}
-
-/// The mask as [`MASK_CHARS`] characters (§6.1).
-///
-/// Character `j` carries bytes `6j` to `6j + 5`, first byte in the top bit,
-/// so that the mask reads left to right like the bytes it describes.
-pub(crate) fn emit_mask(mask: u64, out: &mut Vec<u8>) {
-    let mut chars = [0u8; MASK_CHARS];
-    for (j, ch) in chars.iter_mut().enumerate() {
-        let six = (mask >> (6 * j)) as usize & 63;
-        *ch = ALPHABET[REVERSE6[six] as usize];
-    }
-    out.extend_from_slice(&chars);
-}
-
-/// Six bits reversed: bit 0 of the mask is the first byte and goes to the
-/// top of its character. The decoder reads the mask through the same table.
-pub(crate) static REVERSE6: [u8; 64] = {
-    let mut t = [0u8; 64];
-    let mut v = 0;
-    while v < 64 {
-        let mut r = 0;
-        let mut b = 0;
-        while b < 6 {
-            r |= ((v >> b) & 1) << (5 - b);
-            b += 1;
-        }
-        t[v] = r as u8;
-        v += 1;
-    }
-    t
-};
 
 /// Base64URL of `bytes`, unpadded (§5.1).
 pub(crate) fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
@@ -225,77 +128,51 @@ pub(crate) fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {
 mod tests {
     use super::*;
 
-    /// §9.1's table: what each form costs on a full block, by how many bytes
-    /// are admitted. The mask form pays for itself from 27 bytes up, the raw
-    /// form always.
+    /// §9.1: a full block is raw at 50 when every byte is admitted, and base64
+    /// at 64 the moment one is not.
     #[test]
-    fn the_cost_table_of_section_9_1() {
-        assert_eq!(choose(48, 0), (Form::Base64, 64));
-        assert_eq!(choose(48, u64::MAX >> 16), (Form::Raw, 50));
-        for admitted in 1..48u32 {
-            let mask = (1u64 << admitted) - 1;
-            let (form, len) = choose(48, mask);
-            let masked = 9 + admitted as usize + base64_len(48 - admitted as usize);
-            assert!(len <= 64, "{admitted}: {len}");
-            if admitted >= 27 {
-                assert_eq!((form, len), (Form::Mask, masked), "{admitted}");
-            } else {
-                assert_eq!(form, Form::Base64, "{admitted}");
-            }
+    fn a_full_block_is_all_or_nothing() {
+        assert_eq!(choose(48, (1u64 << 48) - 1), (Form::Raw, 50));
+        for missing in 0..48 {
+            let mask = ((1u64 << 48) - 1) & !(1 << missing);
+            assert_eq!(choose(48, mask), (Form::Base64, 64), "byte {missing}");
         }
-        // 27 is a tie, and the tie goes to the clear text.
-        assert_eq!(choose(48, (1 << 27) - 1), (Form::Mask, 64));
+        assert_eq!(choose(48, 0), (Form::Base64, 64));
     }
 
-    /// Short tails: raw needs four bytes to pay for its two marker
-    /// characters, and at exactly four, five and six it ties with base64 and
-    /// takes the tie.
+    /// Short tails: raw needs four bytes to pay for its two marker characters,
+    /// and at four, five and six it ties with base64 and takes the tie.
     #[test]
     fn short_tails() {
         for m in 1..=3 {
-            assert_eq!(choose(m, (1 << m) - 1).0, Form::Base64, "{m}");
+            assert_eq!(
+                choose(m, (1 << m) - 1),
+                (Form::Base64, base64_len(m)),
+                "{m}"
+            );
         }
         for m in 4..=48 {
             assert_eq!(choose(m, (1 << m) - 1), (Form::Raw, m + 2), "{m}");
         }
     }
 
-    /// The mask is written first byte in the top bit, and reads back the
-    /// same way.
+    /// What the encoder writes is what `choose` names, block by block.
     #[test]
-    fn mask_characters_read_left_to_right() {
-        let mut out = Vec::new();
-        emit_mask(1, &mut out); // byte 0 admitted
-        assert_eq!(&out, b"gAAAAAAA"); // 100000 = 32 = 'g'
-        out.clear();
-        emit_mask(1 << 5, &mut out); // byte 5 admitted
-        assert_eq!(&out, b"BAAAAAAA");
-        out.clear();
-        emit_mask(1 << 47, &mut out);
-        assert_eq!(&out, b"AAAAAAAB");
-    }
-
-    /// Every full block is at most 64 characters and every form the encoder
-    /// writes is the one `choose` names -- over every mask, which is not
-    /// feasible, so over every popcount at every position pattern a shift
-    /// gives, which is the part `choose` actually reads.
-    #[test]
-    fn never_longer_than_base64_by_block() {
-        for admitted in 0..=48 {
-            for shift in 0..=(48 - admitted) {
-                let mask = if admitted == 0 {
-                    0
-                } else {
-                    ((1u64 << admitted) - 1) << shift
-                };
-                let (_, len) = choose(48, mask);
-                assert!(len <= 64);
-                let block: Vec<u8> = (0..48)
-                    .map(|i| if mask >> i & 1 == 1 { b'a' } else { b' ' })
-                    .collect();
+    fn the_encoder_follows_choose() {
+        for n in 1..=100usize {
+            for bad_at in [None, Some(0), Some(n / 2), Some(n - 1)] {
+                let mut data = vec![b'a'; n];
+                if let Some(i) = bad_at {
+                    data[i] = b' ';
+                }
                 let mut out = Vec::new();
-                encode_into(&block, Profile::U, &mut out);
-                assert_eq!(out.len(), len, "admitted {admitted} at {shift}");
+                encode_into(&data, Profile::U, &mut out);
+                let want: usize = data
+                    .chunks(BLOCK_BYTES)
+                    .map(|b| choose(b.len(), Profile::U.mask_short(b)).1)
+                    .sum();
+                assert_eq!(out.len(), want, "n = {n}, bad at {bad_at:?}");
+                assert!(out.len() <= base64_len(n));
             }
         }
     }
