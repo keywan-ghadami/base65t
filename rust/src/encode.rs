@@ -81,40 +81,64 @@ pub fn choose(m: usize, mask: u64) -> (Form, usize) {
 /// Encode `data` in `profile`, appending to `out`.
 pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
     out.reserve(base64_len(data.len()));
-    for block in data.chunks(BLOCK_BYTES) {
+    // Consecutive base64 blocks are written as one run. They tile (§4), so
+    // the bytes are the same either way; what changes is that binary input
+    // goes through the base64 writer's inner loop once rather than once per
+    // forty-eight bytes, which is the difference between base64's speed and
+    // three quarters of it.
+    let mut pending = 0..0;
+    for (k, block) in data.chunks(BLOCK_BYTES).enumerate() {
+        let start = k * BLOCK_BYTES;
         let mask = profile.mask_short(block);
-        match choose(block.len(), mask).0 {
-            Form::Base64 => emit_base64(block, out),
+        let form = choose(block.len(), mask).0;
+        if form == Form::Base64 {
+            if pending.end == start {
+                pending.end = start + block.len();
+            } else {
+                pending = start..start + block.len();
+            }
+            continue;
+        }
+        if !pending.is_empty() {
+            emit_base64(&data[pending.clone()], out);
+            pending = 0..0;
+        }
+        match form {
             Form::Raw => {
                 out.push(TILDE);
                 out.push(TILDE);
                 out.extend_from_slice(block);
             }
             Form::Mask => emit_mask_block(block, mask, out),
+            Form::Base64 => unreachable!(),
         }
+    }
+    if !pending.is_empty() {
+        emit_base64(&data[pending], out);
     }
 }
 
 /// The mask form: marker, mask, admitted bytes, base64 of the rest (§6).
+///
+/// The split into admitted and rejected bytes does not branch on the data.
+/// Every byte is written to both buffers and only the cursor of the right one
+/// moves -- a mispredicted branch per byte was most of what this cost on
+/// mixed text, and there is nothing for a predictor to learn from a mask.
 fn emit_mask_block(block: &[u8], mask: u64, out: &mut Vec<u8>) {
     out.push(TILDE);
     emit_mask(mask, out);
-    for (i, &b) in block.iter().enumerate() {
-        if mask >> i & 1 == 1 {
-            out.push(b);
-        }
-    }
-    // The bytes the profile rejects, in order, through a small buffer so the
-    // base64 writer sees them as one run.
+    let mut clear = [0u8; BLOCK_BYTES];
     let mut rest = [0u8; BLOCK_BYTES];
-    let mut n = 0;
+    let (mut c, mut r) = (0usize, 0usize);
     for (i, &b) in block.iter().enumerate() {
-        if mask >> i & 1 == 0 {
-            rest[n] = b;
-            n += 1;
-        }
+        let bit = (mask >> i & 1) as usize;
+        clear[c] = b;
+        rest[r] = b;
+        c += bit;
+        r += 1 - bit;
     }
-    emit_base64(&rest[..n], out);
+    out.extend_from_slice(&clear[..c]);
+    emit_base64(&rest[..r], out);
 }
 
 /// The mask as [`MASK_CHARS`] characters (§6.1).
@@ -122,14 +146,31 @@ fn emit_mask_block(block: &[u8], mask: u64, out: &mut Vec<u8>) {
 /// Character `j` carries bytes `6j` to `6j + 5`, first byte in the top bit,
 /// so that the mask reads left to right like the bytes it describes.
 pub(crate) fn emit_mask(mask: u64, out: &mut Vec<u8>) {
-    for j in 0..MASK_CHARS {
-        let mut v = 0usize;
-        for t in 0..6 {
-            v = v << 1 | (mask >> (6 * j + t) & 1) as usize;
-        }
-        out.push(ALPHABET[v]);
+    let mut chars = [0u8; MASK_CHARS];
+    for (j, ch) in chars.iter_mut().enumerate() {
+        let six = (mask >> (6 * j)) as usize & 63;
+        *ch = ALPHABET[REVERSE6[six] as usize];
     }
+    out.extend_from_slice(&chars);
 }
+
+/// Six bits reversed: bit 0 of the mask is the first byte and goes to the
+/// top of its character.
+static REVERSE6: [u8; 64] = {
+    let mut t = [0u8; 64];
+    let mut v = 0;
+    while v < 64 {
+        let mut r = 0;
+        let mut b = 0;
+        while b < 6 {
+            r |= ((v >> b) & 1) << (5 - b);
+            b += 1;
+        }
+        t[v] = r as u8;
+        v += 1;
+    }
+    t
+};
 
 /// Base64URL of `bytes`, unpadded (§5.1).
 pub(crate) fn emit_base64(bytes: &[u8], out: &mut Vec<u8>) {

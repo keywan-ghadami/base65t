@@ -130,10 +130,17 @@ impl Decoder<'_> {
         let mut pos = 0;
         while pos < len {
             if stream[pos] != TILDE {
-                // A base64 block: sixty-four characters, or whatever is left.
-                let n = BASE64_BLOCK_CHARS.min(len - pos);
-                self.base64_run(&stream[pos..pos + n], pos + n == len)?;
-                pos += n;
+                // A run of base64 blocks: every block that starts with an
+                // alphabet character, sixty-four characters each, and the
+                // last one whatever is left. Blocks tile (§4), so the run
+                // decodes as one, and the inner loop runs once per run
+                // rather than once per block.
+                let mut end = pos;
+                while end < len && stream[end] != TILDE {
+                    end = (end + BASE64_BLOCK_CHARS).min(len);
+                }
+                self.base64_run(&stream[pos..end], end == len)?;
+                pos = end;
             } else if pos + 1 == len {
                 return Err(Error::TrailingTilde);
             } else if stream[pos + 1] == TILDE {
@@ -180,30 +187,45 @@ impl Decoder<'_> {
         let full = base64_len(BLOCK_BYTES - admitted);
         let at_end = len - pos <= full;
         let n = if at_end { len - pos } else { full };
+        // Decoded in place at the end of `out`, then lifted into a buffer on
+        // the stack: an allocation per block was a third of the decoder's
+        // time on prose.
         let base = self.out.len();
         self.base64_run(&stream[pos..pos + n], at_end)?;
-        let rest: Vec<u8> = self.out.drain(base..).collect();
+        let rest_len = self.out.len() - base;
+        if rest_len > BLOCK_BYTES {
+            self.out.truncate(base);
+            return Err(Error::Mask);
+        }
+        let mut rest = [0u8; BLOCK_BYTES + 1];
+        rest[..rest_len].copy_from_slice(&self.out[base..]);
+        self.out.truncate(base);
         pos += n;
 
         // How many bytes this block holds, and whether the mask agrees. A full
         // block is forty-eight; a tail is what the two parts add up to, and
         // then the mask may not claim a byte past it.
-        let m = admitted + rest.len();
+        let m = admitted + rest_len;
         if m > BLOCK_BYTES || (mask >> m) != 0 {
             return Err(Error::Mask);
         }
 
-        // Interleave, in the order the mask gives.
+        // Interleave in the order the mask gives, without a branch per byte:
+        // both cursors read, one advances. The buffers carry one spare byte
+        // so the read past the last real one is in bounds and unused.
+        let mut clear_buf = [0u8; BLOCK_BYTES + 1];
+        clear_buf[..admitted].copy_from_slice(clear);
+        let mut block = [0u8; BLOCK_BYTES];
         let (mut c, mut r) = (0usize, 0usize);
-        for i in 0..m {
-            if mask >> i & 1 == 1 {
-                self.out.push(clear[c]);
-                c += 1;
-            } else {
-                self.out.push(rest[r]);
-                r += 1;
-            }
+        for (i, slot) in block.iter_mut().take(m).enumerate() {
+            let bit = (mask >> i & 1) as usize;
+            let cb = clear_buf[c];
+            let rb = rest[r];
+            *slot = if bit == 1 { cb } else { rb };
+            c += bit;
+            r += 1 - bit;
         }
+        self.out.extend_from_slice(&block[..m]);
         Ok(pos)
     }
 
