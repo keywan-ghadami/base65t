@@ -20,7 +20,9 @@
 use crate::alphabet::{
     AlphabetSeen, Profile, CLASSIC_BIT, TILDE, URL_BIT, WORDS, WORD_BAD, WORD_CLASS,
 };
-use crate::encode::{base64_len, BASE64_BLOCK_CHARS, BLOCK_BYTES, MASK_CHARS};
+use crate::encode::{
+    base64_len, popcount48, BASE64_BLOCK_CHARS, BLOCK_BYTES, MASK_CHARS, REVERSE6,
+};
 use crate::{Decoded, Error, Meta};
 
 /// §10.2. The profile is the only parameter.
@@ -116,8 +118,18 @@ impl Decoder<'_> {
     }
 
     /// §7: every byte of a raw payload must be one the profile admits.
+    ///
+    /// Through the same mask the encoder builds, so it does not branch on
+    /// the data: forty-eight lookups and one compare.
+    #[inline]
     fn check_profile(&self, bytes: &[u8]) -> Result<(), Error> {
-        if bytes.iter().all(|&b| self.profile.allows(b)) {
+        debug_assert!(bytes.len() <= 64);
+        let want = if bytes.len() == 64 {
+            u64::MAX
+        } else {
+            (1u64 << bytes.len()) - 1
+        };
+        if self.profile.mask_short(bytes) == want {
             Ok(())
         } else {
             Err(Error::Profile)
@@ -167,14 +179,13 @@ impl Decoder<'_> {
         }
         let mut mask: u64 = 0;
         for j in 0..MASK_CHARS {
-            let v = self.read_alphabet(stream[pos + j])? as u64;
-            // Character j carries bytes 6j..6j+5, first byte in the top bit.
-            for t in 0..6 {
-                mask |= (v >> (5 - t) & 1) << (6 * j + t);
-            }
+            let v = self.read_alphabet(stream[pos + j])? as usize;
+            // Character j carries bytes 6j..6j+5, first byte in the top bit:
+            // the six bits reversed, through the encoder's own table.
+            mask |= (REVERSE6[v] as u64) << (6 * j);
         }
         pos += MASK_CHARS;
-        let admitted = mask.count_ones() as usize;
+        let admitted = popcount48(mask);
         if pos + admitted > len {
             return Err(Error::Truncated);
         }
@@ -197,7 +208,7 @@ impl Decoder<'_> {
             self.out.truncate(base);
             return Err(Error::Mask);
         }
-        let mut rest = [0u8; BLOCK_BYTES + 1];
+        let mut rest = [0u8; BLOCK_BYTES + 8];
         rest[..rest_len].copy_from_slice(&self.out[base..]);
         self.out.truncate(base);
         pos += n;
@@ -210,20 +221,27 @@ impl Decoder<'_> {
             return Err(Error::Mask);
         }
 
-        // Interleave in the order the mask gives, without a branch per byte:
-        // both cursors read, one advances. The buffers carry one spare byte
-        // so the read past the last real one is in bounds and unused.
-        let mut clear_buf = [0u8; BLOCK_BYTES + 1];
+        // Interleave in the order the mask gives, eight bytes at a time
+        // through the group tables: within a group, byte `t` comes from the
+        // clear part at the rank of its bit among the set bits below it, or
+        // from the base64 part at `t` minus that rank. Eight independent
+        // loads per group, a cursor per group, and no branch on the data.
+        use crate::alphabet::groups::{POP, RANK};
+        let mut clear_buf = [0u8; BLOCK_BYTES + 8];
         clear_buf[..admitted].copy_from_slice(clear);
         let mut block = [0u8; BLOCK_BYTES];
         let (mut c, mut r) = (0usize, 0usize);
-        for (i, slot) in block.iter_mut().take(m).enumerate() {
-            let bit = (mask >> i & 1) as usize;
-            let cb = clear_buf[c];
-            let rb = rest[r];
-            *slot = if bit == 1 { cb } else { rb };
-            c += bit;
-            r += 1 - bit;
+        let (out_groups, _) = block.as_chunks_mut::<8>();
+        for (g, slot) in out_groups.iter_mut().enumerate() {
+            let b = (mask >> (8 * g)) as usize & 255;
+            let rank = &RANK[b];
+            for t in 0..8 {
+                let take = 0u8.wrapping_sub((b >> t & 1) as u8);
+                let k = rank[t] as usize;
+                slot[t] = (clear_buf[c + k] & take) | (rest[r + t - k] & !take);
+            }
+            c += POP[b] as usize;
+            r += 8 - POP[b] as usize;
         }
         self.out.extend_from_slice(&block[..m]);
         Ok(pos)

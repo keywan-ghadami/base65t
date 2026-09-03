@@ -41,6 +41,16 @@ pub const MASK_CHARS: usize = BLOCK_BYTES / 6;
 /// Characters a full base64 block occupies.
 pub const BASE64_BLOCK_CHARS: usize = BLOCK_BYTES / 3 * 4;
 
+/// Set bits in a 48-bit mask, through the group table: `count_ones` is a
+/// dozen instructions without the hardware feature, and this is six loads.
+#[inline]
+pub(crate) fn popcount48(mask: u64) -> usize {
+    use crate::alphabet::groups::POP;
+    (0..6)
+        .map(|g| POP[(mask >> (8 * g)) as usize & 255] as usize)
+        .sum()
+}
+
 /// Base64 length of `n` bytes, unpadded.
 #[inline]
 pub(crate) fn base64_len(n: usize) -> usize {
@@ -66,7 +76,7 @@ pub enum Form {
 /// alone, so two encoders agree.
 pub fn choose(m: usize, mask: u64) -> (Form, usize) {
     debug_assert!(m <= BLOCK_BYTES);
-    let admitted = mask.count_ones() as usize;
+    let admitted = popcount48(mask);
     let mut best = (Form::Base64, base64_len(m));
     let masked = 1 + MASK_CHARS + admitted + base64_len(m - admitted);
     if masked <= best.1 {
@@ -120,25 +130,36 @@ pub fn encode_into(data: &[u8], profile: Profile, out: &mut Vec<u8>) {
 
 /// The mask form: marker, mask, admitted bytes, base64 of the rest (§6).
 ///
-/// The split into admitted and rejected bytes does not branch on the data.
-/// Every byte is written to both buffers and only the cursor of the right one
-/// moves -- a mispredicted branch per byte was most of what this cost on
-/// mixed text, and there is nothing for a predictor to learn from a mask.
+/// The split into admitted and rejected bytes works on eight bytes at a time
+/// through the tables in [`crate::alphabet::groups`]: the mask byte of a
+/// group names, for each of its eight output slots, which input byte lands
+/// there, so the group is eight independent loads and stores and the only
+/// thing carried from group to group is a cursor. A byte-at-a-time loop was
+/// three times slower, and not for any reason a compiler could see.
 fn emit_mask_block(block: &[u8], mask: u64, out: &mut Vec<u8>) {
+    use crate::alphabet::groups::{CLEAR_IDX, POP, SET_IDX};
     out.push(TILDE);
     emit_mask(mask, out);
-    let mut clear = [0u8; BLOCK_BYTES];
-    let mut rest = [0u8; BLOCK_BYTES];
+    // Zero-padded to a full block so the last group reads in bounds; the
+    // padding has mask bit 0 and sorts after every real rejected byte.
+    let mut full = [0u8; BLOCK_BYTES];
+    full[..block.len()].copy_from_slice(block);
+    let mut clear = [0u8; BLOCK_BYTES + 8];
+    let mut rest = [0u8; BLOCK_BYTES + 8];
     let (mut c, mut r) = (0usize, 0usize);
-    for (i, &b) in block.iter().enumerate() {
-        let bit = (mask >> i & 1) as usize;
-        clear[c] = b;
-        rest[r] = b;
-        c += bit;
-        r += 1 - bit;
+    let (groups, _) = full.as_chunks::<8>();
+    for (g, grp) in groups.iter().enumerate() {
+        let b = (mask >> (8 * g)) as usize & 255;
+        let (set, unset) = (&SET_IDX[b], &CLEAR_IDX[b]);
+        for t in 0..8 {
+            clear[c + t] = grp[set[t] as usize];
+            rest[r + t] = grp[unset[t] as usize];
+        }
+        c += POP[b] as usize;
+        r += 8 - POP[b] as usize;
     }
     out.extend_from_slice(&clear[..c]);
-    emit_base64(&rest[..r], out);
+    emit_base64(&rest[..block.len() - c], out);
 }
 
 /// The mask as [`MASK_CHARS`] characters (§6.1).
@@ -155,8 +176,8 @@ pub(crate) fn emit_mask(mask: u64, out: &mut Vec<u8>) {
 }
 
 /// Six bits reversed: bit 0 of the mask is the first byte and goes to the
-/// top of its character.
-static REVERSE6: [u8; 64] = {
+/// top of its character. The decoder reads the mask through the same table.
+pub(crate) static REVERSE6: [u8; 64] = {
     let mut t = [0u8; 64];
     let mut v = 0;
     while v < 64 {
