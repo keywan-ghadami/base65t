@@ -27,6 +27,15 @@ is stable is the contract: bytes in, printable ASCII out, never longer and
 never meaningfully slower than base64, and any base64 stream reads back.
 `docs/history/` has the earlier versions and what a day of measuring taught.
 
+> **Reading the percentages.** Two ratios appear below and they point in
+> opposite directions, so every number says which it is. **Size** is
+> `len(base65t) / len(base64)` — less is better, 100 % means the same length,
+> and more than 100 % is impossible by construction. **Time** is
+> `t(base65t) / t(base64)` — less is better, 100 % means the same speed. Time
+> is always against this crate's own `encode_base64url` and its decoder on a
+> pure base64 stream: the same loop shape, allocator and compiler, so the
+> ratio is the format rather than a handicap.
+
 ## One encoder, no options, no state
 
 ```rust
@@ -77,7 +86,7 @@ to average it away.
 **What wins** — values that are entirely text, which is what the format is
 for:
 
-| sample | bytes | vs base64 |
+| sample | bytes | size |
 |---|--:|--:|
 | a git commit id | 40 | **77.8 %** |
 | a session id, 40 alphanumerics | 40 | **77.8 %** |
@@ -88,7 +97,7 @@ for:
 **What does not** — anything with a byte the profile rejects in every 48-byte
 block, which is every large document and everything binary:
 
-| sample | profile | vs base64 |
+| sample | profile | size |
 |---|---|--:|
 | English prose (Silesia `dickens`) | U | 100.0 % |
 | `xml` | U | 100.0 % |
@@ -133,7 +142,7 @@ reason is the work: base64 reads a byte, looks up four characters and writes
 four, per three bytes; a raw block reads 48 bytes, checks them against a table
 and copies them.
 
-| sample | bytes | form | size | encode | decode |
+| sample | bytes | form | size | encode time | decode time |
 |---|--:|---|--:|--:|--:|
 | UUID v4 | 36 | raw | 79 % | **52 %** | **82 %** |
 | session id, 40 alnum | 40 | raw | 78 % | **54 %** | **68 %** |
@@ -149,7 +158,7 @@ and the same allocator, so the ratio is the format and not a handicap. Median
 of paired ratios over fifteen rounds, because a shared runner drifts more than
 the effect being measured:
 
-| file | profile | size | encode | decode |
+| file | profile | size | encode time | decode time |
 |---|---|--:|--:|--:|
 | `dickens` (prose) | U | 100.0 % | 118 % | **101 %** |
 | `xml` | U | 100.0 % | 121 % | **99 %** |
@@ -162,18 +171,33 @@ check that asks whether a block is all text. It exits at the first byte that
 settles the question, so on binary it costs a sixth of base64's time and on a
 block whose only rejecting byte is the last it costs half:
 
-| block content | check alone | encode |
+| block content | check alone, time | encode time |
 |---|--:|--:|
-| all admitted (raw) | 46 % | **50 %** |
-| binary | 16 % | 118 % |
-| text, rejecting byte first | 15 % | 119 % |
-| text, rejecting byte last | 45 % | 145 % |
+| all admitted (raw) | 32 % | **50 %** |
+| binary | 16 % | 116 % |
+| text, rejecting byte last | 33 % | 138 % |
 
-That is a floor and not sloppiness: the encoder has to look at every byte to
-answer, and it looks once. What would remove it is looking at 32 bytes per
-instruction instead of one, and that needs `unsafe` or a standard library
-that is not stable yet — the crate has neither. Decoding never pays it at
-all, because the form is in the first character.
+**The check already vectorises**, on stable Rust with no `unsafe`: the
+per-byte test is arithmetic rather than a table lookup, because a gather does
+not vectorise and six compares do, and 112 of the 171 instructions the
+compiler emits for it work on vector registers. That is 16 bytes per
+operation on the baseline `x86-64` target, which assumes only SSE2.
+
+**Build with `-C target-cpu=native` and the overhead roughly halves** — no
+code change, not a byte of output different:
+
+| block content | check alone, time | encode time |
+|---|--:|--:|
+| all admitted (raw) | 19 % | **37 %** |
+| binary | 8 % | 113 % |
+| text, rejecting byte last | 19 % | 124 % |
+
+What is left after that is a floor: the encoder has to read every byte to
+answer the question, and it reads it once. Getting the same width *without*
+a build flag would mean runtime dispatch, and both routes are shut today —
+`#[target_feature]` needs `unsafe`, which the crate forbids, and `std::simd`
+is not stable (checked on rustc 1.94.1, rust-lang/rust#86656). Decoding
+never pays any of this, because the form is in the first character.
 
 For comparison on `dickens`: the segment format this replaced encoded at
 1137 %, the mask version at 169 %, this at 104 %.
@@ -232,6 +256,9 @@ cd rust
 cargo test --release
 cargo clippy --all-targets --release -- -D warnings
 cargo run --release --example timing -- <file>...
+
+# what the check costs on a wider vector unit -- no code change, same bytes
+RUSTFLAGS="-C target-cpu=native" cargo run --release --example timing -- <file>...
 ```
 
 `timing` is the throughput instrument: the encoding and base64url, encode and

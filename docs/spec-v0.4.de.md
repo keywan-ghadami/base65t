@@ -18,6 +18,21 @@ alle zulässt, steht roh da, jeder andere ist Base64.
 > SOLLTE nach RFC 2119. Zahlen, die nicht als *exakt* markiert sind, sind Messungen
 > auf dem in §16.5 genannten Korpus.
 
+> **Wie die Prozentzahlen zu lesen sind.** Dieses Dokument nennt zwei
+> Verhältnisse, und sie zeigen in **entgegengesetzte Richtungen**. Deshalb
+> steht bei jeder Zahl, welches gemeint ist, und keine steht ohne diese
+> Angabe:
+>
+> * **Größe** = `len(base65t) / len(base64)`. Weniger ist besser; 100 %
+>   heißt gleich groß, und mehr als 100 % ist nach §9.4 unmöglich.
+> * **Zeit** = `t(base65t) / t(base64)`. Weniger ist besser; 100 % heißt
+>   gleich schnell, mehr als 100 % heißt langsamer.
+>
+> Wo Zeit gemessen wird, ist die Vergleichsgröße `encode_base64url` bzw.
+> `decode` derselben Implementierung auf einem reinen Base64-Strom: dieselbe
+> Schleifenform, derselbe Allokator, derselbe Compiler. Ein Vergleich gegen
+> eine fremde Base64 würde Handarbeit mitmessen und nicht das Format.
+
 ## Änderungen gegenüber der Segmentfassung
 
 Die Abschnittsnummern sind beibehalten, wo der Gegenstand derselbe ist, damit
@@ -563,6 +578,8 @@ Bedingung, die entscheidet.
 
 **Exakt**, aus §9.1:
 
+Zeichen je Eingabebyte; weniger ist besser.
+
 | Eingabe | Base64 | **Base65t** |
 |---------|--------|-------------|
 | Ein Block mit einem profilwidrigen Byte | 1,333 | **1,333** — dieselben Bytes |
@@ -615,35 +632,53 @@ Frage je Block: lässt das Profil **jedes** Byte zu?
 
 Diese Frage ist genau die, die gestellt werden muss — nicht mehr. Eine
 frühere Fassung baute je Block ein Bit je Byte und verglich mit
-Alles-Einsen; das beantwortet dieselbe Frage und kostet sechsmal so viel,
+Alles-Einsen; das beantwortet dieselbe Frage und kostet mehrfach so viel,
 weil es jedes Byte ansehen muss, auch wenn das erste die Sache schon
-entscheidet. Die Prüfung heute bricht ab, sobald ein Byte sie entscheidet,
-und ihr Test je Byte ist Arithmetik statt Tabellenzugriff — ein Gather
-vektorisiert nicht, sechs Vergleiche schon.
+entscheidet. Die Prüfung heute bricht ab, sobald ein Byte sie entscheidet.
 
-**Gemessen**, jeweils gegen `encode_base64url` derselben Implementierung,
-also gegen dieselbe Schleifenform und denselben Allokator (Median gepaarter
-Quotienten über fünfzehn Runden, weil die Streuung eines geteilten Runners
-größer ist als der Effekt):
+**Und sie vektorisiert, ohne `unsafe` und ohne Nightly.** Der Test je Byte
+ist Arithmetik statt Tabellenzugriff — ein Gather vektorisiert nicht, sechs
+Vergleiche schon —, und die Schleife über eine Gruppe ist ein
+verzweigungsfreies `or` von Ablehnungen. Nachgesehen im erzeugten Code der
+Referenzimplementierung: 112 von 171 Instruktionen der Prüffunktion arbeiten
+auf Vektorregistern, also 16 Bytes je Operation auf dem Basis-Ziel `x86-64`,
+das nur SSE2 voraussetzt. Das ist keine Absicht des Autors, sondern eine
+Eigenschaft der Formulierung, und sie ist überprüfbar:
+`cargo rustc --release -- --emit=asm`.
 
-| Eingabe je 48-Byte-Block | nur die Prüfung | Kodieren gesamt |
+**Gemessen**, Zeit gegen `encode_base64url` derselben Implementierung, Median
+gepaarter Quotienten über fünfzehn Runden (weniger ist besser):
+
+| Eingabe je 48-Byte-Block | nur die Prüfung, Zeit | Kodieren gesamt, Zeit |
 |---|--:|--:|
-| ganz zulässig (Raw) | 46 % | **50 %** |
-| Binärdaten | 16 % | **118 %** |
-| Text, das abweisende Byte am Blockanfang | 15 % | **119 %** |
-| Text, das abweisende Byte am Blockende | 45 % | **145 %** |
+| ganz zulässig (Raw) | 32 % | **50 %** |
+| Binärdaten | 16 % | **116 %** |
+| Text, abweisendes Byte am Blockende | 33 % | **138 %** |
 
-Die Tabelle sagt alles über den Aufschlag. Wo die Prüfung früh abbricht,
-kostet sie ein Sechstel der Base64-Zeit; wo sie den ganzen Block lesen muss,
-knapp die Hälfte. Wo sie „ja" sagt, entfällt die Base64-Schleife und das
-Kodieren ist **doppelt so schnell wie Base64**.
+Wo die Prüfung früh abbricht, kostet sie ein Sechstel der Base64-Zeit; wo sie
+den ganzen Block lesen muss, ein Drittel. Wo sie „ja" sagt, entfällt die
+Base64-Schleife und das Kodieren braucht **halb so lange wie Base64**.
 
-**Eine Untergrenze, keine Nachlässigkeit.** Der Encoder muss jedes Byte
-ansehen, um die Frage zu beantworten; unter „einmal lesen" geht es nicht.
-Was ginge, ist dasselbe Lesen mit Vektorbefehlen — 32 Bytes je Operation
-statt eines —, und das braucht entweder `unsafe` oder eine noch nicht
-stabile Standardbibliothek. Die Referenzimplementierung verzichtet auf
-beides (§14); §17 nennt es als Kandidaten.
+**Mit einer breiteren Vektorbreite halbiert sich der Aufschlag.** Dieselben
+Messungen, gebaut mit `RUSTFLAGS="-C target-cpu=native"` auf einer Maschine
+mit AVX2 und AVX-512:
+
+| Eingabe je 48-Byte-Block | nur die Prüfung, Zeit | Kodieren gesamt, Zeit |
+|---|--:|--:|
+| ganz zulässig (Raw) | 19 % | **37 %** |
+| Binärdaten | 8 % | **113 %** |
+| Text, abweisendes Byte am Blockende | 19 % | **124 %** |
+
+Das ist ein **Bauflag und keine Codeänderung**, es ändert kein Byte der
+Ausgabe, und es braucht kein `unsafe`. Wer die Zahlen aus §13.3 verbessern
+will, dreht zuerst hier.
+
+**Was danach übrig bleibt, ist eine Untergrenze.** Der Encoder muss jedes Byte
+einmal ansehen, um die Frage zu beantworten. Ein Encoder, der nur Base64
+schreibt, muss es auch einmal ansehen — aber er tut es in derselben Schleife,
+in der er schreibt, und diese Prüfung ist ein zweiter Durchgang über
+dieselben Bytes. Ihn in den Base64-Schreiber zu falten geht nicht, weil die
+Entscheidung vor dem Schreiben fallen muss.
 
 Beim **Dekodieren** gibt es diesen Aufwand nicht: die Form steht im ersten
 Zeichen. Ein Raw-Block spart dort sogar Arbeit gegenüber Base64.
@@ -662,7 +697,9 @@ Base64. Er ist es, wenn er die falschen Bytes schreibt.
 Silesia und Korpusdateien, gegen `encode_base64url` derselben
 Implementierung, Median gepaarter Quotienten:
 
-| Datei | Profil | Größe | Kodieren | Dekodieren |
+Alle Prozentzahlen sind Verhältnisse zu Base64; weniger ist besser.
+
+| Datei | Profil | Größe | Kodieren, Zeit | Dekodieren, Zeit |
 |---|---|--:|--:|--:|
 | `dickens` | U | 100,0 % | 118 % | **101 %** |
 | `xml` | U | 100,0 % | 121 % | **99 %** |
@@ -673,10 +710,11 @@ Implementierung, Median gepaarter Quotienten:
 | `x-ray` | T | 100,0 % | 113 % | **98 %** |
 | `countries.json` | T | 100,0 % | 113 % | **100 %** |
 
-**Kodieren kostet zwischen 90 und 121 %, Dekodieren zwischen 66 und 101 %.**
+**Kodieren braucht 90 bis 121 % der Base64-Zeit, Dekodieren 66 bis 101 %.**
 Der Aufschlag beim Kodieren ist die Prüfung aus §13.1 und nichts sonst; wo
 sie oft „ja" sagt, wie bei XML in Profil T, ist der Encoder schneller als
-Base64. Dekodiert wird nie langsamer.
+Base64. Dekodiert wird nie langsamer. Mit `-C target-cpu=native` fällt der
+Aufschlag etwa um die Hälfte (§13.1).
 
 Zum Vergleich, dieselben Dateien: die Segmentfassung kostete auf `dickens`
 1137 % beim Kodieren, die Maskenfassung 169 %, diese 118 %.
@@ -686,7 +724,7 @@ Zum Vergleich, dieselben Dateien: die Segmentfassung kostete auf `dickens`
 Die 55 kurzen Proben, Profil U, Größe gegen `ceil(4n/3)`, Zeit gegen die
 Base64 des Benches (`--example short`):
 
-| Probe | Bytes | Form | Größe | Kodieren | Dekodieren |
+| Probe | Bytes | Form | Größe | Kodieren, Zeit | Dekodieren, Zeit |
 |---|--:|---|--:|--:|--:|
 | UUID v4 | 36 | roh | 79 % | **52 %** | **82 %** |
 | Session-ID, 40 alnum | 40 | roh | 78 % | **54 %** | **68 %** |
@@ -707,8 +745,8 @@ sie mit sechs Vergleichen je Byte und kopiert sie. Wer weniger schreibt,
 schreibt schneller. Die Zeilen, die 100 % Größe haben, kosten höchstens neun
 Prozent mehr Zeit, und dekodiert werden sie schneller.
 
-Zum Vergleich: die Segmentfassung lag hier bei 355 % beim Kodieren, die
-Maskenfassung bei 98 % / 123 %.
+Zum Vergleich, jeweils Zeit: die Segmentfassung lag hier bei 355 % beim
+Kodieren, die Maskenfassung bei 98 % beim Kodieren und 123 % beim Dekodieren.
 
 ### 13.5 Was lesbar bleibt
 
@@ -911,10 +949,14 @@ Ergänzende Arbeiten, nicht normativ:
    größere Blockgröße drückt die rohe Form gegen 75 % und lässt gleichzeitig
    häufiger einen ganzen Block nach Base64 kippen; wo das Optimum liegt, ist
    eine Messfrage. Wer die Zahl ändert, ändert die Versionsnummer.
-5. **Eine vektorisierte Profilprüfung.** Kein Formatthema, aber die einzige
-   Stelle, an der diese Implementierung noch etwas verschenkt: die Prüfung
-   aus §13.1 liest ein Byte je Operation, wo ein Vektorbefehl 32 läse. Sie
-   ist der ganze Aufschlag beim Kodieren. Der Weg dahin verlangt `unsafe`
-   oder eine noch nicht stabile Standardbibliothek, und beides steht §14
-   entgegen; sobald `std::simd` stabil ist, ist es eine Änderung von wenigen
-   Zeilen, die kein Byte der Ausgabe bewegt.
+5. **Vektorbreite zur Laufzeit wählen.** Kein Formatthema und keine Lücke im
+   Code: die Prüfung aus §13.1 vektorisiert bereits, auf dem Basis-Ziel
+   `x86-64` mit 16 Bytes je Operation. Wer mit `-C target-cpu=native` baut,
+   bekommt 32 oder 64 und halbiert den Aufschlag beim Kodieren — heute, ohne
+   `unsafe` und ohne Codeänderung. Was fehlt, ist dasselbe **ohne Bauflag**,
+   also eine Erkennung zur Laufzeit mit mehreren Varianten derselben
+   Funktion. Dafür gibt es zwei Wege, und beide sind heute versperrt:
+   `#[target_feature]` verlangt `unsafe`, was §14 ausschließt, und
+   `std::simd` ist nicht stabil (geprüft auf rustc 1.94.1, Tracking-Issue
+   rust-lang/rust#86656). Sobald `std::simd` stabil ist, sind es wenige
+   Zeilen, die kein Byte der Ausgabe bewegen.
