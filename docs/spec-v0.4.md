@@ -1,10 +1,9 @@
 # Base65t — Specification v0.4
 
-**Status:** current. **Wire format: not stable** — v0.4 replaces the segment
-format of v0.1 through v0.3, and nothing promises that v0.5 keeps its blocks.
-What is stable is the contract, not the bytes: bytes in, printable ASCII out,
-never longer than base64, and every base64 stream reads back. Store the version
-number alongside any stream you keep.
+**Status:** current. **Wire format: not stable** — nothing promises that v0.5
+keeps these blocks. What is stable is the contract, not the bytes: bytes in,
+printable ASCII out, never longer than base64, and every base64 stream reads
+back. Store the version number alongside any stream you keep.
 
 ## What it is
 
@@ -84,6 +83,9 @@ different opinions about (§11).
 > in all capitals, as shown here.
 >
 > Numbers not marked *exact* are measurements on the corpus named in §16.4.
+>
+> Section numbers are stable across revisions of this specification, so §8,
+> §9.2, §9.5 and §10.3 carry no content here.
 
 > **How to read the percentages.** This document names two ratios, and they
 > point in **opposite directions**. Every number therefore says which one it
@@ -99,25 +101,6 @@ different opinions about (§11).
 > same allocator, the same compiler. Comparing against a foreign base64 would
 > measure that library's hand-tuning and not this format.
 
-## Changes from the segment format
-
-The earlier revisions are in `docs/history/`, together with an index of what
-was cut between them and why. Section numbers are kept here where the subject
-is the same, so that references from that folder still land. Where a section
-now describes something else, it says so at its start.
-
-| § | Change |
-|---|---|
-| 4 | **Blocks instead of segments.** Two fixed-length block forms; no lengths in the stream |
-| 6 | Was the literal segment with its length header; is now the reserved form |
-| 9 | The encoder is a mapping per block, without search and without state. §9.2 (the program), §9.2.1 (windowing) and §9.2.4 (closed form) are gone; §9.6 remains, but samples its own decision instead of the entropy |
-| 10 | The decoder knows a block's length before it reads it |
-| 10.4 | `E_RESERVED_LEN` and `E_TRUNCATED` are gone, `E_RESERVED` is added |
-| 11 | Canonicity follows from the mapping; the ordering `B < L < S` is gone |
-| 13 | Measured afresh. Encoding and decoding sit at base64 in both profiles |
-| 14 | The decoder no longer parses an attacker-chosen length |
-| 15 | Twelve vectors, new |
-
 ## 0. Positioning (non-normative)
 
 ### 0.1 One format, one encoder
@@ -129,22 +112,21 @@ bytes and returns bytes. There are no presets, no modes, no thresholds. The
 encoder is explained in one sentence: **48 bytes of text stay text, everything
 else is base64.**
 
-A third block form was considered and dropped: a mask with one bit per byte,
-carrying the admitted bytes of a mixed block in the clear. On every block it
-applies to it costs, measured, three times base64's time.
-`docs/history/spec-v0.4-maske.de.md` describes it in full; §17 keeps the code
-space open for it.
+Nothing has to be decided to use it. Profile U is the default, its 66-character
+alphabet goes into every container listed at the head of this document, and a
+caller who never reads §7 is already right.
 
-Two parameters remain, and neither is a choice about the encoding:
+Two things exist beside it, and neither is a decision about the encoding:
 
-* **The profile** (§7) is a statement about the *container*, not about the
-  stream, and cannot be derived from the stream (§7.2). The default is U.
+* **Profile T** (§7) admits 93 raw characters instead of 66 and buys
+  readability on text with punctuation at the price of the URL. It is a
+  statement about the *container*, not about the stream, and cannot be derived
+  from the stream (§7.2) — which is the only reason it is a parameter at all.
 * **`encode_base64url`** (§9.3) is not a mode of the format but the way out of
   it: for a caller carrying a secret who wants none of it standing in the
   clear (§14), and for one who is only allowed to speak base64url.
 
-Which profile a use calls for, where the table at the head of this document
-says what each one carries unchanged:
+Where the two profiles differ, by use:
 
 | Use | Profile | What matters |
 |---------|--------|-------------------|
@@ -180,8 +162,9 @@ of §5.2 follow.
 Base65t is the **opener**, not the peak. Base85N carries the same
 passthrough idea further and is denser; Base91z compresses. Both ask the
 caller to learn a scheme they do not know yet. Base65t does not: the core *is*
-base64url, the output is never larger and never appreciably slower, and the
-only question left is the profile.
+base64url, the output is a fixed 66-character alphabet that every common
+container already accepts, and it is never larger and never appreciably slower.
+There is nothing left to answer before using it.
 
 The gain is correspondingly small — 21 % on short values — and so is the cost.
 That is the intent: whoever takes the first step should be able to take it
@@ -364,17 +347,18 @@ In addition, `decode_url_strict` MUST be offered (it rejects `classic` with
 ```
 
 No encoder of this revision writes `~` followed by an alphabet character, and
-a decoder MUST reject it. The two characters cost nothing today and keep the
-code space open. The dropped third block form (§17) starts here: `~`, eight
-mask characters carrying one bit per byte, the admitted bytes in the clear,
-then base64 of the rest. It makes a mixed block two-thirds readable and costs
-three times base64's time for it
-(`docs/history/spec-v0.4-maske.de.md`).
+a decoder MUST reject it. The two characters cost nothing today and reserve
+the code space for a third block form, which §17.1 describes: `~`, eight mask
+characters carrying one bit per byte, the admitted bytes in the clear, then
+base64 of the rest.
 
-The reason for dropping it is §0.1: the format lives on the decision to use it
-costing nothing. "Three times slower on my JSON blobs" is a sentence that
-tips exactly that decision, and readable mixed text is not what the format
-advertises.
+That form is **not** part of v0.4, and the reason is §0.1. It makes a mixed
+block two-thirds readable and costs three times base64's time for it, and this
+format lives on the decision to use it costing nothing. "Three times slower on
+my JSON blobs" is a sentence that tips exactly that decision, and readable
+mixed text is not what the format advertises. The reservation exists so that a
+revision which finds a cheaper way can add it without a decoder of today
+misreading its streams.
 
 `~` followed by something that is neither `~` nor an alphabet character is not
 a reserved stream but a broken one: `E_CHARSET`.
@@ -415,11 +399,9 @@ The profile cannot be derived from the stream: a stream whose raw bytes happen
 to be *unreserved* only is equally valid under U and T. It describes the
 expectation of the **container**, not a property of the stream.
 
-## 8. Framed mode — **withdrawn**
+## 8. Unused
 
-See `docs/history/`. A block format with fixed block boundaries needs no
-second mode for random access; whoever wants it indexes block starts, and that
-is a candidate for extension (§17), not a question about the format.
+Random access is §17.2.
 
 ## 9. Encoder
 
@@ -462,16 +444,15 @@ with the block size and runs against `(m+2)/(4m/3)`, so against 78 % size at
 48 bytes and 75 % in the limit.
 
 **All or nothing.** A single byte outside the profile costs its whole block.
-That is coarse, and it is the trade this revision makes: a finer encoding — a
-mask with one bit per byte — was dropped over three times base64's time (§6,
-§17, `docs/history/spec-v0.4-maske.de.md`). What the coarseness means on real
-data is in §13.4: short values consisting entirely of text reach 78 % size;
+That is coarse, and it is the trade this format makes. A finer encoding is
+possible — §17.1 describes one, and it costs three times base64's time, which
+is why the code space for it is reserved (§6) rather than used. What the
+coarseness means on real data is in §13.4: short values consisting entirely of
+text reach 78 % size;
 large documents gain **nothing** in profile U and five to ten percent in
 profile T.
 
-### 9.2 Optimal segmentation — **gone**
-
-There is nothing to segment.
+### 9.2 Unused
 
 ### 9.3 Entry points
 
@@ -500,9 +481,7 @@ characters as base64url but **the same bytes**.
 **Scope.** The length of the encoded stream in octets, not transport or
 container overhead.
 
-### 9.5 Segment switch rate — **gone**
-
-There are no segment switches.
+### 9.5 Unused
 
 ### 9.6 The sample (normative)
 
@@ -517,8 +496,7 @@ block, so no block goes raw, and for this format it is as binary as a JPEG.
 
 **It is the same check, once up front.** No magic numbers, no entropy, no
 logarithm two implementations would have to agree on — the sample measures the
-decision itself and not something correlated with it. Earlier revisions
-decided by entropy; `docs/history/spec-v0.4-segmente.de.md` describes them.
+decision itself and not something correlated with it.
 
 **The output stays a function of the input.** The sample is a fixed prefix,
 the number of blocks is a constant, and the check is §9.0's. §9.0 applies
@@ -617,9 +595,7 @@ decode(stream, profile)
 decode_url_strict(stream, profile)  # rejects '+' and '/' with E_NON_URL_ALPHABET
 ```
 
-### 10.3 Framed mode — **withdrawn**
-
-See §8.
+### 10.3 Unused
 
 ### 10.4 Error cases
 
@@ -641,10 +617,9 @@ could be truncated.
 **Allocation limits.** There is no length in the stream that a sender chooses.
 A raw block holds at most 48 bytes, and a base64 run yields three bytes per
 four characters. It follows that the specification needs **no protocol-side
-limit for individual blocks**, and that the class of single-allocation bugs
-which §14 of the segment format named as its one weakness against base64 does
-not exist. The number of blocks is unbounded; implementations SHOULD offer
-limits on total size and running time.
+limit for individual blocks**: there is no single allocation an attacker can
+size. The number of blocks is unbounded; implementations SHOULD offer limits
+on total size and running time.
 
 ## 11. Canonicity and signatures
 
@@ -654,20 +629,15 @@ write the same bytes for the same input and the same profile. That is enough
 for cache keys, dedup keys and content addresses, where the same side produces
 and compares.
 
-The *format* is nevertheless not canonical, for two reasons. First, the
-**profile is a choice**: the same input yields different streams under U and
-T. Second, the **decoder accepts forms no encoder writes**: the classic
+The *format* is nevertheless not canonical, for two reasons. First, **the
+profile is part of the input**: the same bytes yield different streams under U
+and T, so a stream alone does not determine what produced it. Second, the **decoder accepts forms no encoder writes**: the classic
 alphabet (§5.2), padding (§5.3), and a base64 block where a raw block would be
 shorter. A third party can rewrite the same stream without changing the
 decoded bytes.
 
 > **Rule:** never sign, hash or compare the output of `encode`. Sign the
 > **decoded bytes**. `decode(encode(x)) == x` always holds.
-
-**The ordering `B < L < S`** of the segment format is gone. It was needed
-there because several segmentations could be the same length and one of them
-had to be chosen. Here there are two forms per block and one condition that
-decides.
 
 ## 12. Density
 
@@ -708,11 +678,8 @@ the interesting one is the small one:
 | JWT, three segments | 155 | **78.7 %** |
 | Prose, XML, JSON, every megabyte file | | 100.0 % |
 
-**Against the earlier revisions**, same samples, as size: the segment format
-reached 98.57 % in U, the mask format 98.65 %. This revision is worse on large
-files and equally good on short values — and §13 says what it gets for that.
-Of the difference, 0.01 points in U and 0.24 in T are the sample of §9.6; the
-rest is the coarseness of the block itself.
+Of the sum line, 0.01 points in U and 0.24 in T are what the sample of §9.6
+gives up; the rest is the coarseness of the block itself (§9.1).
 
 ## 13. Performance
 
@@ -784,9 +751,6 @@ but most blocks do contain a line break and become base64, and for those the
 check is overhead. That is the one case where the format trades size against
 time, and it is named rather than smoothed over.
 
-For comparison, the same files, as time: the segment format cost 1137 % to
-encode `dickens`, the mask format 169 %, this one 100 %.
-
 ### 13.4 Short values
 
 The 55 short samples, profile U, size against `ceil(4n/3)`, time against the
@@ -813,20 +777,17 @@ six comparisons per byte and copies them. Whoever writes less writes faster.
 The rows at 100 % size cost at most nine percent more time, and they decode
 faster.
 
-For comparison, each as time: the segment format sat at 355 % to encode here,
-the mask format at 98 % to encode and 123 % to decode.
-
 ### 13.5 What stays readable
 
 Share of bytes that stand in the stream as they do in the input
 (`--example clear`):
 
-| File | Segment format, U | Mask format, U | **v0.4 U** | **v0.4 T** |
-|---|--:|--:|--:|--:|
-| Prose (dickens) | 17 % | 76 % | **0 %** | **24 %** |
-| XML | 21 % | 66 % | **0 %** | **45 %** |
-| CSS | 54 % | 72 % | **0 %** | **10 %** |
-| JSON | 9 % | 15 % | **0 %** | **0 %** |
+| File | Profile U | Profile T |
+|---|--:|--:|
+| Prose (dickens) | **0 %** | **24 %** |
+| XML | **0 %** | **45 %** |
+| CSS | **0 %** | **10 %** |
+| JSON | **0 %** | **0 %** |
 
 **That is this revision's price, and it is high.** A block goes raw only if
 all 48 bytes are admitted, and in a document with punctuation that does not
@@ -835,17 +796,16 @@ bytes: identifiers, IDs, hexadecimal values, and in profile T longer stretches
 of text without quotation marks.
 
 Whoever wants readable mixed text will not find it here. That is a decision,
-not a gap: the mask format delivered it and cost three times base64's time for
-it, and this format lives on the decision to use it costing nothing (§0.1,
-§6).
+not a gap. A form that delivers it is described in §17.1, and it costs three
+times base64's time; this format lives on the decision to use it costing
+nothing (§0.1, §6).
 
 ## 14. Security
 
-* **The decoder parses no length whatsoever.** The segment format stood behind
-  base64 here: its decoder read lengths up to 4158 out of the stream, which an
-  attacker could choose. Here there is no length in the stream; every one
-  follows from the block form and the block size. What remains is the same as
-  for base64: the total length of the input.
+* **The decoder parses no length whatsoever.** There is no length in the
+  stream; every one follows from the block form and the block size, so no
+  number a sender chose ever reaches an allocator or a loop bound. What
+  remains is the same as for base64: the total length of the input.
 * **Raw bytes leak structure** — which blocks consist entirely of text is
   visible in the stream, and their content stands in the clear. That is what
   `encode_base64url` is for (§9.3); its output is ordinary base64url.
@@ -863,8 +823,7 @@ it, and this format lives on the decision to use it costing nothing (§0.1,
 
 Twelve vectors, each a test in `rust/tests/vectors.rs`. The machine-checkable
 set — 173 entries over both entry points and both profiles — is in
-`docs/vectors.json`. The vectors of the earlier revisions are in
-`docs/history/`; their *inputs* were carried over, their streams were not.
+`docs/vectors.json`.
 
 ### TV1–TV4 — the two forms (profile U)
 
@@ -876,8 +835,9 @@ set — 173 entries over both entry points and both profiles — is in
 | TV4 | 100 × `a` | `~~` + 48 `a`, `~~` + 48 `a`, `~~aaaa` | 106 | 134 |
 
 **On TV2.** Four of the 22 bytes are not admitted, so the block is base64, and
-the stream is byte for byte `encode_base64url`. The segment format wrote this
-input in 26 characters; that is the price for an encoder that is a comparison.
+the stream is byte for byte `encode_base64url`. This is the all-or-nothing
+rule of §9.1 at its most expensive: four bytes cost the other eighteen their
+raw form.
 
 **On TV3.** A `~` in a raw block needs nothing, because the block length is
 fixed. `hello~Alice` becomes `~~hello~Alice`.
@@ -1020,29 +980,51 @@ short of the raw form.
 
 ## 17. Candidates for extension (not part of v0.4)
 
-1. **A third block form** carrying a mixed block partly in the clear. `~`
-   followed by an alphabet character is reserved for it (§6), and
-   `docs/history/spec-v0.4-maske.de.md` describes the dropped design: a mask
-   with one bit per byte. It makes mixed text readable and costs three times
-   base64's time. Whoever reintroduces it has to show that it goes without
-   that price — a vectorised compress operation would be the way — and needs a
-   new version number.
-2. **Random access.** Block boundaries lie at fixed input offsets but at
-   variable output offsets. An index of block starts, outside the stream,
-   gives O(1) access.
-3. **Profile negotiation.** In principle not derivable from the stream (§7.2).
-4. **A different block size.** 48 is justified (§4), not proved. A larger
-   block size pushes the raw form towards 75 % size while also tipping a whole
-   block to base64 more often; where the optimum lies is a question for
-   measurement. Whoever changes the number changes the version number.
-5. **Choosing the vector width at runtime.** Not a format question and not a
-   gap in the code: the check of §13.1 already vectorises, on the baseline
-   target `x86-64` at 16 bytes per operation. Building with `-C
-   target-cpu=native` gives 32 or 64 and halves the encoding surcharge —
-   today, without `unsafe` and without a code change. What is missing is the
-   same **without a build flag**, that is, runtime detection with several
-   variants of the same function. There are two ways to do that, and both are
-   closed today: `#[target_feature]` requires `unsafe`, which §14 rules out,
-   and `std::simd` is not stable (checked on rustc 1.94.1, tracking issue
-   rust-lang/rust#86656). Once `std::simd` is stable it is a few lines that
-   move not one byte of the output.
+None of the following is implemented, and each would need a new version
+number.
+
+### 17.1 A third block form
+
+Carrying a mixed block partly in the clear: `~`, eight mask characters with
+one bit per byte, the admitted bytes, then base64 of the rest. `~` followed by
+an alphabet character is reserved for it (§6).
+
+A complete design exists and was measured: it takes English prose in profile U
+from 0 % readable to 76 %, and it costs **three times** base64's time in both
+directions, because it does three times as much work per block. It was
+optimised to the limit of what is possible without vector intrinsics and
+stayed there. `docs/history/spec-v0.4-maske.de.md` has it in full, which is
+where to start rather than from scratch.
+
+Whoever reintroduces it has to show that it goes without that price — a
+vectorised compress operation would be the way.
+
+### 17.2 Random access
+
+Block boundaries lie at fixed input offsets but at variable output offsets. An
+index of block starts, kept outside the stream, gives O(1) access. This is why
+the format needs no second mode for it.
+
+### 17.3 Profile negotiation
+
+In principle not derivable from the stream (§7.2).
+
+### 17.4 A different block size
+
+48 is justified (§4), not proved. A larger block size pushes the raw form
+towards 75 % size while also tipping a whole block to base64 more often; where
+the optimum lies is a question for measurement.
+
+### 17.5 Choosing the vector width at runtime
+
+Not a format question and not a gap in the code: the check of §13.1 already
+vectorises, on the baseline target `x86-64` at 16 bytes per operation.
+Building with `-C target-cpu=native` gives 32 or 64 and halves the encoding
+surcharge — today, without `unsafe` and without a code change.
+
+What is missing is the same **without a build flag**, that is, runtime
+detection with several variants of the same function. There are two ways to do
+that, and both are closed today: `#[target_feature]` requires `unsafe`, which
+§14 rules out, and `std::simd` is not stable (checked on rustc 1.94.1,
+tracking issue rust-lang/rust#86656). Once `std::simd` is stable it is a few
+lines that move not one byte of the output.

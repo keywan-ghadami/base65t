@@ -66,12 +66,15 @@ bytes, stopping at the first byte that settles it. Blocks are independent, so a
 stream can be cut at any block boundary and put back together, and two
 implementations cannot disagree about a byte.
 
-Two parameters remain, and neither is a choice about the encoding:
+Nothing has to be decided to use it: the default alphabet above goes into every
+container listed there, and a caller who reads no further is already right.
 
-* **The profile** is a statement about the container, not about the stream.
-  `U` is RFC 3986 *unreserved*, which goes into a URL query and a cookie value
-  as it stands; `T` is printable ASCII without `"` and `\`, which a JSON string
-  carries unescaped.
+Two things exist beside it, and neither is a decision about the encoding:
+
+* **Profile `T`** admits 93 raw characters instead of 66 — printable ASCII
+  without `"` and `\` — and buys readability on text with punctuation at the
+  price of the URL. It describes the container, not the stream, which is the
+  only reason it is a parameter at all.
 * **`encode_base64url`** is not a mode of the format but the way out of it: for
   a caller carrying a secret who wants no part of it left in the clear. Its
   output is ordinary unpadded base64url.

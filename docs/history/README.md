@@ -26,6 +26,28 @@ time. The current specification, the README and the code are English.
 | `FINDINGS.md` | What implementing found: contradictions, search spaces too narrow, numbers that were wrong. Chronological, not edited |
 | `PREREGISTRATION.md` | The sweet-spot measurement, fixed **before** it ran, so that the threshold `L_min = 11` is not the result of an evaluation chosen to fit afterwards |
 
+## What v0.4 changed, section by section
+
+This table used to stand at the head of the specification. It is here now,
+because the specification is a document for someone implementing the format
+and not for someone tracking how it got here. Section numbers are stable
+across revisions, so each row points at the same number in both documents.
+
+| § | Change |
+|---|---|
+| 4 | **Blocks instead of segments.** Two fixed-length block forms; no lengths in the stream |
+| 6 | Was the literal segment with its length header; is now the reserved form |
+| 8, 9.2, 9.5, 10.3 | Framed mode, the segmentation program, its windowing and closed form, and the segment switch rate. All gone; the numbers carry no content in v0.4 |
+| 9 | The encoder is a mapping per block, without search and without state. §9.6 remains, but samples its own decision instead of the entropy |
+| 10 | The decoder knows a block's length before it reads it |
+| 10.4 | `E_RESERVED_LEN` and `E_TRUNCATED` are gone, `E_RESERVED` is added |
+| 11 | Canonicity follows from the mapping; the ordering `B < L < S` is gone, because there is no tie left to break |
+| 12 | Density, as size: this revision reaches 99.99 % in profile U and 99.51 % in T over 69 samples. The segment format reached 98.57 % in U, the mask format 98.65 % — so v0.4 is worse on large files and equally good on short values |
+| 13 | Measured afresh, and this is what the size was traded for. As time, encoding `dickens`: the segment format 1137 %, the mask format 169 %, v0.4 100 %. Over the 55 short values: 355 % for the segment format, 98 % for the mask format, 77 % for v0.4 |
+| 13.5 | Readability, share of bytes standing in the clear in profile U: prose 17 % → 76 % → **0 %**, XML 21 % → 66 % → **0 %**, CSS 54 % → 72 % → **0 %**, JSON 9 % → 15 % → **0 %**, for the segment format, the mask format and v0.4 in that order. This is the price, and it is the largest single thing v0.4 gave up |
+| 14 | The decoder no longer parses an attacker-chosen length. The segment format read lengths up to 4158 out of the stream; v0.4 reads none at all |
+| 15 | Twelve vectors, new. The inputs of the earlier revisions were carried over, their streams were not |
+
 ## What happened between v0.2 and v0.4
 
 There is no `spec-v0.3.de.md`. v0.3 was a state in the code, not a document:
