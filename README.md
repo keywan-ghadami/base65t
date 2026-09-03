@@ -106,10 +106,11 @@ block, which is every large document and everything binary:
 | English prose | T | 94.8 % |
 | `xml` | T | 90.2 % |
 
-Summed over 69 corpus samples it is 99.98 % in profile U and 99.27 % in T.
+Summed over 69 corpus samples it is 99.99 % in profile U and 99.51 % in T.
 That number is byte-weighted and therefore decided by megabyte files, where
 this format saves nothing; 43 % of the samples are better than 95 %, and
-they are all short values.
+they are all short values. Of the difference, 0.01 points in U and 0.24 in T
+are what the sample gives up; the rest is the block being all-or-nothing.
 
 The decisive pair is in the corpus twice over: `session_ids_32.bin`, raw
 binary session ids, comes out at **100.0 %**; the same thing written as text,
@@ -151,56 +152,50 @@ and copies them.
 | an IPv6 address | 28 | base64 | 100 % | **96 %** | **97 %** |
 | a log line | 93 | base64 | 100 % | 109 % | **90 %** |
 | 64 random bytes | 64 | base64 | 100 % | 104 % | **88 %** |
-| **all 55, summed as time** | | | | **77 %** | **84 %** |
+| **all 55, summed as time** | | | | **71 %** | **81 %** |
 
 Large files, against the crate's own `encode_base64url` — the same loop shape
 and the same allocator, so the ratio is the format and not a handicap. Median
-of paired ratios over fifteen rounds, because a shared runner drifts more than
-the effect being measured:
+of paired ratios over 21 rounds, sorted by size, because that is the whole
+story:
 
-| file | profile | size | encode time | decode time |
+| file | profile | size | encode | decode |
 |---|---|--:|--:|--:|
-| `dickens` (prose) | U | 100.0 % | 118 % | **101 %** |
-| `xml` | U | 100.0 % | 121 % | **99 %** |
-| `x-ray` (binary) | U | 100.0 % | 119 % | **100 %** |
-| `dickens` (prose) | T | 95.1 % | 112 % | **86 %** |
-| `xml` | T | 88.4 % | **90 %** | **66 %** |
+| generated, all admitted | U | 78.1 % | **48 %** | **40 %** |
+| prose, space every 6 bytes | T | 78.1 % | **40 %** | **35 %** |
+| `xml` | T | 88.4 % | **91 %** | **68 %** |
+| `dickens` (prose) | T | 95.1 % | 118 % | **90 %** |
+| `dickens` (prose) | U | 100.0 % | **100 %** | **100 %** |
+| `xml` | U | 100.0 % | **99 %** | **100 %** |
+| `x-ray` (binary) | U | 100.0 % | 101 % | 101 % |
+| random bytes | U | 100.0 % | **100 %** | 101 % |
 
-Encoding costs between 90 and 121 %, and the whole of that is one thing: the
-check that asks whether a block is all text. It exits at the first byte that
-settles the question, so on binary it costs a sixth of base64's time and on a
-block whose only rejecting byte is the last it costs half:
+Where the output is not smaller than base64, it *is* base64 — 99 to 101 % of
+its time, both directions, because the sample turned the asking off. Where it
+is smaller it is usually faster too, since a `memcpy` is less work than a
+base64 loop.
 
-| block content | check alone, time | encode time |
+One row breaks that: `dickens` under profile T is 4.9 % smaller and 18 %
+slower to encode. The sample rightly says "check" — there are raw blocks — but
+most blocks turn out to hold a newline and become base64, and for those the
+check is overhead. It is the one case where the format trades size for time,
+and it is named rather than smoothed away.
+
+The check itself, when it does run, costs 6 % of base64's time on a block that
+rejects early and 34 % on one whose only rejecting byte is the last:
+
+| block content | check alone | encode |
 |---|--:|--:|
-| all admitted (raw) | 32 % | **50 %** |
-| binary | 16 % | 116 % |
-| text, rejecting byte last | 33 % | 138 % |
+| all admitted (raw) | 33 % | **48 %** |
+| binary | 6 % | 109 % |
+| text, rejecting byte last | 34 % | 145 % |
 
-**The check already vectorises**, on stable Rust with no `unsafe`: the
-per-byte test is arithmetic rather than a table lookup, because a gather does
-not vectorise and six compares do, and 112 of the 171 instructions the
-compiler emits for it work on vector registers. That is 16 bytes per
-operation on the baseline `x86-64` target, which assumes only SSE2.
+The last two rows are exactly the ones the sample removes from the reckoning.
+Decoding never pays the check at all, because the form is in the first
+character.
 
-**Build with `-C target-cpu=native` and the overhead roughly halves** — no
-code change, not a byte of output different:
-
-| block content | check alone, time | encode time |
-|---|--:|--:|
-| all admitted (raw) | 19 % | **37 %** |
-| binary | 8 % | 113 % |
-| text, rejecting byte last | 19 % | 124 % |
-
-What is left after that is a floor: the encoder has to read every byte to
-answer the question, and it reads it once. Getting the same width *without*
-a build flag would mean runtime dispatch, and both routes are shut today —
-`#[target_feature]` needs `unsafe`, which the crate forbids, and `std::simd`
-is not stable (checked on rustc 1.94.1, rust-lang/rust#86656). Decoding
-never pays any of this, because the form is in the first character.
-
-For comparison on `dickens`: the segment format this replaced encoded at
-1137 %, the mask version at 169 %, this at 104 %.
+For comparison on `dickens` under profile U: the segment format this replaced
+encoded at 1137 %, the mask version at 169 %, this at 100 %.
 
 ## Readability, and what the profile does to it
 

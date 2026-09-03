@@ -27,8 +27,14 @@
 //! threshold to tune and no preset to understand, and that is the design
 //! rather than an omission: a caller who has to choose has to know what the
 //! choices mean before encoding a byte, and a caller who is unsure reaches
-//! for base64. The encoder is one comparison per block of forty-eight bytes
+//! for base64. The encoder is one question per block of forty-eight bytes
 //! (§4): all text, or base64. It neither searches nor remembers.
+//!
+//! It asks that question of the first sixty-four blocks before it starts, and
+//! where none of them can be raw it writes base64url and stops asking (§9.6).
+//! So on input where the format would gain nothing -- anything compressed,
+//! and English prose under profile U, whose spaces leave no block whole --
+//! the output is base64url byte for byte and costs base64's time.
 //!
 //! The two parameters that remain are not choices about the encoding. The
 //! profile (§7) is a statement about the container the stream has to survive,
@@ -52,7 +58,9 @@ mod encode;
 
 pub use alphabet::{AlphabetSeen, Profile};
 pub use decode::{decode, decode_url_strict};
-pub use encode::{choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES};
+pub use encode::{
+    any_block_can_be_raw, choose, Form, BASE64_BLOCK_CHARS, BLOCK_BYTES, SAMPLE_BLOCKS,
+};
 
 /// What `decode` found while decoding, which §5.5 makes part of the result
 /// rather than an option: permissiveness that cannot be inspected is

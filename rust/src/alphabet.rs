@@ -133,6 +133,23 @@ impl Profile {
     #[inline]
     pub fn admits_all(self, data: &[u8]) -> bool {
         let (groups, tail) = data.as_chunks::<32>();
+        // The cheap necessary condition, on the first group only: every byte
+        // either profile admits is at most 0x7E (§7), so one `or` and one test
+        // reject the block. On compressed or binary input -- the case where
+        // this whole function is pure overhead -- the first thirty-two bytes
+        // hold a high bit with probability 1 - 2^-32, so the block is settled
+        // by two vector operations instead of the six a byte that the full
+        // test costs. On text it passes and costs those two operations once,
+        // not once per group.
+        if let Some(g) = groups.first() {
+            let mut hi = 0u8;
+            for &b in g {
+                hi |= b;
+            }
+            if hi & 0x80 != 0 {
+                return false;
+            }
+        }
         for g in groups {
             let mut bad = 0u8;
             for &b in g {

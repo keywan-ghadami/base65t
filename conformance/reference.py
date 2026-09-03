@@ -21,6 +21,7 @@ from __future__ import annotations
 ALPHABET = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 TILDE = 0x7E
 BLOCK_BYTES = 48          # §4
+SAMPLE_BLOCKS = 64        # §9.6
 
 _VALUE = {}
 for _i, _c in enumerate(ALPHABET):
@@ -199,8 +200,31 @@ def encode_base64url(data: bytes, profile: str = "U") -> bytes:
     return _b64(data)
 
 
+def _any_block_can_be_raw(data: bytes, profile: str) -> bool:
+    """§9.6: does any of the first SAMPLE_BLOCKS blocks stand raw?
+
+    The encoder's own decision, sampled -- not a proxy for it. Written out
+    here rather than reusing `_encode_block`, so that the two implementations
+    can disagree if the document allows two readings.
+    """
+    for i in range(0, min(len(data), SAMPLE_BLOCKS * BLOCK_BYTES), BLOCK_BYTES):
+        block = data[i:i + BLOCK_BYTES]
+        if len(block) + 2 <= _b64_len(len(block)) and all(
+            allows(profile, b) for b in block
+        ):
+            return True
+    return False
+
+
 def encode_with(data: bytes, profile: str = "U") -> bytes:
-    """§9: block by block, and nothing carries over between blocks."""
+    """§9: block by block, and nothing carries over between blocks.
+
+    Except the one thing that does: §9.6 asks the same question of the first
+    sixty-four blocks, and where none of them can stand raw the whole stream
+    is base64url and no block is asked about again.
+    """
+    if not _any_block_can_be_raw(data, profile):
+        return _b64(data)
     out = bytearray()
     for i in range(0, len(data), BLOCK_BYTES):
         out += _encode_block(data[i:i + BLOCK_BYTES], profile)
