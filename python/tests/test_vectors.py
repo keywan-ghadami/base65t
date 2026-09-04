@@ -15,13 +15,13 @@ import pathlib
 
 import pytest
 
-import base65t
+import base66
 
 VECTORS = pathlib.Path(__file__).resolve().parents[2] / "docs" / "vectors.json"
 
 KINDS = {
-    "encode": base65t.encode,
-    "base64url": base65t.encode_base64url,
+    "encode": base66.encode,
+    "base64url": base66.encode_base64url,
 }
 
 
@@ -37,6 +37,6 @@ def test_every_vector_encodes_and_decodes():
         data = bytes.fromhex(v["input"])
         want = bytes.fromhex(v["stream"])
         assert KINDS[v["kind"]](data) == want, v["name"]
-        assert base65t.decode(want) == data, v["name"]
+        assert base66.decode(want) == data, v["name"]
         checked += 1
     assert checked >= 100, f"only {checked} vectors"

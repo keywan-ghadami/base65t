@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "base65t"
+name = "base66"
 version = "0.4.0"

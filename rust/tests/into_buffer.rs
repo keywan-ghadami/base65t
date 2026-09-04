@@ -11,7 +11,7 @@
 //! checked is that there are none: the same output as the owning call, into a
 //! buffer that already has something in it, and nothing left behind on error.
 
-use base65t::*;
+use base66::*;
 
 fn samples() -> Vec<Vec<u8>> {
     let mut s: u32 = 0x1a7e_b0f5;

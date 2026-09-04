@@ -11,66 +11,66 @@ of the result, and the error code that comes back. So that is what this checks.
 
 import pytest
 
-import base65t
+import base66
 
 
 def test_encode_takes_the_data_and_nothing_else():
-    assert base65t.encode(b"alice.jones") == b"~~alice.jones"
+    assert base66.encode(b"alice.jones") == b"~~alice.jones"
     # There is no second argument to pass, and passing one is an error rather
     # than a silently ignored option.
     with pytest.raises(TypeError):
-        base65t.encode(b"alice.jones", "U")
+        base66.encode(b"alice.jones", "U")
 
 
 @pytest.mark.parametrize("arg", [b"abc", bytearray(b"abc"), "abc"])
 def test_bytes_bytearray_and_str_are_all_accepted(arg):
-    assert base65t.decode(base65t.encode(arg)) == b"abc"
+    assert base66.decode(base66.encode(arg)) == b"abc"
 
 
 @pytest.mark.parametrize("arg", [123, ["a"], None, 3.5])
 def test_a_sequence_of_integers_is_a_type_error_not_an_input(arg):
     with pytest.raises(TypeError):
-        base65t.encode(arg)
+        base66.encode(arg)
 
 
 def test_the_exported_alphabet_is_what_the_encoder_writes():
     """§7: the module states the alphabet, and it has to be the true one."""
-    assert len(base65t.ALPHABET) == 66
+    assert len(base66.ALPHABET) == 66
     seen = set()
     for n in range(0, 400):
-        seen |= set(base65t.encode(bytes(range(256))[: n % 256] * 2).decode("ascii"))
-        seen |= set(base65t.encode(b"aZ0-._~" * n).decode("ascii"))
-    assert seen <= set(base65t.ALPHABET)
-    assert seen == set(base65t.ALPHABET)
+        seen |= set(base66.encode(bytes(range(256))[: n % 256] * 2).decode("ascii"))
+        seen |= set(base66.encode(b"aZ0-._~" * n).decode("ascii"))
+    assert seen <= set(base66.ALPHABET)
+    assert seen == set(base66.ALPHABET)
 
 
 def test_the_base64url_entry_point_is_not_a_mode():
     """§9.3, §14: ordinary unpadded base64url, and no literal in it."""
     data = b"alice.jones"
-    out = base65t.encode_base64url(data)
+    out = base66.encode_base64url(data)
     assert out == b"YWxpY2Uuam9uZXM"
     assert b"~" not in out
-    assert base65t.decode(out) == data
+    assert base66.decode(out) == data
     # And it is not what `encode` writes, which is the point of having both.
-    assert base65t.encode(data) != out
+    assert base66.encode(data) != out
 
 
 def test_the_result_carries_what_the_stream_chose():
-    d = base65t.decode_detailed(b"YWxpY2U=")
+    d = base66.decode_detailed(b"YWxpY2U=")
     assert d.bytes == b"alice"
     assert d.padding_seen is True
     assert d.alphabet_seen == "none"
 
-    d = base65t.decode_detailed(b"PDw_Pz8-Pg")
+    d = base66.decode_detailed(b"PDw_Pz8-Pg")
     assert d.alphabet_seen == "url"
-    assert base65t.decode_detailed(b"PDw/Pz8+Pg").alphabet_seen == "classic"
+    assert base66.decode_detailed(b"PDw/Pz8+Pg").alphabet_seen == "classic"
 
 
 def test_the_strict_entry_point_is_separate():
-    with pytest.raises(base65t.Base65tDecodeError) as e:
-        base65t.decode_url_strict(b"PDw/Pz8+Pg")
+    with pytest.raises(base66.Base66DecodeError) as e:
+        base66.decode_url_strict(b"PDw/Pz8+Pg")
     assert e.value.code == "E_NON_URL_ALPHABET"
-    assert base65t.decode_url_strict(b"PDw_Pz8-Pg") == b"<<???>>"
+    assert base66.decode_url_strict(b"PDw_Pz8-Pg") == b"<<???>>"
 
 
 @pytest.mark.parametrize(
@@ -87,18 +87,18 @@ def test_the_strict_entry_point_is_separate():
     ],
 )
 def test_the_error_carries_the_code_the_vectors_use(stream, code):
-    with pytest.raises(base65t.Base65tDecodeError) as e:
-        base65t.decode(stream)
+    with pytest.raises(base66.Base66DecodeError) as e:
+        base66.decode(stream)
     assert e.value.code == code
     assert isinstance(e.value, ValueError)
 
 
 def test_the_constants_come_from_the_crate():
-    assert base65t.BLOCK_BYTES == 48
-    assert base65t.ALPHABET == (
+    assert base66.BLOCK_BYTES == 48
+    assert base66.ALPHABET == (
         "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
     )
-    assert base65t.SPEC_VERSION == "0.4"
+    assert base66.SPEC_VERSION == "0.4"
 
 
 def test_nothing_the_old_api_had_is_still_exported():
@@ -119,4 +119,4 @@ def test_nothing_the_old_api_had_is_still_exported():
         "WINDOW_BYTES",
         "MASK_CHARS",
     ):
-        assert not hasattr(base65t, gone), gone
+        assert not hasattr(base66, gone), gone

@@ -19,7 +19,7 @@
 //! other — a redundancy that is verified is worth more than a field that is
 //! merely convenient.
 
-use base65t::*;
+use base66::*;
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
@@ -123,7 +123,7 @@ fn main() {
     ];
 
     println!("{{");
-    println!("  \"spec\": \"base65t v0.4, docs/spec-v0.4.md\",");
+    println!("  \"spec\": \"base66 v0.4, docs/spec-v0.4.md\",");
     println!(
         "  \"note\": \"Every entry is: the named entry point over input is exactly stream, and \
          decode(stream) is exactly input. Bytes are hex. A second implementation that reproduces \

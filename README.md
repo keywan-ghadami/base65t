@@ -1,44 +1,35 @@
-# base65t
+# base66
 
-Base64url and two more characters, and each of them has a job. **`~` is what
-makes the format possible** — it is not in the base64 alphabet, so it can mean
-something else. **`.` is what makes it worth having** — it is why a hostname, a
-filename or a dotted identifier passes through at all.
+**66 characters go out: `A–Z a–z 0–9 - . _ ~`, exactly RFC 3986's *unreserved*
+set.** That is the name, and it is the whole guarantee. Nothing else is ever
+written, not even `=`, because the encoder produces no padding. There is no
+second alphabet and no parameter that selects one, which is why the output
+drops into a URL, a cookie, a header, a JSON string, a filename or a log field
+without escaping any of them — **and survives being pasted unquoted into a
+shell**, which the conformance test checks in bash, dash and sh over every
+stream shape. The test `the_output_alphabet_is_exactly_unreserved` pins the set
+in both directions.
 
-`~` first. The input is cut into blocks of 48 bytes. A block made entirely of
-characters the output alphabet already contains is written after `~~`, as it
-stands; every other block is base64. Text that a URL would carry unescaped
-anyway is carried unescaped — `alice.jones` encodes as `~~alice.jones`,
-thirteen characters where base64 needs fifteen — and there is no escaping
-anywhere.
+**Two of the 66 are not base64url characters, and the format is made of both.**
+`~` marks: the input is cut into blocks of 48 bytes, a block whose bytes are
+all in the alphabet is written after `~~` as it stands, every other block is
+base64. `.` rides along: a block stands raw only if **every** one of its 48
+bytes is admitted, and the values this format exists for are full of dots —
+`alice.jones`, `session-eu-central-1.frankfurt`, `report.final.tar.gz`,
+`192.168.13.240`, `com.example.OrderRepository`. Remove either character and
+the format stops doing its job: without `~` nothing can say which blocks are
+raw, and without `.` none of those values is raw to begin with.
 
-Then `.`, and it is not incidental. A block stands raw only if **every** one of
-its 48 bytes is admitted, and the values this format exists for are full of
-dots: `alice.jones`, `session-eu-central-1.frankfurt`, `report.final.tar.gz`,
-`192.168.13.240`, `com.example.OrderRepository`. Take `.` out of the admitted
-set and each of those is base64 at 100 %, and the example one paragraph up
-stops existing. That is the whole argument for the second character, and it is
-the same shape as the argument for the first: without it the format does not do
-its job. The encoder never *produces* a `.` from data — it passes through one
-the input already had — but the format would be a different and much smaller
-thing without it.
+So text that a URL would carry unescaped is carried unescaped — `alice.jones`
+encodes as `~~alice.jones`, thirteen characters where base64 needs fifteen —
+and there is no escaping anywhere.
 
-**Three numbers, and the name counts the middle one.** **64** characters carry
-data: base64url's alphabet, unchanged, which is why every base64 stream reads
-back. **65** is those plus `~`, the marker — no value, never a digit — and that
-is what `base65t` counts. **66** is what a byte of the output can be:
-`A–Z a–z 0–9 - . _ ~`, exactly RFC 3986's *unreserved* set. The name counts the
-mechanism; **66 is the number to check a container against**, and 66 is the
-number the paragraph above is about. Both are stated here so that neither
-arrives later as a correction.
-
-**The output alphabet is fixed at those 66 characters.** Nothing else
-is ever written, not even `=`, because the encoder produces no padding. That is
-one alphabet and not a choice, and it is why the output drops into a URL, a
-cookie, a header, a JSON string, a filename or a log field without escaping any
-of them — **and survives being pasted unquoted into a shell**, which the
-conformance test checks in bash, dash and sh over every stream shape. The test
-`the_output_alphabet_is_exactly_unreserved` pins the set in both directions.
+**The other 64 are base64url's alphabet, unchanged**, and that is the
+compatibility rather than an accident of the count — the third line of the
+example below is what it buys. Those 64 are also the only ones that carry
+data; `~` and `.` have no value. So the 66 in the name counts *characters a
+stream can contain*, which is the number a caller checks a container against,
+and not a radix.
 
 ```
 ~~alice.jones                   11 bytes of text, 13 characters
@@ -46,7 +37,7 @@ conformance test checks in bash, dash and sh over every stream shape. The test
 YWxpY2U=                        ordinary base64, and it decodes to "alice"
 ```
 
-The last line is the point of the design. A base65t decoder reads any canonical
+The last line is the point of the design. A base66 decoder reads any canonical
 base64 or base64url stream, padded or not, and returns the same bytes — so a
 decoder can be deployed before anything starts producing the new format. It
 does not work the other way: `~` is not in base64's alphabet, and a base64
@@ -60,9 +51,9 @@ never meaningfully slower than base64, and any base64 stream reads back.
 
 > **Reading the percentages.** Two ratios appear below and they point in
 > opposite directions, so every number says which it is. **Size** is
-> `len(base65t) / len(base64)` — less is better, 100 % means the same length,
+> `len(base66) / len(base64)` — less is better, 100 % means the same length,
 > and more than 100 % is impossible by construction. **Time** is
-> `t(base65t) / t(base64)` — less is better, 100 % means the same speed. Time
+> `t(base66) / t(base64)` — less is better, 100 % means the same speed. Time
 > is always against this crate's own `encode_base64url` and its decoder on a
 > pure base64 stream: the same loop shape, allocator and compiler, so the
 > ratio is the format rather than a handicap.
@@ -70,7 +61,7 @@ never meaningfully slower than base64, and any base64 stream reads back.
 ## A drop-in for `base64`
 
 ```rust
-use base65t::{decode, encode};
+use base66::{decode, encode};
 
 let stream: String = encode(b"alice.jones");
 assert_eq!(stream, "~~alice.jones");
@@ -81,7 +72,7 @@ The signatures are the `base64` crate's, so a call site changes its import and
 nothing else — the method form works too:
 
 ```rust
-use base65t::prelude::*;
+use base66::prelude::*;
 
 assert_eq!(URL_SAFE.encode("alice.jones"), "~~alice.jones");
 assert_eq!(URL_SAFE.decode("YWxpY2U=")?, b"alice");   // and it reads base64
@@ -90,7 +81,7 @@ assert_eq!(URL_SAFE.decode("YWxpY2U=")?, b"alice");   // and it reads base64
 `tests/dropin.rs` is that claim as a test rather than a sentence: it is written
 in the other crate's call shapes and stops compiling if a signature drifts.
 
-**The two sides are not equally safe to swap.** A base65t decoder reads every
+**The two sides are not equally safe to swap.** A base66 decoder reads every
 canonical base64 and base64url stream, so replacing a *decoder* changes nothing
 anyone can observe. Replacing an *encoder* starts emitting `~`, which a base64
 decoder rejects. Decoders first, encoders once every reader is one — said once,
@@ -166,11 +157,11 @@ binary session ids, comes out at **100.0 %**; the same thing written as text,
 It is about **carrying something that is already text through a channel that
 has to accept bytes**.
 
-base65t is not a density format — against the other encodings it is the
+base66 is not a density format — against the other encodings it is the
 second worst, ahead of base64 alone. What it removes is a decision. A system
 that wants both usually writes "if the value is printable, pass it through,
 otherwise base64 it, and set a flag": three code paths, a flag to get wrong,
-and no bound on what the wrong branch costs. base65t does that per block,
+and no bound on what the wrong branch costs. base66 does that per block,
 self-describing, with one decoder, and with a one-sentence proof that the
 answer is never longer than base64.
 
@@ -186,7 +177,7 @@ door is held open: `~` followed by an alphabet character is reserved.
 Against the benchmark's own base64, built by the same compiler in the same
 process, single-threaded, best of five. Size is against `ceil(4n/3)`.
 
-**On short values base65t is faster than base64 in both directions**, and the
+**On short values base66 is faster than base64 in both directions**, and the
 reason is the work: base64 reads a byte, looks up four characters and writes
 four, per three bytes; a raw block reads 48 bytes, checks them against a table
 and copies them.

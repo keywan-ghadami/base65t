@@ -18,7 +18,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import reference as base65t  # noqa: E402
+import reference as base66  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -32,14 +32,14 @@ def main() -> int:
         if "stream_ascii" in v and v["stream_ascii"].encode() != want:
             print(f"FAIL {v['name']}: stream_ascii disagrees with the hex")
             failed += 1
-        got = base65t.KINDS[v["kind"]](data)
+        got = base66.KINDS[v["kind"]](data)
         if got != want:
             print(f"FAIL {v['name']} encode")
             print(f"     want {want!r}")
             print(f"     got  {got!r}")
             failed += 1
             continue
-        back = base65t.decode(want)
+        back = base66.decode(want)
         if back != data:
             print(f"FAIL {v['name']} decode: {back!r} != {data!r}")
             failed += 1
@@ -76,12 +76,12 @@ def errors() -> int:
     ]
     bad = 0
     for stream, entry, want in cases:
-        fn = getattr(base65t, entry)
+        fn = getattr(base66, entry)
         try:
             fn(stream)
             print(f"FAIL {stream!r}: expected {want}, got a value")
             bad += 1
-        except base65t.Base65tError as e:
+        except base66.Base66Error as e:
             if e.code != want:
                 print(f"FAIL {stream!r}: expected {want}, got {e.code}")
                 bad += 1
@@ -93,7 +93,7 @@ def errors() -> int:
         (b"~~a-b_c-d_e", b"a-b_c-d_e"),   # TV7: raw bytes do not count
         (b"~~", b""),
     ]:
-        got = base65t.decode(stream)
+        got = base66.decode(stream)
         if got != expect:
             print(f"FAIL {stream!r}: {got!r} != {expect!r}")
             bad += 1

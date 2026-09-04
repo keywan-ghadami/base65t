@@ -13,7 +13,7 @@
 //! Parsed by hand rather than with serde: the crate has no dependencies and
 //! this file is not the place to acquire one.
 
-use base65t::*;
+use base66::*;
 
 fn field<'a>(entry: &'a str, key: &str) -> Option<&'a str> {
     let at = entry.find(&format!("\"{key}\": "))? + key.len() + 4;

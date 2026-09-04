@@ -2,16 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Base65t — Base64URL plus a 65th character, `~`.
+//! Base66 — an output alphabet of 66 characters, RFC 3986 *unreserved*.
 //!
-//! Three numbers here and they differ (§7): **64** symbols carry data, which
-//! is base64url's alphabet unchanged; **65** is those plus `~`, the marker,
-//! which carries none; **66** is what a byte of a stream can be, RFC 3986
-//! *unreserved*. `.` is the difference between the last two, and it is what
-//! makes the passthrough useful: a block is raw only if every byte is
-//! admitted, so without `.` no hostname, filename or dotted identifier would
-//! ever stand raw. The name counts the mechanism, 65; a container is checked
-//! against 66.
+//! 64 of them are base64url's alphabet, unchanged, and they are the only ones
+//! that carry data — which is why any base64 stream reads back. The other two
+//! carry the format: `~` marks which blocks stand raw, and `.` is admitted so
+//! that dotted values (hostnames, filenames, identifiers) stand raw at all,
+//! since a block passes through only if every one of its bytes is admitted
+//! (§7). The name counts characters, not a radix.
 //!
 //! The reference implementation of `docs/spec-v0.4.md`. Section numbers in
 //! the comments are that document's; `docs/history/` holds the earlier
@@ -22,7 +20,7 @@
 //! never longer than base64, and any base64 stream reads back.
 //!
 //! ```
-//! use base65t::{decode, encode};
+//! use base66::{decode, encode};
 //!
 //! let out = encode(b"alice.jones");
 //! assert_eq!(out, "~~alice.jones");
@@ -36,14 +34,14 @@
 //! method-style call site compiles too.
 //!
 //! ```
-//! use base65t::prelude::*;
+//! use base66::prelude::*;
 //!
 //! assert_eq!(URL_SAFE.encode("alice.jones"), "~~alice.jones");
 //! assert_eq!(URL_SAFE.decode("YWxpY2U=").unwrap(), b"alice");
 //! ```
 //!
 //! **The two sides are not equally safe to swap, and that is a fact about
-//! the format rather than a restriction of this API.** A base65t decoder
+//! the format rather than a restriction of this API.** A base66 decoder
 //! reads every canonical base64 and base64url stream (§1.1, §5.2, §5.3), so
 //! replacing a decoder changes nothing anyone can observe. Replacing an
 //! *encoder* starts emitting `~`, which a base64 decoder rejects. So:
@@ -230,7 +228,7 @@ pub fn encode_base64url<T: AsRef<[u8]>>(data: T) -> String {
 /// [`decode_detailed`]; §5.5 requires that it be available, and §14 is why a
 /// caller validating untrusted input should ask.
 ///
-/// **This is the safe half of a migration.** A base65t decoder reads every
+/// **This is the safe half of a migration.** A base66 decoder reads every
 /// canonical base64 and base64url stream, padded or not (§5.2, §5.3), so it
 /// can replace a base64 decoder before anything writes the new format. The
 /// encoder cannot be swapped as freely, and [`encode`] says why.
@@ -266,7 +264,7 @@ pub fn decode_into(stream: &[u8], out: &mut Vec<u8>) -> Result<Meta, Error> {
 /// written against it compiles when only the import changes.
 ///
 /// ```
-/// use base65t::{engine::general_purpose::URL_SAFE, Engine as _};
+/// use base66::{engine::general_purpose::URL_SAFE, Engine as _};
 ///
 /// assert_eq!(URL_SAFE.encode(b"alice.jones"), "~~alice.jones");
 /// assert_eq!(URL_SAFE.decode("~~alice.jones").unwrap(), b"alice.jones");
@@ -297,30 +295,30 @@ pub trait Engine {
 /// The one engine. It carries no configuration, because there is none to
 /// carry: §7 fixes the alphabet and §9.3 forbids a parameter that moves it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Base65t;
+pub struct Base66;
 
-impl Engine for Base65t {}
+impl Engine for Base66 {}
 
 /// Named as the `base64` crate names them, so both call sites compile.
 pub mod engine {
     /// Named as the `base64` crate names it.
     pub mod general_purpose {
-        use super::super::Base65t;
+        use super::super::Base66;
         /// The encoding. Not a standard-alphabet variant — there is one
         /// alphabet (§7) — but the name a call site may already use.
-        pub static STANDARD: Base65t = Base65t;
-        /// The same engine under the other name a call site may use. Base65t
+        pub static STANDARD: Base66 = Base66;
+        /// The same engine under the other name a call site may use. Base66
         /// is URL-safe by construction (§7.1), so this is not a second thing.
-        pub static URL_SAFE: Base65t = Base65t;
+        pub static URL_SAFE: Base66 = Base66;
         /// The same engine. The encoder never writes padding (§5.1) and the
         /// decoder always accepts it (§5.3), so "no pad" is not a choice here.
-        pub static STANDARD_NO_PAD: Base65t = Base65t;
+        pub static STANDARD_NO_PAD: Base66 = Base66;
         /// The same engine, for the same reason as `STANDARD_NO_PAD`.
-        pub static URL_SAFE_NO_PAD: Base65t = Base65t;
+        pub static URL_SAFE_NO_PAD: Base66 = Base66;
     }
 }
 
-/// A minimal `use base65t::prelude::*;`, as the `base64` crate offers.
+/// A minimal `use base66::prelude::*;`, as the `base64` crate offers.
 pub mod prelude {
     pub use super::engine::general_purpose::{
         STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD,

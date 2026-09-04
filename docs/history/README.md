@@ -10,6 +10,19 @@ to develop it further, or implement it a second time, finds the reasoning here
 and above all the measurements that forced individual sentences of the
 specification.
 
+**The format was called `base65t` until v0.4.** The old name counted the
+characters the encoder is built from — base64url's 64 plus the marker `~` —
+and left out `.`, which the alphabet also contains and which decides whether
+the passthrough fires at all. Readers met "plus one character" and then a
+second one, and the arithmetic had to be explained every time it came up. The
+current name counts the output alphabet instead: 66 characters, RFC 3986
+*unreserved*, which is the set a caller checks a container against and the one
+thing about the format they cannot avoid knowing. Which of the 66 plays which
+role inside the encoder is §7's business, not the name's. **The documents in
+this folder keep the old name**, as they were written; nothing here is
+normative and a record that has been edited to agree with a later decision is
+no longer a record.
+
 **The documents below are in German, as they were written.** They are records;
 translating them would make them something other than what was decided at the
 time. The current specification, the README and the code are English.

@@ -10,8 +10,8 @@
 //! building. What it cannot check is the other crate -- for that,
 //! `tests/against_the_system.rs` runs Python's base64 and compares bytes.
 
-use base65t::prelude::*;
-use base65t::{decode, decode_url_strict, encode, encode_base64url};
+use base66::prelude::*;
+use base66::{decode, decode_url_strict, encode, encode_base64url};
 
 /// The deprecated-but-everywhere free-function form:
 /// `base64::encode(x)` / `base64::decode(x)`.

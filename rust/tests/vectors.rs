@@ -10,7 +10,7 @@
 //! `docs/history/` holds the old streams, and the mask form that lasted a
 //! day.
 
-use base65t::*;
+use base66::*;
 
 fn base64_len(n: usize) -> usize {
     (4 * n).div_ceil(3)

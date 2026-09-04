@@ -10,7 +10,7 @@
 //! header bands at 62 and 63 bytes, the literal cap at 4158, and text that is
 //! legal apart from the occasional byte that is not.
 
-use base65t::*;
+use base66::*;
 
 struct Rng(u32);
 

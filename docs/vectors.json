@@ -1,5 +1,5 @@
 {
-  "spec": "base65t v0.4, docs/spec-v0.4.md",
+  "spec": "base66 v0.4, docs/spec-v0.4.md",
   "note": "Every entry is: the named entry point over input is exactly stream, and decode(stream) is exactly input. Bytes are hex. A second implementation that reproduces these byte for byte discharges \u00a716.3.",
   "vectors": [
     {"name": "empty/encode", "kind": "encode", "input": "", "stream": "", "stream_ascii": ""},

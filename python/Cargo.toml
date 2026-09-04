@@ -1,22 +1,22 @@
 [package]
-name = "base65t-python"
+name = "base66-python"
 version = "0.4.0"
 edition = "2021"
-description = "Python bindings for the Base65t reference implementation"
+description = "Python bindings for the Base66 reference implementation"
 license = "MPL-2.0"
 publish = false
 
 [lib]
 # Only a cdylib: nothing links this crate from Rust, and the encoder and
-# decoder themselves live in the `base65t` crate one directory up. The target
+# decoder themselves live in the `base66` crate one directory up. The target
 # is named apart from that crate so the two do not collide in a shared build
 # directory; maturin installs the artefact under the `module-name` set in
 # pyproject.toml, which is what Python imports.
-name = "base65t_python"
+name = "base66_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-base65t = { path = "../rust" }
+base66 = { path = "../rust" }
 # abi3-py39 builds one wheel that every CPython from 3.9 up can load, which is
 # what lets `requires-python = ">=3.9"` in pyproject.toml stay honest without a
 # wheel per interpreter version.

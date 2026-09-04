@@ -21,7 +21,7 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use base65t::*;
+use base66::*;
 
 fn have(cmd: &str) -> bool {
     Command::new(cmd)

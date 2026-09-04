@@ -10,7 +10,7 @@
 //! bytes with the only requirement that it return rather than panic, allocate
 //! wildly or read past the end.
 
-use base65t::*;
+use base66::*;
 
 #[test]
 fn all_nine_codes() {

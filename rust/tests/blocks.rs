@@ -5,7 +5,7 @@
 //! §9.4 — the encoding is never longer than base64 — and the block rules of
 //! §4 and §9, over a corpus rather than over the cases they were designed for.
 
-use base65t::*;
+use base66::*;
 
 fn base64_len(n: usize) -> usize {
     (4 * n).div_ceil(3)

@@ -1,15 +1,15 @@
-# base65t (Python)
+# base66 (Python)
 
-Python bindings for [Base65t](https://github.com/keywan-ghadami/base65t): a
+Python bindings for [Base66](https://github.com/keywan-ghadami/base65t): a
 compiled extension over the Rust reference implementation, so what Python runs
 is byte for byte what a Rust caller gets.
 
 ```python
-import base65t
+import base66
 
-stream = base65t.encode(b"alice.jones")
+stream = base66.encode(b"alice.jones")
 assert stream == b"~~alice.jones"
-assert base65t.decode(stream).bytes == b"alice.jones"
+assert base66.decode(stream).bytes == b"alice.jones"
 ```
 
 `encode` takes bytes and returns bytes. There is no mode to pick and no preset
@@ -17,7 +17,7 @@ to name: a caller who has to choose between a dense encoder and a fast one has
 to know what those words mean before encoding a byte, and a caller who is
 unsure writes base64. The encoder decides for itself (specification section
 9.6). There is no profile either: the output is always the 66 characters of
-RFC 3986 *unreserved*, exported as `base65t.ALPHABET`. The name counts 65 —
+RFC 3986 *unreserved*, exported as `base66.ALPHABET`. The name counts 65 —
 base64url's 64 symbols plus the marker `~` — but a container is checked
 against all 66. The 66th is `.`, and it is what makes the passthrough worth
 having: a block passes through only if every one of its bytes is admitted, so

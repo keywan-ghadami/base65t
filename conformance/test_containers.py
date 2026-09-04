@@ -5,13 +5,13 @@
 
 """§16.5: the containers, against real parsers.
 
-§7.1 proves from the ABNF that every character base65t writes is a
+§7.1 proves from the ABNF that every character base66 writes is a
 `cookie-octet`. This checks the weaker, empirical thing §16 separates out:
 whether parsers actually behave that way. They are Python's -- one set of
 parsers, not all of them, and the file says which.
 
 **The negative control is classic base64**, and it is the point of the file.
-That base65t's output survives a URL is only interesting if something
+That base66's output survives a URL is only interesting if something
 comparable does not, and classic base64 is exactly that comparison: same data,
 same length, `+` and `/` and `=` instead of this alphabet. Every check below
 runs both, and the pair is what shows the alphabet doing the work rather than
@@ -30,7 +30,7 @@ import sys
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import reference as base65t  # noqa: E402
+import reference as base66  # noqa: E402
 
 # Long enough to be a raw block and made only of admitted bytes, so its own
 # characters stand in the output (§9.0). A stream that was pure base64 would
@@ -53,9 +53,9 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
-    s = base65t.encode(SAMPLE).decode("ascii")
+    s = base66.encode(SAMPLE).decode("ascii")
     control = base64.b64encode(CONTROL_INPUT).decode("ascii")
-    print(f"base65t:        {s}")
+    print(f"base66:        {s}")
     print(f"classic base64: {control}\n")
     assert s.startswith("~~"), "the sample must be a raw block"
     assert any(c in control for c in "+/="), "the control must exercise +, / and ="
@@ -100,7 +100,7 @@ def main() -> int:
     shell_checks(s, control)
 
     print("\nAnd the stream still decodes to the input")
-    check("decodes", base65t.decode(s.encode()) == SAMPLE)
+    check("decodes", base66.decode(s.encode()) == SAMPLE)
 
     print()
     if failures:
@@ -152,7 +152,7 @@ def shell_checks(s: str, control: str) -> None:
     # And the one hazard that remains, named rather than hidden: a stream may
     # begin with `-`, which a *program* may read as an option. Base64url has
     # the same property, so it is not a regression, but it is real.
-    starts = {base65t.encode(bytes([i] * 40))[:1] for i in range(256)}
+    starts = {base66.encode(bytes([i] * 40))[:1] for i in range(256)}
     check("a stream can begin with `-`, which is an argv hazard, not a shell one",
           b"-" in starts, sorted(x.decode() for x in starts)[:6])
 

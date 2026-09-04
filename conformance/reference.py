@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-"""Base65t v0.4, written from ``docs/spec-v0.4.md``.
+"""Base66 v0.4, written from ``docs/spec-v0.4.md``.
 
 This is the second implementation §16.3 asks for, and it is deliberately not a
 translation of the Rust one: it was written from the specification, it tests
@@ -31,7 +31,7 @@ _VALUE[ord("+")] = 62     # §5.2: permissive on both alphabets
 _VALUE[ord("/")] = 63
 
 
-class Base65tError(Exception):
+class Base66Error(Exception):
     """One of the nine codes of §10.4."""
 
     def __init__(self, code: str):
@@ -81,26 +81,26 @@ class _Decoder:
         """Rule A (§5.4), and the strict variant of §5.5 in the same place."""
         if c in (ord("+"), ord("/")):
             if self.strict_url:
-                raise Base65tError("E_NON_URL_ALPHABET")
+                raise Base66Error("E_NON_URL_ALPHABET")
             if self.alphabet == "url":
-                raise Base65tError("E_MIXED_ALPHABET")
+                raise Base66Error("E_MIXED_ALPHABET")
             self.alphabet = "classic"
         elif c in (ord("-"), ord("_")):
             if self.alphabet == "classic":
-                raise Base65tError("E_MIXED_ALPHABET")
+                raise Base66Error("E_MIXED_ALPHABET")
             self.alphabet = "url"
 
     def read(self, c: int) -> int:
         """One alphabet position: check first (§10.1 trap 1), then read."""
         if c not in _VALUE:
-            raise Base65tError("E_CHARSET")
+            raise Base66Error("E_CHARSET")
         self.note(c)
         return _VALUE[c]
 
     def raw(self, payload: bytes) -> None:
         for b in payload:
             if not allows(b):
-                raise Base65tError("E_PROFILE")
+                raise Base66Error("E_PROFILE")
         self.out += payload          # no Rule A here -- §5.4, TV7
 
     def blocks(self, stream: bytes) -> None:
@@ -112,16 +112,16 @@ class _Decoder:
                 self.out += self.base64(stream[pos:end], end == n)
                 pos = end
             elif pos + 1 == n:
-                raise Base65tError("E_TRAILING_TILDE")
+                raise Base66Error("E_TRAILING_TILDE")
             elif stream[pos + 1] == TILDE:
                 # A raw block: 48 bytes, or what is left.
                 end = min(pos + 2 + BLOCK_BYTES, n)
                 self.raw(stream[pos + 2:end])
                 pos = end
             elif stream[pos + 1] in _VALUE:
-                raise Base65tError("E_RESERVED")       # §17
+                raise Base66Error("E_RESERVED")       # §17
             else:
-                raise Base65tError("E_CHARSET")
+                raise Base66Error("E_CHARSET")
 
     def base64(self, seg: bytes, at_stream_end: bool) -> bytes:
         k = 0
@@ -130,11 +130,11 @@ class _Decoder:
                 k += 1
         m = len(seg) - k
         if not (k == 0 or (k == 1 and m % 4 == 3) or (k == 2 and m % 4 == 2)):
-            raise Base65tError("E_PADDING")
+            raise Base66Error("E_PADDING")
         if k:
             self.padding = True
         if m % 4 == 1:
-            raise Base65tError("E_ALIGN")
+            raise Base66Error("E_ALIGN")
         out = bytearray()
         acc = bits = 0
         for c in seg[:m]:
@@ -145,11 +145,11 @@ class _Decoder:
                 acc = bits = 0
         if bits == 12:
             if acc & 0x0F:
-                raise Base65tError("E_NONZERO_TAIL")
+                raise Base66Error("E_NONZERO_TAIL")
             out.append((acc >> 4) & 255)
         elif bits == 18:
             if acc & 0x03:
-                raise Base65tError("E_NONZERO_TAIL")
+                raise Base66Error("E_NONZERO_TAIL")
             out += bytes(((acc >> 10) & 255, (acc >> 2) & 255))
         return bytes(out)
 

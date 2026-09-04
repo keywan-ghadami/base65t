@@ -9,7 +9,7 @@
 //! The allocation an owning call makes is a fixed cost, so it matters exactly
 //! where the values are small — which is where §0.1 says they are.
 
-use base65t::*;
+use base66::*;
 use std::time::Instant;
 
 fn bench(n: usize, mut f: impl FnMut()) -> f64 {

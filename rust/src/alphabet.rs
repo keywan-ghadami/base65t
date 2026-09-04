@@ -2,12 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The alphabet, the 65th character, and what may stand raw (§3, §5.2, §7).
+//! The alphabet, the marker `~`, and what may stand raw (§3, §5.2, §7).
 
 /// Base64URL, RFC 4648 §5. The encoder writes this and only this (§5.1).
 pub const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-/// The 65th character. Not in the alphabet, no value (§3). Doubled it opens a
+/// The marker. Not in the alphabet, no value (§3). Doubled it opens a
 /// raw block; followed by an alphabet character it is reserved (§17).
 pub const TILDE: u8 = b'~';
 

@@ -7,7 +7,7 @@ class Decoded:
     alphabet_seen: str
     padding_seen: bool
 
-class Base65tDecodeError(ValueError):
+class Base66DecodeError(ValueError):
     code: str
 
 def encode(data: _Bytes, /, profile: str = ...) -> bytes: ...

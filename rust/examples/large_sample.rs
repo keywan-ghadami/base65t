@@ -5,7 +5,7 @@
 //! Writes one long input and its encoding, so that the other
 //! implementation can check both against its own.
 //!
-//!     cargo run --release --example large_sample -- /tmp/in.bin /tmp/in.b65
+//!     cargo run --release --example large_sample -- /tmp/in.bin /tmp/in.b66
 //!
 //! `docs/vectors.json` cannot reach here: every vector in it is under a
 //! kilobyte, and a hex dump of a quarter-megabyte input would be half a
@@ -16,7 +16,7 @@
 //! The input is mixed on purpose. Homogeneous input shows nothing: noise makes
 //! one base64 run, and profile-legal text makes none.
 
-use base65t::*;
+use base66::*;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

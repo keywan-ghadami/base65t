@@ -26,7 +26,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import reference as base65t  # noqa: E402
+import reference as base66  # noqa: E402
 
 
 def main(argv) -> int:
@@ -37,21 +37,21 @@ def main(argv) -> int:
     stream = pathlib.Path(argv[1]).read_bytes()
 
     try:
-        got = base65t.decode(stream)
-    except base65t.Base65tError as e:
+        got = base66.decode(stream)
+    except base66.Base66Error as e:
         print(f"FAIL the other implementation's stream does not decode: {e.code}")
         return 1
     if got != data:
         print(f"FAIL decoded {len(got)} bytes, expected {len(data)}")
         return 1
-    if base65t.decode_detailed(stream).padding_seen:
+    if base66.decode_detailed(stream).padding_seen:
         print("FAIL an encoder wrote padding, which §5.3 forbids")
         return 1
     if len(stream) > -(-4 * len(data) // 3):
         print(f"FAIL {len(stream)} chars is longer than base64 would be")
         return 1
 
-    mine = base65t.encode(data)
+    mine = base66.encode(data)
     if mine != stream:
         at = next(i for i, (a, b) in enumerate(zip(mine, stream)) if a != b)
         print(f"FAIL the two encoders disagree at character {at}")

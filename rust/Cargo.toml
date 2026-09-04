@@ -1,15 +1,15 @@
 [package]
-name = "base65t"
+name = "base66"
 version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Base65t: Base64URL plus a 65th character, in fixed blocks that keep text in the clear."
+description = "Base66: an output alphabet of RFC 3986 unreserved, base64url inside it, text kept in the clear."
 license = "MPL-2.0"
 repository = "https://github.com/keywan-ghadami/base65t"
 publish = false
 
 [lib]
-name = "base65t"
+name = "base66"
 path = "src/lib.rs"
 
 # No dependencies, and none in the tests either. The differential checks the

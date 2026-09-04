@@ -1,4 +1,4 @@
-# Base65t — Specification v0.4
+# Base66 — Specification v0.4
 
 **Status:** current. **Wire format: not stable** — nothing promises that v0.5
 keeps these blocks. What is stable is the contract, not the bytes: bytes in,
@@ -7,16 +7,24 @@ back. Store the version number alongside any stream you keep.
 
 ## What it is
 
-Base64url extended by a 65th character, `~`. The input is cut into blocks of 48
-bytes; a block whose bytes are all in the output alphabet below stands raw
-after `~~`, every other block is base64. There is no state, no search and no
-threshold — that is the entire encoder.
+**An output alphabet of 66 characters — RFC 3986's *unreserved* set — of which
+64 are base64url's, unchanged.** The two that are not are `~` and `.`, and the
+format is made of both: `~` says which blocks stand raw, and `.` is why a block
+stands raw at all.
 
-Two characters sit outside base64url here, and they carry the format between
-them: `~` marks which blocks are raw, and `.` is why the raw blocks are worth
-having — a block is raw only if *every* byte is admitted, and the values this
-format targets are dotted (§7). The name counts `~` and not `.`; §7 states both
-numbers as one rule rather than leaving the second to be discovered.
+The input is cut into blocks of 48 bytes; a block whose bytes are all in the
+output alphabet below stands raw after `~~`, every other block is base64. There
+is no state, no search and no threshold — that is the entire encoder. The rule
+is all-or-nothing: a block stands raw only if *every* one of its 48 bytes is
+admitted. Since the values this format targets are dotted — hostnames, FQDNs,
+filenames, dotted identifiers, IPv4 addresses, package and version strings —
+`.` is not an incidental member of the set but the character that decides
+whether the passthrough fires at all (§7).
+
+**The name counts characters, not a radix.** Only the 64 carry data; `~` and
+`.` carry none. 66 is the number in the name because it is the number a caller
+checks a container against, and a caller has no use for which of the 66 plays
+which role inside the encoder.
 
 ```
 ~~alice.jones                    11 bytes of text, 13 characters
@@ -110,9 +118,9 @@ different opinions about (§11).
 > point in **opposite directions**. Every number therefore says which one it
 > is, and none appears without that label:
 >
-> * **Size** = `len(base65t) / len(base64)`. Less is better; 100 % means the
+> * **Size** = `len(base66) / len(base64)`. Less is better; 100 % means the
 >   same size, and more than 100 % is impossible by §9.4.
-> * **Time** = `t(base65t) / t(base64)`. Less is better; 100 % means the same
+> * **Time** = `t(base66) / t(base64)`. Less is better; 100 % means the same
 >   speed, more than 100 % means slower.
 >
 > Where time is measured, the comparison is `encode_base64url` or `decode` of
@@ -148,10 +156,11 @@ one who is only allowed to speak base64url.
 | Cache or dedup key | byte equality (§11) |
 | Token containing a secret | `encode_base64url`, no cleartext leaks (§14) |
 
-### What base65t *is*, in one sentence
+### What base66 *is*, in one sentence
 
-> Base64url in blocks of 48 bytes, where a block MAY carry its bytes raw and a
-> 65th character says which blocks those are.
+> Base64url in blocks of 48 bytes, where a block MAY carry its bytes raw, `~`
+> says which blocks those are, and the output stays inside RFC 3986
+> *unreserved*.
 
 ### What "one decoder for everything" means exactly
 
@@ -164,15 +173,15 @@ one who is only allowed to speak base64url.
 RFC 3986's *unreserved* set has 66 characters. A radix-85 encoding fits inside
 it, but a passthrough of the Base85N kind additionally needs donor characters
 — and there is no room left for those once 64 characters are bound to the
-binary core. Base65t goes the opposite way: a core that **is exactly
+binary core. Base66 goes the opposite way: a core that **is exactly
 base64url**, plus a discriminator. Only from that does the superset property
 of §5.2 follow.
 
-### Where base65t sits in the family
+### Where base66 sits in the family
 
-Base65t is the **opener**, not the peak. Base85N carries the same
+Base66 is the **opener**, not the peak. Base85N carries the same
 passthrough idea further and is denser; Base91z compresses. Both ask the
-caller to learn a scheme they do not know yet. Base65t does not: the core *is*
+caller to learn a scheme they do not know yet. Base66 does not: the core *is*
 base64url, the output is a fixed 66-character alphabet that every common
 container already accepts, and it is never larger. On time it is usually
 faster and, on one shape, slower — §13.3 names it, and it is the only thing
@@ -203,13 +212,13 @@ density, goes one door further.
 
 | Direction | Holds? |
 |----------|-------|
-| A base65t decoder reads base64url, unpadded | **yes**, normative |
-| A base65t decoder reads base64url, padded | **yes**, normative, §5.3 |
-| A base65t decoder reads classic base64 (`+`/`/`), padded or not | **yes**, normative, §5.2/§5.3 |
-| **A base64 decoder reads base65t** | **no** — `~` is not in the alphabet |
-| **Base65t v0.4 reads v0.1 through v0.3** | **no** — different wire format |
+| A base66 decoder reads base64url, unpadded | **yes**, normative |
+| A base66 decoder reads base64url, padded | **yes**, normative, §5.3 |
+| A base66 decoder reads classic base64 (`+`/`/`), padded or not | **yes**, normative, §5.2/§5.3 |
+| **A base64 decoder reads base66** | **no** — `~` is not in the alphabet |
+| **Base66 v0.4 reads v0.1 through v0.3** | **no** — different wire format |
 
-Base65t is a *superset on the reading side* of base64. Migration path: roll
+Base66 is a *superset on the reading side* of base64. Migration path: roll
 out decoders first, switch encoders later.
 
 **Canonicity of the input.** The statement holds for *canonical* streams. A
@@ -230,11 +239,12 @@ as an *expected divergence*.
 ## 3. Notation
 
 * `byte` = a byte of the payload. `char` = a character of the output stream.
-* **Base65t produces an octet stream.** Every octet is printable ASCII, and
+* **Base66 produces an octet stream.** Every octet is printable ASCII, and
   one of the 66 characters of §7.
 * Core alphabet per base64url (RFC 4648 §5): 0–25 `A`–`Z`, 26–51 `a`–`z`,
   52–61 `0`–`9`, 62 `-`, 63 `_`.
-* The 65th character is `~` (U+007E), not part of the alphabet, without value.
+* `~` (U+007E) is the marker: not part of the alphabet, without value.
+* `.` (U+002E) may stand raw and carries no value either (§7).
 * Bit order MSB-first.
 
 **Alphabet character.** An octet is an *alphabet character* if the decoder
@@ -394,15 +404,14 @@ a reserved stream but a broken one: `E_CHARSET`.
 > **Rule.** A byte may stand raw if and only if it is in RFC 3986's
 > *unreserved* set: `A–Z`, `a–z`, `0–9`, `-`, `.`, `_`, `~`. 66 characters.
 
-**Three numbers, and they are not the same number.** They are stated together
-here because a document that introduces them one at a time reads as though the
-alphabet kept growing.
+**66 characters, and the name is that number.** They divide by role. The
+division is a fact about the encoder, not a second count a reader has to carry:
 
-| | What it counts | Where it is used |
+| | Characters | Role |
 |--:|---|---|
-| **64** | the *symbols that carry data*: base64url's alphabet, unchanged | why §5.2's superset property holds — a base64 stream is already a base65t stream |
-| **65** | those plus `~`, the marker: no value, never a digit, and the character the format adds | the name, and §4's block structure |
-| **66** | the *byte values a stream can contain*: the rule above, RFC 3986 *unreserved* | every container statement in this document (§7, §16.5) |
+| **64** | base64url's alphabet, unchanged | the only ones that carry data. This is why §5.2's superset property holds: a base64 stream is already a base66 stream |
+| **1** | `~` | the marker. No value, never a digit. Doubled it opens a raw block (§4); followed by an alphabet character it is reserved (§17) |
+| **1** | `.` | admitted so that dotted values pass through. No value, and the encoder never writes one that was not in the input |
 
 `.` is the difference between 65 and 66, and it is **load-bearing rather than
 incidental**. The rule above is all-or-nothing: a block stands raw only if
@@ -416,9 +425,10 @@ never appears in a base64 block; it stands only where the input already had
 one. Both facts are true, and neither makes the character optional.
 
 `.` and `~` never appear in a base64 block; every other character of the 66
-does, in both roles. Container safety is a statement about the 66, because a
-parser sees bytes and not roles; the name is a statement about the 65, which
-is the mechanism and not the payoff.
+does, in both roles. Container safety is a statement about all 66, because a
+parser sees bytes and not roles — and that is the reason the name is 66 as
+well: a caller placing a stream into a container needs the set, not the
+division of labour inside it.
 
 There is no second set and no parameter that selects one. That is the format's
 central property, not a simplification of it: the base64 alphabet is a subset
@@ -538,7 +548,7 @@ the decoder side of a migration free, and a caller who has to rewrite call
 sites to take it will not.
 
 **The two sides are not equally safe to swap, and an implementation SHOULD say
-so where a caller will read it.** A base65t decoder reads every canonical
+so where a caller will read it.** A base66 decoder reads every canonical
 base64 and base64url stream (§5.2, §5.3), so replacing a *decoder* changes
 nothing observable. Replacing an *encoder* starts emitting `~`, which a base64
 decoder rejects. Decoders first, encoders once every reader is one. Saying it
@@ -729,7 +739,7 @@ decoded bytes.
 
 Characters per input byte; less is better.
 
-| Input | Base64 | **Base65t** |
+| Input | Base64 | **Base66** |
 |---------|--------|-------------|
 | A block with one byte outside the alphabet | 1.333 | **1.333** — the same bytes |
 | A block wholly inside it | 1.333 | **1.0417** — `50/48`, the block stands raw |
@@ -853,7 +863,7 @@ The 55 short samples, size against `ceil(4n/3)`, and — the one exception to
 the preamble above — time against **the bench's** base64 rather than this
 crate's, because that is the denominator every other codec in that report uses
 (`--example short`). The bench's base64 pads and validates UTF-8, so these
-figures flatter base65t by a little; §13.3's do not.
+figures flatter base66 by a little; §13.3's do not.
 
 | Sample | Bytes | Form | Size | Encode, time | Decode, time |
 |---|--:|---|--:|--:|--:|
@@ -869,7 +879,7 @@ figures flatter base65t by a little; §13.3's do not.
 | 8 random bytes | 8 | base64 | 100 % | **84 %** | 131 % |
 | **all 55 samples, as time** | | | | **65 %** | **84 %** |
 
-**On short values base65t is faster than base64, in both directions**, and on
+**On short values base66 is faster than base64, in both directions**, and on
 the rows where it saves nothing in size as well. The reason is the work
 balance: base64 reads a byte, looks up four characters and writes four — per
 three bytes. A raw block reads 48 bytes, checks them with six comparisons per
@@ -900,7 +910,7 @@ wider alphabet would make text with punctuation readable, and there is not one
 because the list of containers at the head of this document would then need a
 second column — a guarantee with an "except when" is not one. §7 has that
 argument and `docs/history/README.md` has what a wider alphabet scored. Whoever
-needs readable mixed text needs a different format; *Where base65t sits in the
+needs readable mixed text needs a different format; *Where base66 sits in the
 family* says which.
 
 ## 14. Security

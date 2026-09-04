@@ -8,7 +8,7 @@
 //! here rather than reasoned about: the set is built from what the encoder
 //! actually emits and compared both ways.
 
-use base65t::*;
+use base66::*;
 use std::collections::BTreeSet;
 
 fn unreserved() -> BTreeSet<u8> {

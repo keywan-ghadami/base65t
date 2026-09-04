@@ -2,10 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Python bindings for Base65t, built with PyO3 and packaged by maturin.
+//! Python bindings for Base66, built with PyO3 and packaged by maturin.
 //!
 //! This is not an implementation of the format: it is a thin layer over the
-//! `base65t` crate, so what Python runs is byte for byte the same encoder and
+//! `base66` crate, so what Python runs is byte for byte the same encoder and
 //! decoder a Rust caller gets. The layer converts argument types, releases the
 //! GIL around the call, and turns a decode error into a Python exception
 //! carrying the same code the specification and the shared vectors use.
@@ -19,11 +19,11 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes};
 
-use base65t::Error;
+use base66::Error;
 
 create_exception!(
-    base65t,
-    Base65tDecodeError,
+    base66,
+    Base66DecodeError,
     PyValueError,
     "Raised by decode() on malformed input.\n\n\
      `code` is one of the nine conditions of specification section 10.4, as\n\
@@ -31,7 +31,7 @@ create_exception!(
 );
 
 fn decode_error(py: Python<'_>, err: Error) -> PyErr {
-    let e = Base65tDecodeError::new_err(err.code());
+    let e = Base66DecodeError::new_err(err.code());
     if let Ok(obj) = e.value(py).setattr("code", err.code()) {
         let _ = obj;
     }
@@ -60,7 +60,7 @@ fn byte_argument(obj: &Bound<'_, PyAny>, what: &str) -> PyResult<Vec<u8>> {
 
 /// What a decode found, which section 5.5 makes part of the result rather than
 /// an option: permissiveness that cannot be inspected cannot be validated.
-#[pyclass(module = "base65t", frozen, get_all)]
+#[pyclass(module = "base66", frozen, get_all)]
 struct Decoded {
     /// The decoded payload.
     bytes: Py<PyBytes>,
@@ -84,13 +84,13 @@ impl Decoded {
     }
 }
 
-fn wrap(py: Python<'_>, d: base65t::Decoded) -> Decoded {
+fn wrap(py: Python<'_>, d: base66::Decoded) -> Decoded {
     Decoded {
         bytes: PyBytes::new(py, &d.bytes).unbind(),
         alphabet_seen: match d.alphabet_seen {
-            base65t::AlphabetSeen::None => "none",
-            base65t::AlphabetSeen::Url => "url",
-            base65t::AlphabetSeen::Classic => "classic",
+            base66::AlphabetSeen::None => "none",
+            base66::AlphabetSeen::Url => "url",
+            base66::AlphabetSeen::Classic => "classic",
         }
         .to_string(),
         padding_seen: d.padding_seen,
@@ -119,7 +119,7 @@ fn encode<'py>(py: Python<'py>, data: &Bound<'py, PyAny>) -> PyResult<Bound<'py,
     let data = byte_argument(data, "encode() expects bytes, bytearray or str")?;
     // The encoder touches no Python object, so other threads may run while it
     // works. That matters: this is the call a caller makes on a whole file.
-    let out = py.detach(|| base65t::encode(&data));
+    let out = py.detach(|| base66::encode(&data));
     Ok(PyBytes::new(py, out.as_bytes()))
 }
 
@@ -136,7 +136,7 @@ fn encode_base64url<'py>(
     data: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let data = byte_argument(data, "encode_base64url() expects bytes, bytearray or str")?;
-    let out = py.detach(|| base65t::encode_base64url(&data));
+    let out = py.detach(|| base66::encode_base64url(&data));
     Ok(PyBytes::new(py, out.as_bytes()))
 }
 
@@ -177,7 +177,7 @@ macro_rules! detailed_decoder {
 
 decoder!(
     decode,
-    base65t::decode,
+    base66::decode,
     "Decode a stream, returning the bytes.\n\n\
      The shape `base64.b64decode` has, so a call site replacing it does not \
      change. It takes the stream and nothing else (§0.3). What the stream \
@@ -188,13 +188,13 @@ decoder!(
 );
 decoder!(
     decode_url_strict,
-    base65t::decode_url_strict,
+    base66::decode_url_strict,
     "Like `decode`, but a `+` or `/` at an alphabet position ends it with \
      `E_NON_URL_ALPHABET` (§5.5)."
 );
 detailed_decoder!(
     decode_detailed,
-    base65t::decode_detailed,
+    base66::decode_detailed,
     "Decode a stream, returning the bytes together with what the stream \
      chose (§5.5): `alphabet_seen` and `padding_seen`. The entry point for a \
      caller that has to validate what it accepted rather than only accept \
@@ -202,13 +202,13 @@ detailed_decoder!(
 );
 detailed_decoder!(
     decode_url_strict_detailed,
-    base65t::decode_url_strict_detailed,
+    base66::decode_url_strict_detailed,
     "`decode_detailed`, with the alphabet fixed to base64url (§5.5)."
 );
 
 #[pymodule]
-#[pyo3(name = "base65t")]
-fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "base66")]
+fn base66_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encode, m)?)?;
     m.add_function(wrap_pyfunction!(encode_base64url, m)?)?;
     m.add_function(wrap_pyfunction!(decode, m)?)?;
@@ -216,14 +216,14 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_detailed, m)?)?;
     m.add_function(wrap_pyfunction!(decode_url_strict_detailed, m)?)?;
     m.add_class::<Decoded>()?;
-    m.add("Base65tDecodeError", m.py().get_type::<Base65tDecodeError>())?;
+    m.add("Base66DecodeError", m.py().get_type::<Base66DecodeError>())?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("SPEC_VERSION", "0.4")?;
 
     // The constants the specification fixes, so that tooling has one source
     // for them rather than a transcribed copy.
-    m.add("BLOCK_BYTES", base65t::BLOCK_BYTES)?;
+    m.add("BLOCK_BYTES", base66::BLOCK_BYTES)?;
     // The output alphabet, as the specification's head states it: 66
     // characters, and there is no setting that changes them (§7).
     m.add(
@@ -241,7 +241,7 @@ fn base65t_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "decode_detailed",
             "decode_url_strict_detailed",
             "Decoded",
-            "Base65tDecodeError",
+            "Base66DecodeError",
             "ALPHABET",
             "BLOCK_BYTES",
             "SPEC_VERSION",

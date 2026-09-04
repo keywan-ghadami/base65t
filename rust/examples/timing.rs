@@ -15,7 +15,7 @@
 //! 21 rounds the median then ignores the rounds where something else ran.
 //! Comparing two separately-taken bests would report the drift.
 
-use base65t::*;
+use base66::*;
 use std::time::Instant;
 
 /// One round: both sides timed back to back, returning their ratio.
@@ -78,6 +78,6 @@ fn main() {
         );
     }
     println!();
-    println!("Size is len(base65t)/len(base64url); time is t(base65t)/t(base64url) of");
+    println!("Size is len(base66)/len(base64url); time is t(base66)/t(base64url) of");
     println!("this same crate. Less is better in both. Median of {ROUNDS} paired rounds.");
 }
