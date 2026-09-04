@@ -1,6 +1,15 @@
 # base65t
 
-Base64URL, plus one character.
+Base64url, and two characters beside it: `~`, which the format adds, and `.`,
+which it only lets through.
+
+**Three numbers, said here once.** **64** characters carry data: base64url's
+alphabet, unchanged, which is why every base64 stream reads back. **65** is
+those plus `~` — the marker, no value, never a digit — and that is what the
+name says. **66** is what a byte of the output can be: `A–Z a–z 0–9 - . _ ~`,
+exactly RFC 3986's *unreserved* set, and it is the number every container
+claim below rests on. Nothing in the format is ever "plus one more"; the
+three numbers are these and they do not move.
 
 `~` is not in the base64 alphabet, so it can mean something else. The input is
 cut into blocks of 48 bytes. A block made entirely of characters the output
@@ -9,19 +18,19 @@ block is base64. Text that a URL would carry unescaped anyway is carried
 unescaped — `alice.jones` encodes as `~~alice.jones`, thirteen characters where
 base64 needs fifteen — and there is no escaping anywhere.
 
-**The output alphabet is fixed at 66 characters** — `A–Z a–z 0–9 - . _ ~`,
-exactly RFC 3986's *unreserved* set. Nothing else is ever written, not even
-`=`, because the encoder produces no padding. That is one alphabet and not a
-choice, and it is why the output drops into a URL, a cookie, a header, a JSON
-string, a filename or a log field without escaping any of them — **and
-survives being pasted unquoted into a shell**, which the conformance test
-checks in bash, dash and sh over every stream shape. The test
-`the_output_alphabet_is_exactly_unreserved` pins the set in both directions.
+`.` is admitted rather than added. The encoder never produces one from data:
+it appears only where the input already had one, standing raw inside a block,
+and it is in the set so that what passes through is exactly *unreserved* and
+not *unreserved minus the dot* — a rule with an exception in it is a rule
+somebody has to remember. Neither `.` nor `~` ever appears in a base64 block.
 
-Two numbers live here and they are different: the **radix** is 64 + `~` = 65,
-which is what the name says, and the **byte values a stream can contain** is
-66, because a raw block passes text through and `.` is text. `.` and `~` never
-appear in a base64 block.
+**The output alphabet is therefore fixed at those 66 characters.** Nothing else
+is ever written, not even `=`, because the encoder produces no padding. That is
+one alphabet and not a choice, and it is why the output drops into a URL, a
+cookie, a header, a JSON string, a filename or a log field without escaping any
+of them — **and survives being pasted unquoted into a shell**, which the
+conformance test checks in bash, dash and sh over every stream shape. The test
+`the_output_alphabet_is_exactly_unreserved` pins the set in both directions.
 
 ```
 ~~alice.jones                   11 bytes of text, 13 characters

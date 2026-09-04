@@ -12,6 +12,12 @@ bytes; a block whose bytes are all in the output alphabet below stands raw
 after `~~`, every other block is base64. There is no state, no search and no
 threshold — that is the entire encoder.
 
+`~` is the only character the format *adds*. A stream can nonetheless contain
+one more byte value than base64url and `~` together, namely `.`, because a raw
+block passes text through and `.` is text; the encoder never produces one from
+data. So the format's characters are 65 and a stream's byte values are 66, and
+§7 states both as one rule rather than leaving the second to be discovered.
+
 ```
 ~~alice.jones                    11 bytes of text, 13 characters
 3q2-73Nlc3Npb24tZXUtY2VudHJhbA   4 binary bytes and 18 of text: base64
@@ -388,14 +394,24 @@ a reserved stream but a broken one: `E_CHARSET`.
 > **Rule.** A byte may stand raw if and only if it is in RFC 3986's
 > *unreserved* set: `A–Z`, `a–z`, `0–9`, `-`, `.`, `_`, `~`. 66 characters.
 
-**Two numbers, and they are not the same number.** The format's *radix* — the
-symbols that carry encoded data — is base64url's 64 plus `~`, which is where
-the name comes from, and why `~` is called the 65th character. The set above
-is the *byte values a stream can contain*, which is 66, because a raw block
-passes text through and `.` is text. `.` and `~` never appear in a base64
-block; every other character of the 66 does, in both roles. Container safety
-is a statement about the 66 (a parser sees bytes, not roles), and the name is
-a statement about the 65.
+**Three numbers, and they are not the same number.** They are stated together
+here because a document that introduces them one at a time reads as though the
+alphabet kept growing.
+
+| | What it counts | Where it is used |
+|--:|---|---|
+| **64** | the *symbols that carry data*: base64url's alphabet, unchanged | why §5.2's superset property holds — a base64 stream is already a base65t stream |
+| **65** | those plus `~`, the marker: no value, never a digit, and the character the format adds | the name, and §4's block structure |
+| **66** | the *byte values a stream can contain*: the rule above, RFC 3986 *unreserved* | every container statement in this document (§7, §16.5) |
+
+`.` is the difference between 65 and 66, and it is *admitted* rather than
+added: it carries no value, the encoder never writes one that was not in the
+input, and it occurs only inside a raw block. It is in the set so that the
+passthrough rule is exactly *unreserved* rather than *unreserved* with one
+character carved out of it. `.` and `~` never appear in a base64 block; every
+other character of the 66 does, in both roles. Container safety is a statement
+about the 66, because a parser sees bytes and not roles; the name is a
+statement about the 65.
 
 There is no second set and no parameter that selects one. That is the format's
 central property, not a simplification of it: the base64 alphabet is a subset

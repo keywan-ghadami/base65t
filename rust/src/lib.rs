@@ -2,7 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! Base65t — Base64URL plus a 65th character.
+//! Base65t — Base64URL plus a 65th character, `~`.
+//!
+//! Three numbers here and they differ (§7): **64** symbols carry data, which
+//! is base64url's alphabet unchanged; **65** is those plus `~`, the marker,
+//! which carries none; **66** is what a byte of a stream can be, RFC 3986
+//! *unreserved*. `.` is the difference between the last two — admitted, not
+//! added, because a raw block passes text through and the encoder never
+//! writes one that was not in the input.
 //!
 //! The reference implementation of `docs/spec-v0.4.md`. Section numbers in
 //! the comments are that document's; `docs/history/` holds the earlier
