@@ -12,11 +12,11 @@ bytes; a block whose bytes are all in the output alphabet below stands raw
 after `~~`, every other block is base64. There is no state, no search and no
 threshold — that is the entire encoder.
 
-`~` is the only character the format *adds*. A stream can nonetheless contain
-one more byte value than base64url and `~` together, namely `.`, because a raw
-block passes text through and `.` is text; the encoder never produces one from
-data. So the format's characters are 65 and a stream's byte values are 66, and
-§7 states both as one rule rather than leaving the second to be discovered.
+Two characters sit outside base64url here, and they carry the format between
+them: `~` marks which blocks are raw, and `.` is why the raw blocks are worth
+having — a block is raw only if *every* byte is admitted, and the values this
+format targets are dotted (§7). The name counts `~` and not `.`; §7 states both
+numbers as one rule rather than leaving the second to be discovered.
 
 ```
 ~~alice.jones                    11 bytes of text, 13 characters
@@ -404,14 +404,21 @@ alphabet kept growing.
 | **65** | those plus `~`, the marker: no value, never a digit, and the character the format adds | the name, and §4's block structure |
 | **66** | the *byte values a stream can contain*: the rule above, RFC 3986 *unreserved* | every container statement in this document (§7, §16.5) |
 
-`.` is the difference between 65 and 66, and it is *admitted* rather than
-added: it carries no value, the encoder never writes one that was not in the
-input, and it occurs only inside a raw block. It is in the set so that the
-passthrough rule is exactly *unreserved* rather than *unreserved* with one
-character carved out of it. `.` and `~` never appear in a base64 block; every
-other character of the 66 does, in both roles. Container safety is a statement
-about the 66, because a parser sees bytes and not roles; the name is a
-statement about the 65.
+`.` is the difference between 65 and 66, and it is **load-bearing rather than
+incidental**. The rule above is all-or-nothing: a block stands raw only if
+every one of its 48 bytes is admitted. Dots occur in precisely the values this
+format is for — hostnames, FQDNs, filenames, dotted identifiers, IPv4
+addresses, package and version strings — so removing `.` from the set would
+send every one of them to base64 and leave the passthrough working only on
+undotted runs (hex, UUIDs, alphanumeric ids). That follows from the rule and
+needs no measurement. The encoder never *produces* a `.` from data, and `.`
+never appears in a base64 block; it stands only where the input already had
+one. Both facts are true, and neither makes the character optional.
+
+`.` and `~` never appear in a base64 block; every other character of the 66
+does, in both roles. Container safety is a statement about the 66, because a
+parser sees bytes and not roles; the name is a statement about the 65, which
+is the mechanism and not the payoff.
 
 There is no second set and no parameter that selects one. That is the format's
 central property, not a simplification of it: the base64 alphabet is a subset

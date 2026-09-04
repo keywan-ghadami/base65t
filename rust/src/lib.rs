@@ -7,9 +7,11 @@
 //! Three numbers here and they differ (§7): **64** symbols carry data, which
 //! is base64url's alphabet unchanged; **65** is those plus `~`, the marker,
 //! which carries none; **66** is what a byte of a stream can be, RFC 3986
-//! *unreserved*. `.` is the difference between the last two — admitted, not
-//! added, because a raw block passes text through and the encoder never
-//! writes one that was not in the input.
+//! *unreserved*. `.` is the difference between the last two, and it is what
+//! makes the passthrough useful: a block is raw only if every byte is
+//! admitted, so without `.` no hostname, filename or dotted identifier would
+//! ever stand raw. The name counts the mechanism, 65; a container is checked
+//! against 66.
 //!
 //! The reference implementation of `docs/spec-v0.4.md`. Section numbers in
 //! the comments are that document's; `docs/history/` holds the earlier

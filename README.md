@@ -1,30 +1,38 @@
 # base65t
 
-Base64url, and two characters beside it: `~`, which the format adds, and `.`,
-which it only lets through.
+Base64url and two more characters, and each of them has a job. **`~` is what
+makes the format possible** — it is not in the base64 alphabet, so it can mean
+something else. **`.` is what makes it worth having** — it is why a hostname, a
+filename or a dotted identifier passes through at all.
 
-**Three numbers, said here once.** **64** characters carry data: base64url's
-alphabet, unchanged, which is why every base64 stream reads back. **65** is
-those plus `~` — the marker, no value, never a digit — and that is what the
-name says. **66** is what a byte of the output can be: `A–Z a–z 0–9 - . _ ~`,
-exactly RFC 3986's *unreserved* set, and it is the number every container
-claim below rests on. Nothing in the format is ever "plus one more"; the
-three numbers are these and they do not move.
+`~` first. The input is cut into blocks of 48 bytes. A block made entirely of
+characters the output alphabet already contains is written after `~~`, as it
+stands; every other block is base64. Text that a URL would carry unescaped
+anyway is carried unescaped — `alice.jones` encodes as `~~alice.jones`,
+thirteen characters where base64 needs fifteen — and there is no escaping
+anywhere.
 
-`~` is not in the base64 alphabet, so it can mean something else. The input is
-cut into blocks of 48 bytes. A block made entirely of characters the output
-alphabet already contains is written after `~~`, as it stands; every other
-block is base64. Text that a URL would carry unescaped anyway is carried
-unescaped — `alice.jones` encodes as `~~alice.jones`, thirteen characters where
-base64 needs fifteen — and there is no escaping anywhere.
+Then `.`, and it is not incidental. A block stands raw only if **every** one of
+its 48 bytes is admitted, and the values this format exists for are full of
+dots: `alice.jones`, `session-eu-central-1.frankfurt`, `report.final.tar.gz`,
+`192.168.13.240`, `com.example.OrderRepository`. Take `.` out of the admitted
+set and each of those is base64 at 100 %, and the example one paragraph up
+stops existing. That is the whole argument for the second character, and it is
+the same shape as the argument for the first: without it the format does not do
+its job. The encoder never *produces* a `.` from data — it passes through one
+the input already had — but the format would be a different and much smaller
+thing without it.
 
-`.` is admitted rather than added. The encoder never produces one from data:
-it appears only where the input already had one, standing raw inside a block,
-and it is in the set so that what passes through is exactly *unreserved* and
-not *unreserved minus the dot* — a rule with an exception in it is a rule
-somebody has to remember. Neither `.` nor `~` ever appears in a base64 block.
+**Three numbers, and the name counts the middle one.** **64** characters carry
+data: base64url's alphabet, unchanged, which is why every base64 stream reads
+back. **65** is those plus `~`, the marker — no value, never a digit — and that
+is what `base65t` counts. **66** is what a byte of the output can be:
+`A–Z a–z 0–9 - . _ ~`, exactly RFC 3986's *unreserved* set. The name counts the
+mechanism; **66 is the number to check a container against**, and 66 is the
+number the paragraph above is about. Both are stated here so that neither
+arrives later as a correction.
 
-**The output alphabet is therefore fixed at those 66 characters.** Nothing else
+**The output alphabet is fixed at those 66 characters.** Nothing else
 is ever written, not even `=`, because the encoder produces no padding. That is
 one alphabet and not a choice, and it is why the output drops into a URL, a
 cookie, a header, a JSON string, a filename or a log field without escaping any

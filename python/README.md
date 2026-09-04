@@ -17,10 +17,12 @@ to name: a caller who has to choose between a dense encoder and a fast one has
 to know what those words mean before encoding a byte, and a caller who is
 unsure writes base64. The encoder decides for itself (specification section
 9.6). There is no profile either: the output is always the 66 characters of
-RFC 3986 *unreserved*, exported as `base65t.ALPHABET`. The name counts the 65
-that the format defines — base64url's 64 symbols plus the marker `~` — while
-the 66th, `.`, is only passed through from input text inside a raw block and
-is never produced from data.
+RFC 3986 *unreserved*, exported as `base65t.ALPHABET`. The name counts 65 —
+base64url's 64 symbols plus the marker `~` — but a container is checked
+against all 66. The 66th is `.`, and it is what makes the passthrough worth
+having: a block passes through only if every one of its bytes is admitted, so
+without `.` no hostname, filename or dotted identifier would ever stand in the
+clear.
 
 The return is `bytes` and not `str` although the output is printable ASCII:
 section 3 calls the output an octet stream, and the return type says what the
